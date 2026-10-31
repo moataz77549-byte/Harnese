@@ -238,6 +238,20 @@ private fun antigravityModelWithEffort(model: String, effort: String): String? {
     return "${match.groupValues[1]}-$effort"
 }
 
+/**
+ * Parse the actual CLI model catalog (not a hardcoded list).
+ * Accounts and regions have different entitlements; titles or log lines are not models.
+ */
+internal fun parseAntigravityCliModels(output: String): List<String> {
+    val modelId = Regex("^(?:gemini|claude|gpt|deepseek|qwen|llama|kimi|mistral)-[a-z0-9][a-z0-9._-]*$")
+    return output.lineSequence()
+        .map { sanitizeTerminalOutput(it).trim().trimStart('*', '•', '-', '|', '│', ' ') }
+        .map { it.split(Regex("\\s+"), limit = 2).firstOrNull().orEmpty() }
+        .filter { modelId.matches(it) }
+        .distinct()
+        .toList()
+}
+
 private data class ProjectTerminalSnapshot(
     val lines: List<TerminalOutputLine> = emptyList(),
     val cwd: String = "/workspace",
@@ -2560,6 +2574,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     agentUpdateBytesPerSecond = null,
                 )
             }
+            if (result.isSuccess && kind == AgentKind.ANTIGRAVITY) {
+                refreshAntigravityModels()
+            }
         }
     }
 
@@ -2643,12 +2660,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 while (process.isAlive) delay(50)
                 check(process.waitFor() == 0) { str(R.string.vm_antigravity_list_models_failed) }
                 val output = (process as? NativeSpawnProcess)?.outputFile?.readTailText(MAX_PROCESS_OUTPUT_BYTES).orEmpty()
-                output.lineSequence()
-                    .map { sanitizeTerminalOutput(it).trim() }
-                    .mapNotNull { line -> line.split(Regex("\\s+"), limit = 2).firstOrNull() }
-                    .filter { it.matches(Regex("[a-z0-9][a-z0-9._-]+")) }
-                    .distinct()
-                    .toList()
+                parseAntigravityCliModels(output)
                     .also { check(it.isNotEmpty()) { str(R.string.vm_antigravity_no_models) } }
             }
             withContext(Dispatchers.Main) {

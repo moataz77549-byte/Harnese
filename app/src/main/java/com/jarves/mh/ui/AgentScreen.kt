@@ -133,6 +133,15 @@ private fun localizeAgentInstallMessage(message: String): String {
 
 /** Formats Antigravity model identifiers into clean, human-friendly names. */
 internal fun formatAntigravityModelName(id: String): String = when (id) {
+    "gemini-4-argon-high" -> "Gemini 4 Argon (High)"
+    "gemini-4-argon-medium" -> "Gemini 4 Argon (Medium)"
+    "gemini-4-argon-low" -> "Gemini 4 Argon (Low)"
+    "claude-opus-5-5-high" -> "Claude Opus 5.5 (High)"
+    "claude-opus-5-5-medium" -> "Claude Opus 5.5 (Medium)"
+    "claude-opus-5-5-low" -> "Claude Opus 5.5 (Low)"
+    "claude-sonnet-5-5-high" -> "Claude Sonnet 5.5 (High)"
+    "claude-sonnet-5-5-medium" -> "Claude Sonnet 5.5 (Medium)"
+    "claude-sonnet-5-5-low" -> "Claude Sonnet 5.5 (Low)"
     "gemini-3.8-flash-high" -> "Gemini 3.8 Flash (High)"
     "gemini-3.8-flash-medium" -> "Gemini 3.8 Flash"
     "gemini-3.8-flash-low" -> "Gemini 3.8 Flash (Low)"
@@ -152,7 +161,8 @@ internal fun formatAntigravityModelName(id: String): String = when (id) {
 /** Returns tier classification badges for Antigravity models. */
 @Composable
 internal fun formatAntigravityModelTier(id: String): String = when {
-    id.contains("3.8") -> stringResource(R.string.agent_recommended)
+    id.contains("4-argon") -> stringResource(R.string.agent_recommended)
+    id.contains("3.8") -> stringResource(R.string.st_tier_stable)
     id.contains("3.6") -> stringResource(R.string.st_tier_stable)
     id.contains("3.1-pro") -> stringResource(R.string.st_tier_pro_reasoning)
     id.contains("claude") -> "Anthropic"
@@ -250,20 +260,12 @@ fun AgentScreen(
         }
     }
 
-    val antigravityModelList = remember(state.antigravityModels) {
-        if (state.antigravityModels.isNotEmpty()) state.antigravityModels
-        else listOf(
-            "gemini-3.8-flash-high",
-            "gemini-3.8-flash-medium",
-            "gemini-3.6-flash-high",
-            "gemini-3.6-flash-medium",
-            "gemini-3.6-flash-low",
-            "gemini-3.1-pro-high",
-            "gemini-3.1-pro-low",
-            "claude-sonnet-4-6",
-            "claude-opus-4-6-thinking",
-            "gpt-oss-120b-medium",
-        )
+    // Only show IDs returned by the signed-in account's official CLI.
+    // Avoid advertising premium models when access is not granted.
+    val antigravityModelList = remember(state.antigravityModels, state.antigravityModel) {
+        state.antigravityModels.ifEmpty {
+            listOfNotNull(state.antigravityModel.takeIf(String::isNotBlank))
+        }.distinct()
     }
 
     val filteredAntigravityModels = remember(antigravityModelList, antigravitySearch) {
@@ -997,7 +999,10 @@ fun AgentScreen(
                         onSubmitCode = { onSubmitAntigravityCode(antigravityCode); antigravityCode = "" },
                         onLogout = onLogoutAntigravity,
                         onRefreshModels = onRefreshAntigravityModels,
-                        onOpenModelSheet = { showAntigravityModelSheet = true },
+                        onOpenModelSheet = {
+                            onRefreshAntigravityModels()
+                            showAntigravityModelSheet = true
+                        },
                         onSetEffort = onSetAntigravityEffort,
                         onTest = onPing,
                     )

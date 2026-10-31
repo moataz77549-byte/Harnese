@@ -443,7 +443,7 @@ class RuntimeInstaller(private val context: Context) {
         check(latest == expectedVersion) { str(R.string.rt_install_newer_release, "Antigravity") }
         val downloaded = File(downloads, "antigravity-$latest-linux-arm64.tar.gz")
         val agyDownloadLabel = str(R.string.rt_install_downloading_version, "Antigravity CLI", latest)
-        downloadVerified(manifest.getString("url"), downloaded, manifest.getString("sha512"), algorithm = "SHA-512") { bytes, total ->
+        downloadVerified(manifest.getString("url"), downloaded, manifest.getString("sha256")) { bytes, total ->
             val ratio = if (total > 0L) bytes.toFloat() / total else 0f
             onProgress(RuntimeInstallProgress(agyDownloadLabel, ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
         }
@@ -452,7 +452,8 @@ class RuntimeInstaller(private val context: Context) {
         TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(downloaded.inputStream()))).use { archive ->
             var entry = archive.nextEntry
             while (entry != null) {
-                if (entry.isFile && entry.name.removePrefix("./") == "antigravity") {
+                val archiveName = entry.name.removePrefix("./").trim('/')
+                if (entry.isFile && (archiveName == "antigravity" || archiveName.endsWith("/antigravity") || archiveName == "agy" || archiveName.endsWith("/agy"))) {
                     val staged = File(destination.parentFile, ".agy-$latest.installing")
                     FileOutputStream(staged).use { archive.copyTo(it) }
                     Os.chmod(staged.absolutePath, 0b111101101)
@@ -527,9 +528,34 @@ class RuntimeInstaller(private val context: Context) {
         dshAndroidCompatibilityMarker.writeText(DSH_ANDROID_COMPATIBILITY_VERSION)
     }
 
-    private fun fetchAgyManifest(): JSONObject = JSONObject(
-        fetchText("https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json"),
-    )
+    /**
+     * Discover the current official Google Antigravity CLI release for Linux ARM64.
+     * GitHub's published SHA-256 asset digest is mandatory; never install an
+     * unverified archive, or trust a third-party update mirror.
+     */
+    private fun fetchAgyManifest(): JSONObject {
+        val release = JSONObject(fetchText("https://api.github.com/repos/google-antigravity/antigravity-cli/releases/latest"))
+        val version = release.getString("tag_name").removePrefix("v")
+        require(version.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+"))) { "Invalid Antigravity release version" }
+        val assets = release.getJSONArray("assets")
+        val asset = (0 until assets.length()).asSequence()
+            .map { assets.getJSONObject(it) }
+            .firstOrNull { it.optString("name") == "agy_cli_linux_arm64.tar.gz" }
+            ?: error("Official Antigravity Linux ARM64 asset was not found")
+        val digest = asset.optString("digest")
+        require(digest.startsWith("sha256:") &&
+            digest.substringAfter(':').matches(Regex("[0-9a-fA-F]{64}"))) {
+            "The official Antigravity release did not provide a valid SHA-256 digest"
+        }
+        val url = asset.getString("browser_download_url")
+        require(url.startsWith("https://github.com/google-antigravity/antigravity-cli/releases/download/")) {
+            "Unexpected Antigravity release URL"
+        }
+        return JSONObject()
+            .put("version", version)
+            .put("url", url)
+            .put("sha256", digest.substringAfter(':'))
+    }
 
     private fun isVersionNewer(candidate: String, current: String): Boolean {
         fun parts(value: String) = Regex("\\d+").findAll(value).map { it.value.toIntOrNull() ?: 0 }.toList()
@@ -1886,6 +1912,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         connection.connectTimeout = 15_000
         connection.readTimeout = 30_000
         connection.setRequestProperty("Accept", "application/json")
+        connection.setRequestProperty("User-Agent", "Harnese-Android/1.1")
         check(connection.responseCode in 200..299) { "Request failed with HTTP ${connection.responseCode}" }
         return connection.inputStream.bufferedReader().use { it.readText() }.also { connection.disconnect() }
     }

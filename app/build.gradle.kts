@@ -72,15 +72,15 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.jarves.mh"
+        applicationId = "com.jarves.harnese"
         minSdk = 28
         // The direct APK retains the proven target-28 PRoot execution path. The
         // Play build targets current Android while its runtime path is validated.
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 8
-        versionName = "1.0.7"
+        versionCode = 9
+        versionName = "1.1.0-harnese.1"
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
         providers.gradleProperty("appVersionName").orNull?.let { versionName = it }
 
