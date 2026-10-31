@@ -1,0 +1,33 @@
+name: Bootstrap Mobile Harness source
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  import-upstream:
+    if: "github.event.head_commit.message == 'Bootstrap Mobile Harness import'"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout new repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Merge the complete upstream source with its MIT license and history
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "harnese-build-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/techjarves/Mobile-Harness.git
+          git fetch --no-tags --depth=1 upstream main
+          git merge --allow-unrelated-histories --no-edit FETCH_HEAD
+          test -f app/build.gradle.kts
+          test -f LICENSE
+          git push origin HEAD:main
+          echo "Upstream imported successfully. Harnese is now an independent development repository."
