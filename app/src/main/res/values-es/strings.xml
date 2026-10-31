@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Mobile Harness</string>
+    <string name="app_name">Harnese</string>
 
     <!-- Navigation / Bottom Tabs -->
     <string name="tab_projects">Proyectos</string>

@@ -448,6 +448,7 @@ class RuntimeInstaller(private val context: Context) {
             onProgress(RuntimeInstallProgress(agyDownloadLabel, ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
         }
         val destination = File(rootfs, AGY_GUEST_PATH.removePrefix("/"))
+        destination.parentFile?.mkdirs()
         var found = false
         TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(downloaded.inputStream()))).use { archive ->
             var entry = archive.nextEntry
@@ -615,6 +616,16 @@ class RuntimeInstaller(private val context: Context) {
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
         if (isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) return
+        if (!BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
+            // A fresh online installation must use Google's latest verified release,
+            // not require the obsolete 2026.09 prebundled Antigravity archive.
+            val version = fetchAgyManifest().getString("version")
+            updateAgy(InstalledRuntime(proot, rootfs), version, onProgress)
+            require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
+                "Official Antigravity CLI installation is incomplete"
+            }
+            return
+        }
         installRuntimeOverlay(
             bundle = AGY_BUNDLE,
             message = str(R.string.rt_install_installing_version, "Antigravity CLI", AGY_VERSION),
