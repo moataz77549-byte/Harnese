@@ -1,11 +1,11 @@
-# Harnese Connect — independent Android application
+# Harnese Nova — independent Android application
 
 The Connect edition is installed **alongside** earlier Harnese applications.
 
 | Variant | Application ID | Display name |
 |---|---|---|
 | Normal legacy app | `com.jarves.harnese` | Harnese |
-| Connect edition (`-PmhParallelInstall=true`) | `com.moataz.harnese.connect` | Harnese Connect |
+| Connect edition (`-PmhParallelInstall=true`) | `com.moataz.harnese.nova` | Harnese Nova |
 
 Both reuse the same functional code and Android 9+/ARM64 support. Their private storage (projects, chats, agent logins, BotFather token, and Linux runtime) is isolated and **not migrated automatically**.
 

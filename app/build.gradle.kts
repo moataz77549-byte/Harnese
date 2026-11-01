@@ -75,16 +75,18 @@ android {
     }
 
     defaultConfig {
-        applicationId = if (parallelTrialInstall) "com.moataz.harnese.connect" else "com.jarves.harnese"
-        manifestPlaceholders["harneseAppLabel"] = if (parallelTrialInstall) "Harnese Connect" else "Harnese"
+        applicationId = if (parallelTrialInstall) "com.moataz.harnese.nova" else "com.jarves.harnese"
+        manifestPlaceholders["harneseAppLabel"] = if (parallelTrialInstall) "Harnese Nova" else "Harnese"
+        manifestPlaceholders["harneseAppIcon"] = if (parallelTrialInstall) "@mipmap/ic_launcher_nova" else "@mipmap/ic_launcher"
+        manifestPlaceholders["harneseAppRoundIcon"] = if (parallelTrialInstall) "@mipmap/ic_launcher_nova_round" else "@mipmap/ic_launcher_round"
         minSdk = 28
         // The direct APK retains the proven target-28 PRoot execution path. The
         // Play build targets current Android while its runtime path is validated.
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 13
-        versionName = "1.3.0-harnese.connect.1"
+        versionCode = 14
+        versionName = "1.3.1-harnese.nova.1"
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
         providers.gradleProperty("appVersionName").orNull?.let { versionName = it }
 
@@ -110,7 +112,7 @@ android {
             buildConfigField("boolean", "OFFLINE_RUNTIME_BUNDLES", "false")
             buildConfigField("String", "RUNTIME_RELEASE_BASE_URL", buildConfigString(runtimeReleaseBaseUrl))
             buildConfigField("String", "APP_UPDATE_MANIFEST_URL", buildConfigString(
-                if (parallelTrialInstall) "https://github.com/moataz77549-byte/Harnese/releases/latest/download/harnese-connect-update.json"
+                if (parallelTrialInstall) "https://github.com/moataz77549-byte/Harnese/releases/latest/download/harnese-nova-update.json"
                 else appUpdateManifestUrl
             ))
             buildConfigField("String", "APP_VARIANT", "\"online\"")

@@ -35,13 +35,24 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Build Harnese Connect unsigned release (owner signs outside CI)
+      - name: Build Harnese Nova unsigned release (requires owner signing)
         run: ./gradlew :app:assembleOnlineRelease -PmhParallelInstall=true --no-daemon --stacktrace
-      - name: Publish Connect unsigned release for owner signing
+      - name: Verify Nova package identity and launcher label
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=$(find app/build/outputs/apk/online/release -name '*-unsigned.apk' -print -quit)
+          test -n "$APK"
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -n 1)
+          test -x "$AAPT"
+          "$AAPT" dump badging "$APK" > "$RUNNER_TEMP/harnese-nova-badging.txt"
+          grep -F "package: name='com.moataz.harnese.nova'" "$RUNNER_TEMP/harnese-nova-badging.txt"
+          grep -F "application-label:'Harnese Nova'" "$RUNNER_TEMP/harnese-nova-badging.txt"
+      - name: Verify Nova package identity and publish unsigned release
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: harnese-connect-unsigned-release-arm64
+          name: harnese-nova-unsigned-release-arm64
           path: app/build/outputs/apk/online/release/*.apk
           if-no-files-found: error
           retention-days: 14

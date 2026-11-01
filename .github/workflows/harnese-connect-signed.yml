@@ -1,4 +1,4 @@
-name: Sign Harnese Connect (owner key)
+name: Sign Harnese Nova (owner key)
 
 on:
   workflow_dispatch:
@@ -24,38 +24,38 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Preflight owner signing secrets
         env:
-          HARN_CONNECT_JKS_B64: ${{ secrets.HARN_CONNECT_JKS_B64 }}
-          HARN_CONNECT_KEYSTORE_PASS: ${{ secrets.HARN_CONNECT_KEYSTORE_PASS }}
-          HARN_CONNECT_KEY_ALIAS: ${{ secrets.HARN_CONNECT_KEY_ALIAS }}
-          HARN_CONNECT_KEY_PASS: ${{ secrets.HARN_CONNECT_KEY_PASS }}
+          HARN_NOVA_JKS_B64: ${{ secrets.HARN_NOVA_JKS_B64 }}
+          HARN_NOVA_KEYSTORE_PASS: ${{ secrets.HARN_NOVA_KEYSTORE_PASS }}
+          HARN_NOVA_KEY_ALIAS: ${{ secrets.HARN_NOVA_KEY_ALIAS }}
+          HARN_NOVA_KEY_PASS: ${{ secrets.HARN_NOVA_KEY_PASS }}
         shell: bash
         run: |
           set -euo pipefail
-          for name in HARN_CONNECT_JKS_B64 HARN_CONNECT_KEYSTORE_PASS HARN_CONNECT_KEY_ALIAS HARN_CONNECT_KEY_PASS; do
+          for name in HARN_NOVA_JKS_B64 HARN_NOVA_KEYSTORE_PASS HARN_NOVA_KEY_ALIAS HARN_NOVA_KEY_PASS; do
             if [[ -z "${!name}" ]]; then
               echo "::error::Missing owner signing secret: $name"
               exit 1
             fi
           done
-      - name: Build and sign with the persistent Harnese Connect key
+      - name: Build and sign with the persistent Harnese Nova key
         env:
-          HARN_CONNECT_JKS_B64: ${{ secrets.HARN_CONNECT_JKS_B64 }}
-          MH_UPLOAD_STORE_PASSWORD: ${{ secrets.HARN_CONNECT_KEYSTORE_PASS }}
-          MH_UPLOAD_KEY_ALIAS: ${{ secrets.HARN_CONNECT_KEY_ALIAS }}
-          MH_UPLOAD_KEY_PASSWORD: ${{ secrets.HARN_CONNECT_KEY_PASS }}
+          HARN_NOVA_JKS_B64: ${{ secrets.HARN_NOVA_JKS_B64 }}
+          MH_UPLOAD_STORE_PASSWORD: ${{ secrets.HARN_NOVA_KEYSTORE_PASS }}
+          MH_UPLOAD_KEY_ALIAS: ${{ secrets.HARN_NOVA_KEY_ALIAS }}
+          MH_UPLOAD_KEY_PASSWORD: ${{ secrets.HARN_NOVA_KEY_PASS }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/harnese-signing"
           export MH_UPLOAD_STORE_FILE="$RUNNER_TEMP/harnese-signing/connect-upload.jks"
-          printf '%s' "$HARN_CONNECT_JKS_B64" | base64 -d > "$MH_UPLOAD_STORE_FILE"
+          printf '%s' "$HARN_NOVA_JKS_B64" | base64 -d > "$MH_UPLOAD_STORE_FILE"
           chmod 600 "$MH_UPLOAD_STORE_FILE"
           ./gradlew :app:testOnlineDebugUnitTest :app:assembleOnlineRelease -PmhParallelInstall=true --no-daemon --stacktrace
           rm -f "$MH_UPLOAD_STORE_FILE"
       - name: Publish owner-signed Connect APK
         uses: actions/upload-artifact@v4
         with:
-          name: harnese-connect-owner-signed-arm64
+          name: harnese-nova-owner-signed-arm64
           path: app/build/outputs/apk/online/release/*.apk
           if-no-files-found: error
           retention-days: 14
