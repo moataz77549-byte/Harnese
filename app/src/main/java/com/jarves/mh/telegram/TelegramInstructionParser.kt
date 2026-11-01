@@ -5,6 +5,9 @@ sealed interface TelegramInstruction {
     data object Help : TelegramInstruction
     data class Pair(val code: String) : TelegramInstruction
     data object Projects : TelegramInstruction
+    data class NewProject(val name: String) : TelegramInstruction
+    data object Files : TelegramInstruction
+    data object History : TelegramInstruction
     data class Open(val projectIdOrPrefix: String) : TelegramInstruction
     data object Chats : TelegramInstruction
     data class Chat(val chatIdOrPrefix: String) : TelegramInstruction
@@ -27,6 +30,9 @@ object TelegramInstructionParser {
             "/start", "/help" -> TelegramInstruction.Help
             "/pair" -> if (argument.matches(Regex("[0-9]{9}"))) TelegramInstruction.Pair(argument) else TelegramInstruction.Unknown
             "/projects" -> TelegramInstruction.Projects
+            "/newproject" -> if (argument.length in 1..80) TelegramInstruction.NewProject(argument) else TelegramInstruction.Unknown
+            "/files" -> TelegramInstruction.Files
+            "/history" -> TelegramInstruction.History
             "/open" -> if (argument.length in 4..36) TelegramInstruction.Open(argument) else TelegramInstruction.Unknown
             "/chats" -> TelegramInstruction.Chats
             "/chat" -> if (argument.length in 4..36) TelegramInstruction.Chat(argument) else TelegramInstruction.Unknown

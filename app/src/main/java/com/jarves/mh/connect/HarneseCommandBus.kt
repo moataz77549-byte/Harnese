@@ -6,6 +6,9 @@ import kotlinx.coroutines.withContext
 /** Typed command entry point shared by Android UI and external integrations. */
 sealed interface HarneseCommand {
     data object ListProjects : HarneseCommand
+    data class CreateProject(val name: String) : HarneseCommand
+    data class ListFiles(val projectId: String) : HarneseCommand
+    data class ReadMessages(val projectId: String, val chatId: String) : HarneseCommand
     data class ListChats(val projectId: String) : HarneseCommand
     data class ProjectStatus(val projectId: String?) : HarneseCommand
     data class OpenProject(val projectId: String) : HarneseCommand

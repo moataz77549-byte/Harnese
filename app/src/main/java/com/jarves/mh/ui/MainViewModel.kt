@@ -5395,6 +5395,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.value.projectTerminalRunning || _state.value.androidBuildRunning
 
         return when (command) {
+            is HarneseCommand.CreateProject -> {
+                val name = command.name.trim()
+                if (busy()) return HarneseCommandResult.error("لا يمكن إنشاء مشروع أثناء مهمة أخرى.")
+                if (name.isBlank() || name.length > 80) return HarneseCommandResult.error("اسم المشروع غير صالح.")
+                createProject(name)
+                val created = _state.value.activeProject
+                if (created?.name != name) HarneseCommandResult.error("لم يُنشأ المشروع.")
+                else HarneseCommandResult.success("تم إنشاء المشروع ${created.name}\nمعرّف: ${created.id}")
+            }
+            is HarneseCommand.ListFiles -> {
+                val project = findProject(command.projectId)
+                    ?: return HarneseCommandResult.error("المشروع غير موجود.")
+                val root = java.io.File(getApplication<Application>().filesDir, "workspaces/${project.id}").canonicalFile
+                val files = root.listFiles().orEmpty()
+                    .filter { !java.nio.file.Files.isSymbolicLink(it.toPath()) &&
+                        !it.name.startsWith(".") && it.name !in setOf("node_modules", "build") }
+                    .take(40).map { (if (it.isDirectory) "📁 " else "📄 ") + it.name }
+                HarneseCommandResult.success(if (files.isEmpty()) "لا توجد ملفات ظاهرة." else files.joinToString("\n"))
+            }
+            is HarneseCommand.ReadMessages -> {
+                val project = findProject(command.projectId)
+                    ?: return HarneseCommandResult.error("المشروع غير موجود.")
+                if (preferences.loadProjectChats(project.id).none { it.id == command.chatId })
+                    return HarneseCommandResult.error("الدردشة غير موجودة.")
+                val s = _state.value
+                val messages = if (s.activeProject?.id == project.id && s.activeChatId == command.chatId)
+                    s.messages else preferences.loadMessages(project.id, command.chatId)
+                HarneseCommandResult.success(if (messages.isEmpty()) "لا توجد رسائل." else
+                    messages.takeLast(8).joinToString("\n\n") {
+                        "${if (it.fromUser) "👤" else "🤖"} ${it.text.take(420)}"
+                    }.take(3_700))
+            }
             HarneseCommand.ListProjects -> {
                 val all = _state.value.projects
                 HarneseCommandResult.success(if (all.isEmpty()) "لا توجد مشاريع." else all.joinToString("\n") {

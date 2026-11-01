@@ -24,3 +24,8 @@
 - Kotlin unit tests for command parser and command results.
 - CI Android debug build/tests.
 - Real device login/pairing/background tests still required.
+
+## أوامر إضافية
+- `/newproject NAME` لإنشاء مشروع فارغ جديد.
+- `/files` لعرض أسماء ملفات جذر المشروع دون إرسال محتوياتها.
+- `/history` لعرض آخر ثماني رسائل في الدردشة المختارة (لا ترسل المحادثة إن كانت تحتوي على أسرار).

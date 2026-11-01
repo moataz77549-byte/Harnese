@@ -145,6 +145,9 @@ class TelegramPollingService : Service() {
         return when (instruction) {
             TelegramInstruction.Help -> """🤖 Harnese Connect
 /projects — المشاريع
+/newproject NAME — إنشاء مشروع
+/files — ملفات جذر المشروع
+/history — آخر رسائل الدردشة
 /open ID — فتح مشروع
 /chats — دردشات المشروع
 /chat ID — اختيار دردشة
@@ -155,6 +158,18 @@ class TelegramPollingService : Service() {
 /reject ID — رفض طلب أداة
 /stop — إيقاف المهمة
 ⚠️ لا يقبل البوت أوامر shell أو الموافقة على أدوات حساسة. افتح التطبيق للموافقة المحلية.""".trimIndent()
+            is TelegramInstruction.NewProject ->
+                dispatch(HarneseCommand.CreateProject(instruction.name)).text
+            TelegramInstruction.Files -> {
+                val project = store.lastProjectId() ?: return noProject()
+                dispatch(HarneseCommand.ListFiles(project)).text.take(3700)
+            }
+            TelegramInstruction.History -> {
+                val project = store.lastProjectId() ?: return noProject()
+                val chat = store.lastChatId()?.takeIf(String::isNotBlank)
+                    ?: return "اختر دردشة أولاً: /chats ثم /chat ID."
+                dispatch(HarneseCommand.ReadMessages(project, chat)).text.take(3700)
+            }
             TelegramInstruction.Projects -> {
                 val result = dispatch(HarneseCommand.ListProjects)
                 if (!result.ok) result.text else result.text.take(3700)
