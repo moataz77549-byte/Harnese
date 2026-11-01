@@ -35,13 +35,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Build Harnese Connect (independent install)
-        run: ./gradlew :app:assembleOnlineDebug -PmhParallelInstall=true --no-daemon --stacktrace
-      - name: Publish parallel-install trial APK
+      - name: Build Harnese Connect unsigned release (owner signs outside CI)
+        run: ./gradlew :app:assembleOnlineRelease -PmhParallelInstall=true --no-daemon --stacktrace
+      - name: Publish Connect unsigned release for owner signing
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: harnese-connect-unsigned-ci-arm64
-          path: app/build/outputs/apk/online/debug/*.apk
+          name: harnese-connect-unsigned-release-arm64
+          path: app/build/outputs/apk/online/release/*.apk
           if-no-files-found: error
           retention-days: 14
