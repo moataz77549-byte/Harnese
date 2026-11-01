@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import shlex
 from pathlib import Path
 import struct
 import subprocess
@@ -158,7 +159,7 @@ def backup(directory):
         '; do [ ! -e "$p" ] || set -- "$@" "$p"; done; '
         '[ "$#" -gt 0 ] || exit 64; exec tar -cf - "$@"'
     )
-    proc = subprocess.Popen(["adb", "exec-out", "run-as", PKG, "sh", "-c", shell_script],
+    proc = subprocess.Popen(["adb", "exec-out", "run-as", PKG, "sh", "-c", shlex.quote(shell_script)],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     temp = directory / (ARCHIVE + ".partial")
     try:
@@ -230,7 +231,7 @@ def sanitize_preferences(content):
 
 def restore(directory, reset_runtime):
     proc = subprocess.Popen(
-        ["adb", "shell", "-T", "run-as", PKG, "sh", "-c", "tar -xf -"],
+        ["adb", "shell", "-T", "run-as", PKG, "tar", "-xf", "-"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
     try:
@@ -249,8 +250,7 @@ def restore(directory, reset_runtime):
         message = proc.stderr.read().decode("utf-8", "replace")[:240]
         if proc.wait() != 0:
             raise RuntimeError("Restore failed: " + message)
-        adb("exec-out", "run-as", PKG, "sh", "-c",
-            "test -s shared_prefs/pocket_preferences.xml")
+        adb("exec-out", "run-as", PKG, "test", "-s", "shared_prefs/pocket_preferences.xml")
     finally:
         if proc.poll() is None:
             proc.kill()
