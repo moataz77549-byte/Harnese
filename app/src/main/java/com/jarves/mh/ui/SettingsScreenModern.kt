@@ -103,13 +103,14 @@ import com.jarves.mh.network.ModelDiscoveryResult
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.ui.res.stringResource
 import com.jarves.mh.R
+import com.jarves.mh.telegram.TelegramConnectSettings
 import com.jarves.mh.runtime.AntigravityAuthStatus
 import com.jarves.mh.ui.theme.AppLanguage
 import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
 
-private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, DIAGNOSTICS, UPDATE_CHANNEL }
+private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, DIAGNOSTICS, TELEGRAM, UPDATE_CHANNEL }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -236,6 +237,16 @@ fun SettingsScreen(
                         ModernThemeChoice(stringResource(R.string.theme_system), Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
                     }
                 }
+            }
+
+            item {
+                SettingsAccordion(
+                    title = stringResource(R.string.tg_section_title),
+                    subtitle = stringResource(R.string.tg_section_subtitle),
+                    icon = Icons.Default.SmartToy,
+                    expanded = expanded == SettingsSection.TELEGRAM,
+                    onClick = { toggle(SettingsSection.TELEGRAM) },
+                ) { TelegramConnectSettings() }
             }
 
             item {

@@ -386,4 +386,26 @@
     <string name="agent_agy_installed_cli_version">Installed Antigravity CLI: v%1$s</string>
     <string name="agent_agy_update_cli_button">Update Antigravity CLI to v%1$s</string>
     <string name="agent_agy_argon_eligibility_hint">Argon is not in the models returned by your CLI. Check for and install a CLI update. Google requires a paid AI Pro plan (or eligible premium-device trial) or AI Ultra. Your Android app cannot unlock models that Google has not enabled for the signed-in account.</string>
+    <string name="tg_section_title">Telegram Connect</string>
+    <string name="tg_section_subtitle">Control projects and chats via your own bot</string>
+    <string name="tg_intro">Create a bot with @BotFather, enter its token, start the service and pair in a PRIVATE chat. The phone must be online.</string>
+    <string name="tg_bot_token">BotFather token</string>
+    <string name="tg_save_token">Save encrypted token</string>
+    <string name="tg_token_saved">Token saved and previous pairing cleared.</string>
+    <string name="tg_token_configured">Token saved on device.</string>
+    <string name="tg_token_missing">Bot token not configured.</string>
+    <string name="tg_linked_account">Paired Telegram user ID: %1$s</string>
+    <string name="tg_pair_code_button">Generate pairing code</string>
+    <string name="tg_unlink">Revoke pairing</string>
+    <string name="tg_unlinked">Pairing revoked.</string>
+    <string name="tg_pair_instructions">Send /pair with this code to the bot in a private chat within five minutes.</string>
+    <string name="tg_pair_code_display">Pairing code: %1$s</string>
+    <string name="tg_copy_pair">Copy /pair command</string>
+    <string name="tg_allow_prompts">Allow remote agent prompts (opt-in)</string>
+    <string name="tg_security_notice">Remote prompts can change project files under existing agent rules. Tool approvals require review on the phone; Telegram can only reject. Never share your bot token.</string>
+    <string name="tg_start">Start bot</string>
+    <string name="tg_stop">Stop bot</string>
+    <string name="tg_stopped">Requested bot stop.</string>
+    <string name="tg_connection_status">Status: %1$s</string>
+    <string name="tg_refresh_link">Refresh pairing</string>
 </resources>

@@ -219,4 +219,26 @@
     <string name="agent_agy_installed_cli_version">إصدار محرك Antigravity المثبّت: v%1$s</string>
     <string name="agent_agy_update_cli_button">تحديث محرك Antigravity إلى v%1$s</string>
     <string name="agent_agy_argon_eligibility_hint">نموذج Argon غير موجود في القائمة التي أعادها المحرك. افحص تحديث Antigravity وثبّته. تشترط Google اشتراك AI Pro مدفوعاً أو تجربة مؤهلة على جهاز متميز، أو AI Ultra. لا يستطيع التطبيق تفعيل نموذج لم تُتحه Google للحساب المتصل.</string>
+    <string name="tg_section_title">تكامل تيليجرام</string>
+    <string name="tg_section_subtitle">إدارة المشاريع والدردشات من بوتك الشخصي</string>
+    <string name="tg_intro">أنشئ بوتاً من @BotFather، وأدخل التوكن، وشغّل الخدمة، ثم اقترن من محادثة خاصة. يجب أن يكون الهاتف متصلاً بالإنترنت.</string>
+    <string name="tg_bot_token">توكن البوت من BotFather</string>
+    <string name="tg_save_token">حفظ التوكن بشكل مشفر</string>
+    <string name="tg_token_saved">تم حفظ التوكن وإلغاء الاقتران السابق.</string>
+    <string name="tg_token_configured">توكن البوت محفوظ على الجهاز.</string>
+    <string name="tg_token_missing">لم يتم حفظ التوكن.</string>
+    <string name="tg_linked_account">معرف مستخدم تيليجرام المرتبط: %1$s</string>
+    <string name="tg_pair_code_button">إنشاء رمز اقتران</string>
+    <string name="tg_unlink">إلغاء الاقتران</string>
+    <string name="tg_unlinked">تم إلغاء الاقتران.</string>
+    <string name="tg_pair_instructions">أرسل أمر /pair مع الرمز للبوت في محادثة خاصة خلال خمس دقائق.</string>
+    <string name="tg_pair_code_display">رمز الاقتران: %1$s</string>
+    <string name="tg_copy_pair">نسخ أمر /pair</string>
+    <string name="tg_allow_prompts">السماح بإرسال مهام للوكيل عن بُعد (اختياري)</string>
+    <string name="tg_security_notice">قد تغير المهام المرسلة من تيليجرام ملفات المشروع وفق سياسة الوكيل الحالية. اعتماد الأدوات الحساسة من الهاتف فقط، ويسمح للبوت بالرفض. لا تشارك التوكن.</string>
+    <string name="tg_start">تشغيل البوت</string>
+    <string name="tg_stop">إيقاف البوت</string>
+    <string name="tg_stopped">تم طلب إيقاف البوت.</string>
+    <string name="tg_connection_status">الحالة: %1$s</string>
+    <string name="tg_refresh_link">تحديث الاقتران</string>
 </resources>
