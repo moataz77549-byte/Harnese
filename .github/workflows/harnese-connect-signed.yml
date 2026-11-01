@@ -1,0 +1,61 @@
+name: Sign Harnese Connect (owner key)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signed-connect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Preflight owner signing secrets
+        env:
+          HARN_CONNECT_JKS_B64: ${{ secrets.HARN_CONNECT_JKS_B64 }}
+          HARN_CONNECT_KEYSTORE_PASS: ${{ secrets.HARN_CONNECT_KEYSTORE_PASS }}
+          HARN_CONNECT_KEY_ALIAS: ${{ secrets.HARN_CONNECT_KEY_ALIAS }}
+          HARN_CONNECT_KEY_PASS: ${{ secrets.HARN_CONNECT_KEY_PASS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in HARN_CONNECT_JKS_B64 HARN_CONNECT_KEYSTORE_PASS HARN_CONNECT_KEY_ALIAS HARN_CONNECT_KEY_PASS; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing owner signing secret: $name"
+              exit 1
+            fi
+          done
+      - name: Build and sign with the persistent Harnese Connect key
+        env:
+          HARN_CONNECT_JKS_B64: ${{ secrets.HARN_CONNECT_JKS_B64 }}
+          MH_UPLOAD_STORE_PASSWORD: ${{ secrets.HARN_CONNECT_KEYSTORE_PASS }}
+          MH_UPLOAD_KEY_ALIAS: ${{ secrets.HARN_CONNECT_KEY_ALIAS }}
+          MH_UPLOAD_KEY_PASSWORD: ${{ secrets.HARN_CONNECT_KEY_PASS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/harnese-signing"
+          export MH_UPLOAD_STORE_FILE="$RUNNER_TEMP/harnese-signing/connect-upload.jks"
+          printf '%s' "$HARN_CONNECT_JKS_B64" | base64 -d > "$MH_UPLOAD_STORE_FILE"
+          chmod 600 "$MH_UPLOAD_STORE_FILE"
+          ./gradlew :app:testOnlineDebugUnitTest :app:assembleOnlineRelease -PmhParallelInstall=true --no-daemon --stacktrace
+          rm -f "$MH_UPLOAD_STORE_FILE"
+      - name: Publish owner-signed Connect APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: harnese-connect-owner-signed-arm64
+          path: app/build/outputs/apk/online/release/*.apk
+          if-no-files-found: error
+          retention-days: 14

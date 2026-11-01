@@ -19,7 +19,8 @@ val uploadStorePath = providers.environmentVariable("MH_UPLOAD_STORE_FILE").orNu
 val uploadStorePassword = providers.environmentVariable("MH_UPLOAD_STORE_PASSWORD").orNull
 val uploadKeyAlias = providers.environmentVariable("MH_UPLOAD_KEY_ALIAS").orNull
 val uploadKeyPassword = providers.environmentVariable("MH_UPLOAD_KEY_PASSWORD").orNull
-// Optional trial build can coexist with the previous Harnese installation.
+// Harnese Connect is a distinct application, deliberately isolated from earlier Harnese installs.
+// The owner must keep the NEW signing key for all future updates of this package.
 val parallelTrialInstall = providers.gradleProperty("mhParallelInstall").orNull == "true"
 val hasUploadSigning = listOf(
     uploadStorePath,
@@ -74,16 +75,16 @@ android {
     }
 
     defaultConfig {
-        applicationId = if (parallelTrialInstall) "com.jarves.harnese.parallel" else "com.jarves.harnese"
-        manifestPlaceholders["harneseAppLabel"] = if (parallelTrialInstall) "Harnese Parallel" else "Harnese"
+        applicationId = if (parallelTrialInstall) "com.moataz.harnese.connect" else "com.jarves.harnese"
+        manifestPlaceholders["harneseAppLabel"] = if (parallelTrialInstall) "Harnese Connect" else "Harnese"
         minSdk = 28
         // The direct APK retains the proven target-28 PRoot execution path. The
         // Play build targets current Android while its runtime path is validated.
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 12
-        versionName = "1.2.1-harnese.migration.1"
+        versionCode = 13
+        versionName = "1.3.0-harnese.connect.1"
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
         providers.gradleProperty("appVersionName").orNull?.let { versionName = it }
 
@@ -108,7 +109,10 @@ android {
             dimension = "runtimeDelivery"
             buildConfigField("boolean", "OFFLINE_RUNTIME_BUNDLES", "false")
             buildConfigField("String", "RUNTIME_RELEASE_BASE_URL", buildConfigString(runtimeReleaseBaseUrl))
-            buildConfigField("String", "APP_UPDATE_MANIFEST_URL", buildConfigString(appUpdateManifestUrl))
+            buildConfigField("String", "APP_UPDATE_MANIFEST_URL", buildConfigString(
+                if (parallelTrialInstall) "https://github.com/moataz77549-byte/Harnese/releases/latest/download/harnese-connect-update.json"
+                else appUpdateManifestUrl
+            ))
             buildConfigField("String", "APP_VARIANT", "\"online\"")
         }
         create("offline") {

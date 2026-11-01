@@ -48,7 +48,7 @@ class TelegramPollingService : Service() {
         preferences = AppPreferences(applicationContext)
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(
-            CHANNEL_ID, "Harnese Telegram remote control", NotificationManager.IMPORTANCE_LOW
+            CHANNEL_ID, "Harnese Connect Telegram control", NotificationManager.IMPORTANCE_LOW
         ))
         val notification = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Harnese Connect")
