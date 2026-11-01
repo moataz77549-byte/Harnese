@@ -1,0 +1,92 @@
+name: Publish Harnese Nova installable APK to Releases
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nova-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: harnese-nova-prerelease
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build installable Harnese Nova APK (independent package)
+        run: ./gradlew :app:testOnlineDebugUnitTest :app:assembleOnlineDebug -PmhParallelInstall=true --no-daemon --stacktrace
+      - name: Verify Android package, label, signer, and prepare direct APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=$(find app/build/outputs/apk/online/debug -name '*.apk' -print -quit)
+          test -n "$APK" && test -s "$APK"
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          "$BUILD_TOOLS/aapt" dump badging "$APK" > "$RUNNER_TEMP/nova-manifest.txt"
+          grep -F "package: name='com.moataz.harnese.nova'" "$RUNNER_TEMP/nova-manifest.txt"
+          grep -F "application-label:'Harnese Nova'" "$RUNNER_TEMP/nova-manifest.txt"
+          grep -F "versionCode='14'" "$RUNNER_TEMP/nova-manifest.txt"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/nova-cert.txt"
+          grep -F "Verified using v2 scheme (APK Signature Scheme v2): true" "$RUNNER_TEMP/nova-cert.txt"
+          mkdir -p dist/nova-release
+          cp "$APK" dist/nova-release/Harnese-Nova-v1.3.1-ARM64-TEST.apk
+          sha256sum dist/nova-release/*.apk > dist/nova-release/Harnese-Nova-v1.3.1-SHA256.txt
+          cat > dist/nova-release/RELEASE-NOTES.md <<'NOTES'
+          # Harnese Nova 1.3.1 — Independent Android App
+
+          **Install Harnese-Nova-v1.3.1-ARM64-TEST.apk directly. Do not download the source-code ZIP or GitHub Actions artifact ZIP.**
+
+          - Android package: `com.moataz.harnese.nova` — separate from original Harnese (`com.jarves.harnese`)
+          - Android 9 or newer; ARM64
+          - Distinct launcher name and teal icon
+          - Same project, Antigravity, chat and Telegram integration features as the current Harnese source
+
+          **TEST / PRERELEASE SIGNATURE:** This file is signed with this GitHub runner's temporary Android DEBUG certificate. It is installable but is **not signed with the owner's persistent signing key** and cannot update the previously provided owner-signed Nova APK. Future debug CI builds may have different signatures. The production signed version requires GitHub Actions signing secrets or the direct owner-signed APK from the maintainer.
+
+          To install next to the old Harnese, tap the `.apk` asset below in this release. Install as an app via Android's installer. Do not delete the old app.
+          NOTES
+      - name: Publish direct APK in GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG='harnese-nova-v1.3.1-test'
+          APK='dist/nova-release/Harnese-Nova-v1.3.1-ARM64-TEST.apk'
+          CHECKSUM='dist/nova-release/Harnese-Nova-v1.3.1-SHA256.txt'
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "The release already exists; preserving its original signing certificate."
+          else
+            gh release create "$TAG" "$APK" "$CHECKSUM" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Harnese Nova 1.3.1 (independent app, test signing)" \
+              --notes-file dist/nova-release/RELEASE-NOTES.md \
+              --prerelease
+          fi
+      - name: Verify published release and APK download URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view harnese-nova-v1.3.1-test --repo "$GITHUB_REPOSITORY" --json assets,url \
+            --jq '.assets[].name, .url'
+          echo "Direct download: https://github.com/$GITHUB_REPOSITORY/releases/download/harnese-nova-v1.3.1-test/Harnese-Nova-v1.3.1-ARM64-TEST.apk"
