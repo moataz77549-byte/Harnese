@@ -260,8 +260,19 @@ def restore(directory, reset_runtime):
 def upgrade(directory, new_apk):
     ensure_device()
     meta = verify(directory)
-    if not zipfile.is_zipfile(new_apk) or zipfile.ZipFile(new_apk).testzip() is not None:
+    if not zipfile.is_zipfile(new_apk):
         raise RuntimeError("New APK is corrupt")
+    with zipfile.ZipFile(new_apk) as apk_zip:
+        if apk_zip.testzip() is not None:
+            raise RuntimeError("New APK contains corrupted files")
+        manifest_bytes = apk_zip.read("AndroidManifest.xml")
+    # Protect against accidentally choosing the parallel-install artifact:
+    # it is a DIFFERENT Android package and cannot restore old app data.
+    if (b"com.jarves.harnese.parallel" in manifest_bytes or
+        "com.jarves.harnese.parallel".encode("utf-16le") in manifest_bytes):
+        raise RuntimeError("Use the NORMAL harnese-online-debug-arm64 APK, not the parallel-install APK.")
+    if not (PKG.encode() in manifest_bytes or PKG.encode("utf-16le") in manifest_bytes):
+        raise RuntimeError("Target APK does not appear to contain the expected Harnese application ID.")
     new_signer = apk_cert_sha256(new_apk)
     old_signer = meta["old_signature_sha256"]
     print("Old signer:", old_signer)
