@@ -394,6 +394,7 @@ data class AppUiState(
     val antigravityEffort: String = "high",
     val antigravityModels: List<String> = emptyList(),
     val antigravityModelsLoading: Boolean = false,
+    val antigravityModelsError: String? = null,
     val androidBuildRunning: Boolean = false,
     val androidBuildMessage: String? = null,
     val androidBuildPhase: AndroidBuildPhase = AndroidBuildPhase.IDLE,
@@ -2643,7 +2644,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshAntigravityModels() {
         if (_state.value.antigravityModelsLoading || !installer.isAgentInstalled(AgentKind.ANTIGRAVITY)) return
-        _state.update { it.copy(antigravityModelsLoading = true) }
+        _state.update { it.copy(antigravityModelsLoading = true, antigravityModelsError = null) }
         viewModelScope.launch(Dispatchers.IO) {
             val result = runCatching {
                 val runtime = installer.installedRuntime()
@@ -2679,15 +2680,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             preferences.antigravityEffort = selectedEffort
                             current.copy(
                                 antigravityModelsLoading = false,
+                                antigravityModelsError = null,
                                 antigravityModels = models,
                                 antigravityModel = selected,
                                 antigravityEffort = selectedEffort,
                             )
                         },
-                        onFailure = { error -> current.copy(
-                            antigravityModelsLoading = false,
-                            toastMessage = error.message ?: str(R.string.vm_antigravity_models_load_failed),
-                        ) },
+                        onFailure = { error ->
+                            val message = error.message ?: str(R.string.vm_antigravity_models_load_failed)
+                            current.copy(
+                                antigravityModelsLoading = false,
+                                antigravityModelsError = message,
+                                toastMessage = message,
+                            )
+                        },
                     )
                 }
             }

@@ -150,8 +150,8 @@ internal fun formatAntigravityModelName(id: String): String = when (id) {
     "gemini-3.6-flash-low" -> "Gemini 3.6 Flash (Low)"
     "gemini-3.1-pro-high" -> "Gemini 3.1 Pro (High)"
     "gemini-3.1-pro-low" -> "Gemini 3.1 Pro (Low)"
-    "claude-sonnet-4-6" -> "Claude 3.7 Sonnet"
-    "claude-opus-4-6-thinking" -> "Claude 3.7 Opus (Thinking)"
+    "claude-sonnet-4-6" -> "Claude Sonnet 4.6"
+    "claude-opus-4-6-thinking" -> "Claude Opus 4.6 (Thinking)"
     "gpt-oss-120b-medium" -> "GPT-OSS 120B"
     else -> id.split("-").joinToString(" ") { word ->
         word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.ROOT) else it.toString() }
@@ -378,6 +378,48 @@ fun AgentScreen(
                         if (state.antigravityModelsLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                         else Icon(Icons.Default.Refresh, stringResource(R.string.provider_refresh_models))
                     }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(
+                            R.string.agent_agy_installed_cli_version,
+                            state.installedAgentVersions[AgentKind.ANTIGRAVITY] ?: "—",
+                        ),
+                        modifier = Modifier.weight(1f),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (state.agentUpdatesChecking) {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.4.dp)
+                    }
+                }
+                val antigravityUpdate = state.agentUpdates[AgentKind.ANTIGRAVITY]
+                if (antigravityUpdate != null) {
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = state.agentUpdating == null && state.agentInstalling == null,
+                        onClick = { onUpdateAgent(AgentKind.ANTIGRAVITY) },
+                    ) {
+                        Text(stringResource(R.string.agent_agy_update_cli_button, antigravityUpdate.latestVersion))
+                    }
+                }
+                if (state.agentUpdating == AgentKind.ANTIGRAVITY) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                if (!state.antigravityModelsLoading && state.antigravityModels.none { it.contains("argon", ignoreCase = true) }) {
+                    Text(
+                        stringResource(R.string.agent_agy_argon_eligibility_hint),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                state.antigravityModelsError?.let { error ->
+                    Text(
+                        error,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
@@ -1000,6 +1042,7 @@ fun AgentScreen(
                         onLogout = onLogoutAntigravity,
                         onRefreshModels = onRefreshAntigravityModels,
                         onOpenModelSheet = {
+                            onCheckAgentUpdates()
                             onRefreshAntigravityModels()
                             showAntigravityModelSheet = true
                         },

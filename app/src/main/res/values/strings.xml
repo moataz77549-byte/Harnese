@@ -382,4 +382,8 @@
     <string name="diagnostics_inactive_stopped">Inactive processes stopped</string>
     <string name="diagnostics_cache_busy">Wait for active work to finish before clearing output</string>
     <string name="diagnostics_cache_cleared">Disposable runtime output cleared</string>
+    <!-- Antigravity model entitlement and runtime diagnostics -->
+    <string name="agent_agy_installed_cli_version">Installed Antigravity CLI: v%1$s</string>
+    <string name="agent_agy_update_cli_button">Update Antigravity CLI to v%1$s</string>
+    <string name="agent_agy_argon_eligibility_hint">Argon is not in the models returned by your CLI. Check for and install a CLI update. Google requires a paid AI Pro plan (or eligible premium-device trial) or AI Ultra. Your Android app cannot unlock models that Google has not enabled for the signed-in account.</string>
 </resources>
