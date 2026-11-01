@@ -55,6 +55,10 @@ class TelegramSecretStore(context: Context) {
     }.getOrNull()
 
     fun hasToken(): Boolean = prefs.contains("token_blob")
+    fun remoteTasksEnabled(): Boolean = prefs.getBoolean("remote_tasks_enabled", false)
+    fun setRemoteTasksEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("remote_tasks_enabled", enabled).commit()
+    }
     fun linkedUserId(): Long = prefs.getLong("linked_user", 0L)
     fun linkedChatId(): Long = prefs.getLong("linked_chat", 0L)
     fun lastProjectId(): String? = prefs.getString("last_project", null)

@@ -13,6 +13,7 @@ sealed interface HarneseCommand {
     data class NewChat(val projectId: String) : HarneseCommand
     data class SendPrompt(val projectId: String, val chatId: String, val prompt: String) : HarneseCommand
     data class RejectPendingTool(val approvalId: String) : HarneseCommand
+    data object PendingApproval : HarneseCommand
     data object StopTask : HarneseCommand
 }
 

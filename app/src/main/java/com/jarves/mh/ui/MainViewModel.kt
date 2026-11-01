@@ -5459,6 +5459,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 sendPrompt(command.prompt)
                 HarneseCommandResult.success("تم إرسال التعليمات إلى الوكيل في مشروع ${project.name}، دردشة ${chat.title}.")
             }
+            HarneseCommand.PendingApproval -> {
+                val pending = _state.value.pendingApproval
+                if (pending == null) HarneseCommandResult.success("لا يوجد طلب موافقة معلّق.")
+                else HarneseCommandResult.success(
+                    "طلب #${pending.approvalId}\nالأداة: ${pending.toolName}\nالمستوى: ${pending.risk.name}\n" +
+                    "المسارات: ${pending.affectedPaths.size}\nالموافقة على الهاتف فقط. الرفض: /reject ${pending.approvalId}"
+                )
+            }
             is HarneseCommand.RejectPendingTool -> {
                 val pending = _state.value.pendingApproval
                 if (pending?.approvalId != command.approvalId)
