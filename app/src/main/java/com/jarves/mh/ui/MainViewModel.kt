@@ -23,6 +23,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.jarves.mh.BuildConfig
+import com.jarves.mh.connect.HarneseCommand
+import com.jarves.mh.connect.HarneseCommandBus
+import com.jarves.mh.connect.HarneseCommandHandler
+import com.jarves.mh.connect.HarneseCommandResult
 import com.jarves.mh.R
 import com.jarves.mh.data.ApiKeyVault
 import com.jarves.mh.data.ApiKeyInfo
@@ -522,6 +526,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     init {
+        HarneseCommandBus.register(this, HarneseCommandHandler { command ->
+            executeIntegrationCommand(command)
+        })
         viewModelScope.launch {
             AndroidAppInstaller.events.collect { event ->
                 if (event.operationId != pendingAndroidInstallId) return@collect
@@ -5377,7 +5384,102 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preferences.saveProjectChats(project.id, _state.value.projectChats)
     }
 
+    /**
+     * Centralized command processing: all project/chat mutations run on the
+     * Main dispatcher and use the same rules as the Android UI.
+     */
+    private fun executeIntegrationCommand(command: HarneseCommand): HarneseCommandResult {
+        fun findProject(projectId: String): Project? =
+            _state.value.projects.firstOrNull { it.id == projectId }
+        fun busy(): Boolean = _state.value.isRunning ||
+            _state.value.projectTerminalRunning || _state.value.androidBuildRunning
+
+        return when (command) {
+            HarneseCommand.ListProjects -> {
+                val all = _state.value.projects
+                HarneseCommandResult.success(if (all.isEmpty()) "لا توجد مشاريع." else all.joinToString("\n") {
+                    "• ${it.name}  [${it.id}]"
+                })
+            }
+            is HarneseCommand.ListChats -> {
+                val project = findProject(command.projectId)
+                    ?: return HarneseCommandResult.error("المشروع غير موجود.")
+                val chats = preferences.loadProjectChats(project.id)
+                HarneseCommandResult.success(if (chats.isEmpty()) "لا توجد دردشات." else chats.joinToString("\n") {
+                    "• ${it.title}  [${it.id}]"
+                })
+            }
+            is HarneseCommand.ProjectStatus -> {
+                val s = _state.value
+                val project = command.projectId?.let(::findProject) ?: s.activeProject
+                val title = project?.name ?: "لا مشروع نشط"
+                val isCurrent = s.activeProject?.id == project?.id
+                val running = if (isCurrent) s.isRunning else false
+                HarneseCommandResult.success("المشروع: $title\nالوكيل: ${s.agentKind.name}\nالحالة: ${if (running) "يعمل" else "متوقف"}\nالدردشة: ${if (isCurrent) s.activeChatId ?: "لا توجد" else "غير نشطة"}")
+            }
+            is HarneseCommand.OpenProject -> {
+                val project = findProject(command.projectId)
+                    ?: return HarneseCommandResult.error("المشروع غير موجود.")
+                if (busy() && _state.value.activeProject?.id != project.id) {
+                    return HarneseCommandResult.error("مشروع آخر مشغول. انتظر انتهاء المهمة أولاً.")
+                }
+                openProject(project)
+                HarneseCommandResult.success("تم فتح مشروع ${project.name}.")
+            }
+            is HarneseCommand.SelectChat -> {
+                if (busy()) return HarneseCommandResult.error("لا يمكن تغيير الدردشة أثناء تنفيذ مهمة.")
+                val project = findProject(command.projectId)
+                    ?: return HarneseCommandResult.error("المشروع غير موجود.")
+                val chat = preferences.loadProjectChats(project.id).firstOrNull { it.id == command.chatId }
+                    ?: return HarneseCommandResult.error("الدردشة غير موجودة.")
+                openProject(project)
+                switchChat(chat.id)
+                HarneseCommandResult.success("الدردشة النشطة: ${chat.title}.")
+            }
+            is HarneseCommand.NewChat -> {
+                if (busy()) return HarneseCommandResult.error("انتظر انتهاء المهمة لإنشاء دردشة.")
+                val project = findProject(command.projectId)
+                    ?: return HarneseCommandResult.error("المشروع غير موجود.")
+                openProject(project)
+                createChat()
+                HarneseCommandResult.success("تم إنشاء دردشة. المعرف: ${_state.value.activeChatId ?: "غير متاح"}")
+            }
+            is HarneseCommand.SendPrompt -> {
+                val project = findProject(command.projectId)
+                    ?: return HarneseCommandResult.error("المشروع غير موجود.")
+                if (busy()) return HarneseCommandResult.error("الوكيل مشغول، جرّب مجددًا بعد انتهائه.")
+                if (command.prompt.isBlank() || command.prompt.length > 4_000)
+                    return HarneseCommandResult.error("الأمر فارغ أو يتجاوز 4000 حرف.")
+                val chat = preferences.loadProjectChats(project.id).firstOrNull { it.id == command.chatId }
+                    ?: return HarneseCommandResult.error("الدردشة غير موجودة.")
+                openProject(project)
+                switchChat(chat.id)
+                if (_state.value.activeProject?.id != project.id || _state.value.activeChatId != chat.id)
+                    return HarneseCommandResult.error("تعذّر تأكيد وجهة الرسالة.")
+                sendPrompt(command.prompt)
+                HarneseCommandResult.success("تم إرسال التعليمات إلى الوكيل في مشروع ${project.name}، دردشة ${chat.title}.")
+            }
+            is HarneseCommand.RejectPendingTool -> {
+                val pending = _state.value.pendingApproval
+                if (pending?.approvalId != command.approvalId)
+                    HarneseCommandResult.error("طلب الموافقة غير صالح أو انتهى.")
+                else {
+                    answerApproval(false)
+                    HarneseCommandResult.success("رُفض طلب تشغيل الأداة. لا توجد موافقات تلقائية من تيليجرام.")
+                }
+            }
+            HarneseCommand.StopTask -> {
+                if (!_state.value.isRunning) HarneseCommandResult.error("لا توجد مهمة قيد التنفيذ.")
+                else {
+                    stopTask()
+                    HarneseCommandResult.success("طُلب إيقاف المهمة.")
+                }
+            }
+        }
+    }
+
     override fun onCleared() {
+        HarneseCommandBus.unregister(this)
         stopAndroidLogcat()
         super.onCleared()
     }
