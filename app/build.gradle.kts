@@ -19,6 +19,8 @@ val uploadStorePath = providers.environmentVariable("MH_UPLOAD_STORE_FILE").orNu
 val uploadStorePassword = providers.environmentVariable("MH_UPLOAD_STORE_PASSWORD").orNull
 val uploadKeyAlias = providers.environmentVariable("MH_UPLOAD_KEY_ALIAS").orNull
 val uploadKeyPassword = providers.environmentVariable("MH_UPLOAD_KEY_PASSWORD").orNull
+// Optional trial build can coexist with the previous Harnese installation.
+val parallelTrialInstall = providers.gradleProperty("mhParallelInstall").orNull == "true"
 val hasUploadSigning = listOf(
     uploadStorePath,
     uploadStorePassword,
@@ -72,15 +74,16 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.jarves.harnese"
+        applicationId = if (parallelTrialInstall) "com.jarves.harnese.parallel" else "com.jarves.harnese"
+        manifestPlaceholders["harneseAppLabel"] = if (parallelTrialInstall) "Harnese Parallel" else "Harnese"
         minSdk = 28
         // The direct APK retains the proven target-28 PRoot execution path. The
         // Play build targets current Android while its runtime path is validated.
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 11
-        versionName = "1.2.0-harnese.connect.1"
+        versionCode = 12
+        versionName = "1.2.1-harnese.migration.1"
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
         providers.gradleProperty("appVersionName").orNull?.let { versionName = it }
 

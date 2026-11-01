@@ -34,3 +34,14 @@ jobs:
           path: app/build/outputs/apk/online/debug/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Build parallel Harnese (installs beside the old app)
+        run: ./gradlew :app:assembleOnlineDebug -PmhParallelInstall=true --no-daemon --stacktrace
+      - name: Publish parallel-install trial APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harnese-parallel-debug-arm64
+          path: app/build/outputs/apk/online/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
