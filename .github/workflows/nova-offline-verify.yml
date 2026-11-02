@@ -47,7 +47,7 @@ jobs:
           tar --zstd -xf dist/runtime-bundles/pocketdev-core-arm64-2026.09.5.tar.zst -C guest
           for pack in python android; do tar --zstd -xf dist/runtime-bundles/pocketdev-${pack}-arm64-*.tar.zst -C guest; done
           tar --zstd -xf dist/runtime-bundles/nova-typescript-arm64-5.9.3.tar.zst -C guest
-          mkdir -p guest/tmp guest/workspace
+          mkdir -p guest/tmp guest/workspace guest/dev guest/proc guest/sys
           cp scripts/offline/smoke-test.sh guest/tmp/nova-smoke.sh
           file guest/usr/local/bin/node guest/root/android-sdk/build-tools/35.0.0/aapt2
       - uses: actions/download-artifact@v4
@@ -55,7 +55,9 @@ jobs:
           name: nova-offline-sample
           path: guest/workspace/offline-kotlin
       - name: Run Python, TypeScript and Gradle offline with network namespace isolated
+        shell: bash
         run: |
+          set -euo pipefail
           sudo mount --bind /dev guest/dev
           sudo mount -t proc proc guest/proc
           sudo unshare --net chroot guest /usr/bin/env -i HOME=/root USER=root LANG=C.UTF-8 PATH=/usr/local/bin:/usr/bin:/bin:/opt/gradle/gradle-8.14.3/bin:/opt/jdk-17.0.20.1+1/bin JAVA_HOME=/opt/jdk-17.0.20.1+1 ANDROID_HOME=/root/android-sdk /bin/bash /tmp/nova-smoke.sh 2>&1 | tee offline-smoke.log
