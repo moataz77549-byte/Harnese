@@ -94,7 +94,7 @@ class TelegramPollingService : Service() {
                     reply(token, item.destination, item.body)
                     journal.delivered(item.id)
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: TelegramRejectedException) { journal.failed(item) }
+                catch (rejected: TelegramRejectedException) { journal.failed(item, rejected.retryAfterSeconds * 1000L) }
                 catch (_: Exception) { journal.uncertain(item.id) }
                 delay(1100)
             }
@@ -343,7 +343,7 @@ class TelegramPollingService : Service() {
         } finally { connection.disconnect() }
     }
 
-    private class TelegramRejectedException : java.io.IOException()
+    private class TelegramRejectedException(val status: Int = 0, val retryAfterSeconds: Long = 0) : java.io.IOException("HTTP $status")
 
     private fun api(token: String, method: String, body: JSONObject): JSONObject {
         val connection = (URL("https://api.telegram.org/bot$token/$method").openConnection() as HttpURLConnection)
@@ -356,7 +356,10 @@ class TelegramPollingService : Service() {
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
-            if (status !in 200..299) throw TelegramRejectedException()
+            if (status !in 200..299) {
+                val retry = runCatching { JSONObject(connection.errorStream.bufferedReader().use { it.readText() }).optJSONObject("parameters")?.optLong("retry_after") ?: 0L }.getOrDefault(0L).coerceIn(0, 3600)
+                throw TelegramRejectedException(status, retry)
+            }
             val result = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
             if (!result.optBoolean("ok")) throw TelegramRejectedException()
             return result

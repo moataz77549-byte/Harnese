@@ -137,10 +137,10 @@ class HarneseEventBus private constructor(private val context: Context) : SQLite
         writableDatabase.execSQL("UPDATE outbox SET state='uncertain' WHERE id=?", arrayOf(id))
     }
     @Synchronized fun delivered(id: String) { writableDatabase.execSQL("UPDATE outbox SET state='sent',body='' WHERE id=?", arrayOf(id)) }
-    @Synchronized fun failed(item: Delivery) {
+    @Synchronized fun failed(item: Delivery, retryAfterMillis: Long = 0) {
         val count = item.attempts + 1
         writableDatabase.update("outbox", ContentValues().apply {
-            put("attempts", count); put("next_at", System.currentTimeMillis() + minOf(3_600_000L, 5000L * (1L shl count.coerceAtMost(10))))
+            put("attempts", count); put("next_at", System.currentTimeMillis() + maxOf(retryAfterMillis, minOf(3_600_000L, 5000L * (1L shl count.coerceAtMost(10)))))
             put("state", if (count >= 8) "failed" else "pending")
         }, "id=?", arrayOf(item.id))
     }

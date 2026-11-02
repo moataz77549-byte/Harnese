@@ -4,11 +4,22 @@ set -euo pipefail
 # No Bionic libraries are added to the APK; phones supply their own Android runtime.
 sdkmanager 'system-images;android-30;google_apis;arm64-v8a'
 sudo apt-get update
-sudo apt-get install -y android-sdk-libsparse-utils unzip
+sudo apt-get install -y android-sdk-libsparse-utils unzip qemu-utils erofs-utils
 IMAGE="$ANDROID_HOME/system-images/android-30/google_apis/arm64-v8a/system.img"
 mkdir -p android-image android-runtime/system/bin android-runtime/system/lib64 apex-image
-if file "$IMAGE" | grep -qi 'sparse'; then simg2img "$IMAGE" system.raw.img; else cp "$IMAGE" system.raw.img; fi
-sudo mount -o loop,ro system.raw.img android-image
+file "$IMAGE"
+if file "$IMAGE" | grep -qi 'sparse'; then simg2img "$IMAGE" system.raw.img
+elif file "$IMAGE" | grep -qi 'QCOW'; then qemu-img convert -O raw "$IMAGE" system.raw.img
+else cp "$IMAGE" system.raw.img; fi
+file system.raw.img
+sudo blkid system.raw.img || true
+if file system.raw.img | grep -qi 'EROFS'; then
+  fsck.erofs --extract=android-image system.raw.img
+  IMAGE_MOUNTED=false
+else
+  sudo mount -o loop,ro system.raw.img android-image
+  IMAGE_MOUNTED=true
+fi
 SYSTEM=android-image/system
 if [ ! -d "$SYSTEM/lib64" ]; then SYSTEM=android-image; fi
 APEX=$(find "$SYSTEM/apex" -maxdepth 1 -name 'com.android.runtime*.apex' -print -quit)
@@ -20,4 +31,5 @@ for name in libc.so libm.so libdl.so; do cp "apex-image/lib64/bionic/$name" "and
 cp "$SYSTEM/lib64/libz.so" android-runtime/system/lib64/libz.so
 chmod 755 android-runtime/system/bin/linker64
 sha256sum android-runtime/system/bin/linker64 android-runtime/system/lib64/* > android-runtime/SHA256.txt
-sudo umount apex-image android-image
+sudo umount apex-image
+if [ "$IMAGE_MOUNTED" = true ]; then sudo umount android-image; fi
