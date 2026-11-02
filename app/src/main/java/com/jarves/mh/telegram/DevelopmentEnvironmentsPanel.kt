@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -21,6 +22,7 @@ import org.json.JSONObject
 fun DevelopmentEnvironmentsPanel(runtime: HarneseRuntimeController) {
     val context = LocalContext.current
     val state by runtime.state.collectAsState()
+    var projectName by remember { mutableStateOf("") }
     var report by remember { mutableStateOf("") }
     var refresh by remember { mutableStateOf(0) }
     LaunchedEffect(refresh, state.devStackInstalling) {
@@ -41,6 +43,9 @@ fun DevelopmentEnvironmentsPanel(runtime: HarneseRuntimeController) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.hub_environments))
         Text(report)
+        OutlinedTextField(value = projectName, onValueChange = { projectName = it }, label = { Text("Project / المشروع") })
+        OutlinedButton(onClick = { runtime.createDevelopmentProject(projectName, true) }, enabled = projectName.isNotBlank()) { Text("TypeScript — Offline template") }
+        OutlinedButton(onClick = { runtime.createDevelopmentProject(projectName, false) }, enabled = projectName.isNotBlank()) { Text("Node.js — Offline template") }
         for (name in listOf("python", "node", "typescript", "androidsdk", "runtimehealth", "disk")) {
             OutlinedButton(onClick = { runtime.requestEnvironmentProbe(name) }, enabled = !state.runtimeProbeRunning && !state.isRunning && !state.androidBuildRunning) { Text("$name — ${stringResource(R.string.hub_probe)}") }
         }

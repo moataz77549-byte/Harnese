@@ -226,6 +226,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun activateReadOnlyProject() = runtime.activateReadOnlyProject()
     fun consumeToast() = runtime.consumeToast()
     fun createProject(name: String) = runtime.createProject(name)
+    fun createDevelopmentProject(name: String, typescript: Boolean) = runtime.createDevelopmentProject(name, typescript)
     fun createAndroidProject(name: String, template: AndroidTemplate) = runtime.createAndroidProject(name, template)
     fun createQuickProject() = runtime.createQuickProject()
     fun importZipProject(uri: Uri) = runtime.importZipProject(uri)

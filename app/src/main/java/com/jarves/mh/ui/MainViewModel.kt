@@ -2549,12 +2549,40 @@ class HarneseRuntimeController(private val application: Application) {
         }
     }
     fun installRequestedRuntime() {
-        when (_state.value.pendingRuntimeInstall) {
-            "php" -> installDevStack(DevStack.PHP)
-            "cpp" -> installDevStack(DevStack.CPP)
-            "antigravity" -> installAgent(AgentKind.ANTIGRAVITY)
+        val name = _state.value.pendingRuntimeInstall ?: return
+        if (_state.value.isRunning || _state.value.androidBuildRunning || _state.value.projectTerminalRunning || _state.value.runtimeProbeRunning) return
+        val stack = when (name) { "php" -> DevStack.PHP; "cpp" -> DevStack.CPP; else -> null }
+        val agent = if (name == "antigravity") AgentKind.ANTIGRAVITY else null
+        if (stack == null && agent == null) return
+        val project = _state.value.activeProject
+        val task = UUID.randomUUID().toString()
+        val journal = com.jarves.mh.connect.HarneseEventBus.get(application)
+        _state.update { it.copy(pendingRuntimeInstall = null, runtimeProbeRunning = true) }
+        androidx.core.content.ContextCompat.startForegroundService(application, Intent(application, RuntimeExecutionService::class.java)
+            .setAction(RuntimeExecutionService.ACTION_START).putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, name)
+            .putExtra(RuntimeExecutionService.EXTRA_TITLE, "Harnese Nova — $name").putExtra(RuntimeExecutionService.EXTRA_CAN_STOP, false))
+        journal.publish(id = "$task:start", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.install.started", body = name)
+        runtimeScope.launch {
+            var lastNotification = 0L
+            val result = withContext(Dispatchers.IO) { runCatching {
+                val progress: suspend (RuntimeInstallProgress) -> Unit = { update ->
+                    _state.update { it.copy(devStackMessage = update.message, devStackProgress = update.fraction) }
+                    val now = System.currentTimeMillis()
+                    if (now - lastNotification >= 5000) {
+                        lastNotification = now
+                        journal.publish(id = "$task:progress:$now", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.install.progress", body = "$name: ${update.message} ${update.downloadedBytes ?: 0}/${update.totalBytes ?: 0}")
+                    }
+                }
+                if (stack != null) installer.ensureStackInstalled(stack, progress) else installer.ensureAgentInstalled(agent!!, progress)
+            } }
+            val message = result.fold(onSuccess = { "$name: ready" }, onFailure = { "$name: ${it.message ?: "failed"}" })
+            _state.update { it.copy(runtimeProbeRunning = false, devStackMessage = message,
+                installedDevStacks = installer.installedStacks(), installedAgentVersions = installer.installedAgentVersions()) }
+            journal.publish(id = "$task:end", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.install.result", body = message)
+            application.startService(Intent(application, RuntimeExecutionService::class.java)
+                .setAction(if (result.isSuccess) RuntimeExecutionService.ACTION_COMPLETE else RuntimeExecutionService.ACTION_FAILED)
+                .putExtra(RuntimeExecutionService.EXTRA_DETAIL, message))
         }
-        _state.update { it.copy(pendingRuntimeInstall = null) }
     }
 
     fun checkAgentUpdates() {
@@ -3262,6 +3290,15 @@ class HarneseRuntimeController(private val application: Application) {
         val firstChat = ProjectChat(title = str(R.string.vm_new_chat))
         preferences.saveProjectChats(project.id, listOf(firstChat))
         _state.update { it.copy(projectChats = listOf(firstChat), activeChatId = firstChat.id) }
+        refreshProjectFiles()
+    }
+
+    fun createDevelopmentProject(name: String, typescript: Boolean) {
+        if (name.isBlank() || _state.value.isRunning || _state.value.androidBuildRunning || _state.value.projectTerminalRunning || _state.value.runtimeProbeRunning) return
+        createProject(name)
+        val project = _state.value.activeProject ?: return
+        runCatching { com.jarves.mh.runtime.DevelopmentProjectTemplateGenerator.generate(projectWorkspaceRoot(project), typescript) }
+            .onFailure { error -> _state.update { it.copy(toastMessage = error.message) } }
         refreshProjectFiles()
     }
 
