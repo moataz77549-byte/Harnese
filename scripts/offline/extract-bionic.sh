@@ -2,6 +2,7 @@
 set -euo pipefail
 # CI-only Android runtime for executing the actual Android ARM64 aapt2 on Linux ARM64.
 # No Bionic libraries are added to the APK; phones supply their own Android runtime.
+python3 -m unittest discover -s scripts/offline -p 'test_*.py'
 sdkmanager 'system-images;android-30;google_apis;arm64-v8a'
 sudo apt-get update
 sudo apt-get install -y android-sdk-libsparse-utils unzip qemu-utils erofs-utils
@@ -22,9 +23,22 @@ else
     sudo lsblk -o NAME,FSTYPE,PARTLABEL "$LOOP_DEVICE"
     sudo blkid "${LOOP_DEVICE}"p* || true
     SYSTEM_PART=$(sudo lsblk -lnpo NAME,PARTLABEL "$LOOP_DEVICE" | awk '$2 == "system" { print $1; exit }')
-    if [ -z "$SYSTEM_PART" ]; then SYSTEM_PART=$(sudo lsblk -lnpo NAME,FSTYPE "$LOOP_DEVICE" | awk '$2 == "ext4" || $2 == "erofs" { print $1; exit }'); fi
-    test -n "$SYSTEM_PART"
-    sudo mount -o ro "$SYSTEM_PART" android-image
+    if [ -z "$SYSTEM_PART" ]; then
+      SUPER_PART=''
+      for part in "${LOOP_DEVICE}"p*; do
+        if [ "$(sudo blkid -s PARTLABEL -o value "$part" || true)" = super ]; then SUPER_PART=$part; break; fi
+      done
+      if [ -n "$SUPER_PART" ]; then
+        sudo python3 scripts/offline/extract-super-system.py "$SUPER_PART" system-logical.img
+        sudo mount -o loop,ro system-logical.img android-image
+      else
+        SYSTEM_PART=$(sudo lsblk -lnpo NAME,FSTYPE "$LOOP_DEVICE" | awk '$2 == "ext4" || $2 == "erofs" { print $1; exit }')
+        test -n "$SYSTEM_PART"
+        sudo mount -o ro "$SYSTEM_PART" android-image
+      fi
+    else
+      sudo mount -o ro "$SYSTEM_PART" android-image
+    fi
   else
     sudo mount -o loop,ro system.raw.img android-image
   fi
