@@ -2519,18 +2519,40 @@ class HarneseRuntimeController(private val application: Application) {
         }
     }
 
+    private var environmentProbeJob: kotlinx.coroutines.Job? = null
     fun requestEnvironmentProbe(name: String) {
-        if (_state.value.runtimeProbeRunning || _state.value.isRunning || _state.value.androidBuildRunning) return
+        if (_state.value.runtimeProbeRunning || _state.value.isRunning || _state.value.androidBuildRunning || _state.value.projectTerminalRunning) return
         _state.update { it.copy(runtimeProbeRunning = true) }
         val project = _state.value.activeProject
         val task = UUID.randomUUID().toString()
         val journal = com.jarves.mh.connect.HarneseEventBus.get(application)
-        journal.publish(id = "$task:start", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.started", body = name)
-        runtimeScope.launch {
-            val output = withContext(Dispatchers.IO) { runCatching { installer.probeEnvironment(name) }.getOrElse { it.message ?: "Probe failed" } }
-            _state.update { it.copy(runtimeProbeRunning = false, agentMessage = output) }
-            journal.publish(id = "$task:end", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.result", body = output)
+        try {
+            androidx.core.content.ContextCompat.startForegroundService(application,Intent(application,RuntimeExecutionService::class.java)
+                .setAction(RuntimeExecutionService.ACTION_START).putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME,name)
+                .putExtra(RuntimeExecutionService.EXTRA_TITLE,"Harnese Nova — $name").putExtra(RuntimeExecutionService.EXTRA_CAN_STOP,true))
+        } catch (error: Exception) {
+            _state.update { it.copy(runtimeProbeRunning=false,agentMessage=error.message) }
+            return
         }
+        journal.publish(id = "$task:start", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.started", body = name)
+        environmentProbeJob = runtimeScope.launch {
+            var output = "لم يكتمل الفحص"
+            var cancelled = false
+            try {
+                output = withContext(Dispatchers.IO) { installer.probeEnvironment(name) }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                cancelled = true; output = "أُلغي فحص $name"; throw error
+            } catch (error: Exception) { output = error.message ?: "Probe failed" }
+            finally {
+                _state.update { it.copy(runtimeProbeRunning=false,agentMessage=output) }
+                com.jarves.mh.runtime.RuntimeTaskController.stopAction=null
+                journal.publish(id="$task:end",project=project?.id.orEmpty(),chat="",task=task,kind=if(cancelled) "runtime.cancelled" else "runtime.result",body=output)
+                application.startService(Intent(application,RuntimeExecutionService::class.java)
+                    .setAction(if(cancelled) RuntimeExecutionService.ACTION_CANCELLED else if(name=="disk" || output.startsWith("[$name] exit=0\n")) RuntimeExecutionService.ACTION_COMPLETE else RuntimeExecutionService.ACTION_FAILED)
+                    .putExtra(RuntimeExecutionService.EXTRA_DETAIL,output.take(200)))
+            }
+        }
+        com.jarves.mh.runtime.RuntimeTaskController.stopAction={ environmentProbeJob?.cancel() }
     }
     fun repairDevelopmentEnvironment(name: String) {
         _state.update { it.copy(pendingRuntimeInstall = "repair/$name") }
@@ -2573,6 +2595,56 @@ class HarneseRuntimeController(private val application: Application) {
                 .setAction(if (result.isSuccess) RuntimeExecutionService.ACTION_COMPLETE else RuntimeExecutionService.ACTION_FAILED)
                 .putExtra(RuntimeExecutionService.EXTRA_DETAIL, message))
         }
+    }
+
+    private var modelCatalogJob: kotlinx.coroutines.Job? = null
+    private fun requestTelegramModels(selectedModel: String = ""): HarneseCommandResult {
+        val snapshot = _state.value
+        if(modelCatalogJob?.isActive==true) return HarneseCommandResult.error("يجري استرجاع قائمة النماذج.")
+        if(selectedModel.isNotBlank() && (snapshot.isRunning || snapshot.androidBuildRunning || snapshot.projectTerminalRunning || snapshot.runtimeProbeRunning)) return HarneseCommandResult.error("انتظر انتهاء المهمة قبل تغيير النموذج.")
+        val task=UUID.randomUUID().toString()
+        modelCatalogJob=runtimeScope.launch {
+            val text=runCatching {
+                if(snapshot.agentKind==AgentKind.ANTIGRAVITY) {
+                    if(!installer.isAgentInstalled(AgentKind.ANTIGRAVITY)) error("Antigravity CLI غير مثبت؛ ثبته من الهاتف.")
+                    if(snapshot.isRunning) error("أكمل المهمة النشطة قبل تحديث قائمة CLI.")
+                    refreshAntigravityModels()
+                    kotlinx.coroutines.withTimeout(60000) { while(_state.value.antigravityModelsLoading) delay(100) }
+                    _state.value.antigravityModelsError?.let { error(it) }
+                    val models=_state.value.antigravityModels
+                    require(models.isNotEmpty()) { "لم يُرجع CLI نماذج متاحة." }
+                    if(selectedModel.isNotBlank()) {
+                        require(selectedModel in models) { "النموذج غير موجود في قائمة CLI الحالية." }
+                        require(_state.value.agentKind==snapshot.agentKind && !_state.value.isRunning && !_state.value.androidBuildRunning) { "تغيرت حالة التشغيل؛ أعد المحاولة." }
+                        setAntigravityModel(selectedModel)
+                        "ضُبط النموذج من قائمة CLI: $selectedModel. سيؤكد الطلب الفعلي صلاحية الحساب لتشغيله."
+                    } else "قائمة Antigravity CLI الحالية:\n" + models.joinToString("\n")
+                } else {
+                    val secret=vault.get(snapshot.provider.kind.name).orEmpty()
+                    when(val result=providerApi.discoverModels(snapshot.provider.baseUrl,secret,providerProtocolForAgent(snapshot.provider,snapshot.agentKind))) {
+                        is ModelDiscoveryResult.Failure -> result.message
+                        is ModelDiscoveryResult.Success -> {
+                            if(selectedModel.isBlank()) "كتالوج المزوّد المسترجع؛ قد تختلف صلاحيات الحساب:\n" + result.models.joinToString("\n") { it.id }
+                            else {
+                                require(result.models.any { it.id==selectedModel }) { "النموذج غير موجود في كتالوج المزوّد." }
+                                val profile=snapshot.provider.copy(model=selectedModel)
+                                when(val validation=validateProvider(profile,secret,result.models)) {
+                                    is ConnectionValidation.Failure -> validation.message
+                                    is ConnectionValidation.Success -> {
+                                        require(_state.value.agentKind==snapshot.agentKind && !_state.value.isRunning && !_state.value.androidBuildRunning && !_state.value.runtimeProbeRunning) { "تغيرت حالة التشغيل؛ أعد المحاولة." }
+                                        preferences.saveProvider(profile,snapshot.agentKind)
+                                        _state.update { it.copy(provider=profile) }
+                                        "تم اختبار النموذج وضبطه: $selectedModel"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }.getOrElse { it.message ?: "تعذر استرجاع النماذج أو اختبار النموذج" }
+            com.jarves.mh.connect.HarneseEventBus.get(application).publish(id="$task:models",project=snapshot.activeProject?.id.orEmpty(),chat=snapshot.activeChatId.orEmpty(),task=task,kind="agent.models",body=text,source="telegram")
+        }
+        return HarneseCommandResult.success("استُلم طلب استرجاع النماذج${if(selectedModel.isBlank()) "" else " واختبار الاختيار"}؛ ستصلك النتيجة عند الانتهاء.")
     }
 
     fun checkAgentUpdates() {
@@ -5511,8 +5583,8 @@ class HarneseRuntimeController(private val application: Application) {
                     "dashboard" -> "المشاريع: ${s.projects.size}\nالوكيل: ${s.agentKind.name}\nمهمة: ${s.isRunning} / بناء: ${s.androidBuildRunning}\nرسائل معلقة: ${journal.pendingCount()}"
                     "active" -> "${s.activeProject?.name ?: "—"}\n${s.activeChatId ?: "—"}"
                     "tasks" -> "وكيل: ${s.isRunning}\nبناء: ${s.androidBuildRunning}\n${s.androidBuildMessage.orEmpty()}"
-                    "model" -> "${s.agentKind.name}: ${if (s.agentKind == AgentKind.ANTIGRAVITY) s.antigravityModel else s.provider.model}"
-                    "models" -> if (s.agentKind == AgentKind.ANTIGRAVITY) s.antigravityModels.joinToString("\n").ifBlank { "لم تُحمّل قائمة النماذج من الحساب بعد؛ حدّثها من الهاتف." } else "النموذج المضبوط: ${s.provider.model}\nاكتشف النماذج المتاحة من إعدادات المزود على الهاتف."
+                    "model" -> if(command.argument.isBlank()) "${s.agentKind.name}: ${if (s.agentKind == AgentKind.ANTIGRAVITY) s.antigravityModel else s.provider.model}" else return requestTelegramModels(command.argument)
+                    "models" -> return requestTelegramModels()
                     "agent" -> {
                         if (command.argument.isNotBlank()) {
                             if (busy()) return HarneseCommandResult.error("أوقف المهمة قبل تغيير الوكيل.")
@@ -5676,7 +5748,12 @@ class HarneseRuntimeController(private val application: Application) {
                 }
             }
             HarneseCommand.StopTask -> {
-                if (_state.value.androidBuildRunning) {
+                if (_state.value.runtimeProbeRunning) {
+                    if(environmentProbeJob?.isActive==true) {
+                        environmentProbeJob?.cancel()
+                        HarneseCommandResult.success("طُلب إلغاء الفحص الجاري.")
+                    } else HarneseCommandResult.error("يجري تطبيق حزمة أدوات؛ لا يمكن إيقافها بأمان في هذه المرحلة.")
+                } else if (_state.value.androidBuildRunning) {
                     cancelAndroidBuild()
                     HarneseCommandResult.success("طُلب إلغاء البناء.")
                 } else if (!_state.value.isRunning) HarneseCommandResult.error("لا توجد مهمة قيد التنفيذ.")

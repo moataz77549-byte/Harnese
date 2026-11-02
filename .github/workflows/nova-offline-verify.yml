@@ -82,8 +82,11 @@ jobs:
           # Match RuntimeInstaller.stripMacosMetadataArtifacts before executing Python.
           find guest -name '._*' -type f -delete
           cp scripts/offline/smoke-test.sh guest/tmp/nova-smoke.sh
+          # Inventory the embedded repository so any offline resolution gap is explicit.
+          find guest/root/maven/localMvnRepository -name '*.pom' | sed 's@guest/root/maven/localMvnRepository/@@' | sort > offline-maven-inventory.txt
           readelf -d guest/root/android-sdk/build-tools/35.0.0/aapt2 | grep NEEDED
           file guest/usr/local/bin/node guest/root/android-sdk/build-tools/35.0.0/aapt2
+          python3 scripts/offline/measure-runtime.py guest
       - uses: actions/download-artifact@v4
         with:
           name: nova-offline-sample
@@ -103,6 +106,17 @@ jobs:
             ip -brief address
             exec chroot guest /usr/bin/env -i HOME=/root USER=root LANG=C.UTF-8 PATH=/root/android-sdk/build-tools/35.0.0:/usr/local/bin:/usr/bin:/bin:/opt/gradle/gradle-8.14.3/bin:/opt/jdk-17.0.20.1+1/bin JAVA_HOME=/opt/jdk-17.0.20.1+1 ANDROID_HOME=/root/android-sdk /bin/bash /tmp/nova-smoke.sh
           ' 2>&1 | tee offline-smoke.log
+      - name: Preserve focused verification diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-offline-diagnostics
+          path: |
+            offline-smoke.log
+            offline-maven-inventory.txt
+            offline-runtime-measurements.json
+            dist/runtime-bundles/offline-measured-manifest.json
+          retention-days: 7
       - name: Preserve measured inputs and verification evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -112,6 +126,7 @@ jobs:
             dist/runtime-bundles/*.tar.zst
             dist/runtime-bundles/offline-measured-manifest.json
             offline-smoke.log
+            offline-maven-inventory.txt
             guest/workspace/offline-kotlin/app/build/outputs/apk/debug/*.apk
           compression-level: 0
           retention-days: 7

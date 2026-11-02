@@ -109,8 +109,6 @@ fun TelegramConnectSettings() {
                 Text(stringResource(R.string.hub_mute), modifier = Modifier.weight(1f))
                 Switch(checked = mute, onCheckedChange = { mute = it; journal.setMuted(it) })
             }
-            OutlinedButton(onClick = { showHub = !showHub }) { Text("Agent Hub") }
-            if (showHub) AgentHubPanel()
             Text(stringResource(R.string.tg_security_notice), style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(onClick = {
@@ -130,6 +128,8 @@ fun TelegramConnectSettings() {
                 Text(stringResource(R.string.tg_refresh_link))
             }
         }
+        OutlinedButton(onClick = { showHub = !showHub }) { Text("Agent Hub") }
+        if (showHub) AgentHubPanel()
         if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.primary)
     }
 }

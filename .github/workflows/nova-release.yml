@@ -40,6 +40,7 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN" --jq .head_sha)" = "$SOURCE_SHA"
           test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN" --jq .path)" = '.github/workflows/nova-offline-verify.yml'
           gh run download "$VERIFIED_RUN" --repo "$GITHUB_REPOSITORY" --name nova-offline-owner-signing --dir owner-signing
+          gh run download "$VERIFIED_RUN" --repo "$GITHUB_REPOSITORY" --name nova-offline-diagnostics --dir verification
       - name: Reconstruct public signature and inspect with official Android tools
         shell: bash
         run: |
@@ -62,6 +63,14 @@ jobs:
           import hashlib,json,pathlib,os
           p=pathlib.Path('release/Harnese-Nova-v1.3.2-Offline-ARM64.apk')
           artifact={'url':f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/releases/download/harnese-nova-v1.3.2/{p.name}','sha256':hashlib.file_digest(p.open('rb'),'sha256').hexdigest(),'sizeBytes':p.stat().st_size}
+          manifest=json.loads(next(pathlib.Path('verification').rglob('offline-measured-manifest.json')).read_text())
+          measurements=json.loads(next(pathlib.Path('verification').rglob('offline-runtime-measurements.json')).read_text())
+          notes=pathlib.Path('docs/NOVA_NEXT_STATUS_AR.md').read_text()
+          notes+='\n## قياسات الإصدار الموقّع\n\nحجم APK: '+str(p.stat().st_size)+' bytes.\n\n| الحزمة | الحجم المضغوط بالبايت | الملفات بعد الفك بالبايت |\n|---|---:|---:|\n'
+          for name,item in manifest['bundles'].items():
+              if name!='agy':notes+=f"| {name} | {item['compressedBytes']} | {item['uncompressedBytes']} |\n"
+          notes+='\nحجم ملفات بيئة التشغيل الفعلية قبل مكتبات اختبار CI: '+str(measurements['runtimeLogicalBytes'])+' bytes. تختلف مساحة Android الفعلية بعد التثبيت باختلاف نظام الملفات وتحسين Dex والمشاريع.\n'
+          pathlib.Path('release/RELEASE-NOTES.md').write_text(notes)
           pathlib.Path('release/harnese-nova-update.json').write_text(json.dumps({'versionCode':15,'versionName':'1.3.2','notes':'Nova Agent Hub and embedded offline development environments. See release notes for tested capabilities and device/account test limits.','artifacts':{'offline':artifact,'online':artifact}},indent=2)+'\n')
           PY
       - name: Publish direct signed APK, checksums and update manifest
@@ -73,4 +82,4 @@ jobs:
             exit 1
           fi
           SOURCE_SHA=$(jq -r .sourceCommit release-candidate.json)
-          gh release create harnese-nova-v1.3.2 release/*.apk release/SHA256SUMS.txt release/harnese-nova-update.json release/certificate.txt release/package.txt --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --title 'Harnese Nova 1.3.2 — Offline Development Edition' --notes-file docs/NOVA_NEXT_STATUS_AR.md
+          gh release create harnese-nova-v1.3.2 release/*.apk release/SHA256SUMS.txt release/harnese-nova-update.json release/certificate.txt release/package.txt --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --title 'Harnese Nova 1.3.2 — Offline Development Edition' --notes-file release/RELEASE-NOTES.md

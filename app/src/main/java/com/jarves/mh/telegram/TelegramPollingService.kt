@@ -233,7 +233,7 @@ class TelegramPollingService : Service() {
                         else -> "/notify mute | unmute | status\nالمعلّق: ${journal.pendingCount()}"
                     }
                     else -> {
-                        if (instruction.name in setOf("build", "updates") && !store.remoteTasksEnabled()) return "فعّل المهام عن بعد من الهاتف أولًا."
+                        if ((instruction.name in setOf("build", "updates") || (instruction.name in setOf("agent","model") && instruction.argument.isNotBlank())) && !store.remoteTasksEnabled()) return "فعّل المهام عن بعد من الهاتف أولًا."
                         dispatch(HarneseCommand.HubOperation(store.lastProjectId(), instruction.name, instruction.argument)).text
                     }
                 }

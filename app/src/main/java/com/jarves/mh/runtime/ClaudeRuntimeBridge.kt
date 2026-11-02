@@ -255,7 +255,7 @@ class ClaudeRuntimeBridge(
                 val stagedReview = reviews.finish(stagedRun.id)
                 if (stagedReview.entries.isNotEmpty()) journal.publish(
                     id = "review:${stagedRun.id}", project = projectId, chat = "", task = sessionId,
-                    kind = "review.pending", body = "مراجعة تعديلات معزولة: ${stagedRun.id}\n" + stagedReview.entries.joinToString("\n") { it.path } + "\nاعتماد محلي في Agent Hub فقط. الرفض: /reject ${stagedRun.id}",
+                    kind = "review.pending", body = "مشروع: ${com.jarves.mh.data.AppPreferences(context).loadProjects().firstOrNull { it.id == projectId }?.name ?: projectId}\nالمخاطر: مراجعة محلية مطلوبة قبل أي تطبيق\nمراجعة تعديلات معزولة: ${stagedRun.id}\n" + stagedReview.entries.joinToString("\n") { it.path } + "\nاعتماد محلي في Agent Hub فقط. الرفض: /reject ${stagedRun.id}",
                 )
                 val changed = changedFiles(workspace, before)
                 if (changed.isNotEmpty()) {

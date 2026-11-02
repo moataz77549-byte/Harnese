@@ -22,6 +22,6 @@ java -version
 gradle --version
 # The sample is generated from the app's real Kotlin template by the workflow.
 cd /workspace/offline-kotlin
-gradle --offline --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx1536m --init-script /root/.gradle/init.d/pocketdev-android.gradle -Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 assembleDebug
+gradle --offline --stacktrace --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx1536m --init-script /root/.gradle/init.d/pocketdev-android.gradle -Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 assembleDebug
 test -s app/build/outputs/apk/debug/app-debug.apk
 /root/android-sdk/build-tools/35.0.0/aapt2 dump badging app/build/outputs/apk/debug/app-debug.apk
