@@ -1,0 +1,59 @@
+name: Transport verified Nova APK for local owner signing
+on:
+  push:
+    branches: [ops/nova-owner-signing-transport]
+    paths: ['.github/workflows/nova-signing-transport.yml']
+permissions:
+  actions: read
+  contents: read
+jobs:
+  transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download only the successful verified source artifact
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/41502949463 --jq .conclusion)" = success
+          test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/41502949463 --jq .head_sha)" = 93376a1187cc01f902c83687966a0abf4550721b
+          gh run download 41502949463 --repo "$GITHUB_REPOSITORY" --name nova-offline-owner-signing --dir original
+          mkdir parts tools
+          APK=original/Harnese-Nova-v1.3.2-Offline-ARM64-unsigned.apk
+          sha256sum "$APK" > tools/unsigned-SHA256.txt
+          split -b 240M -d "$APK" parts/nova-apk.part
+          cp original/apksigner.jar original/aapt original/zipalign tools/
+          cp -a original/lib64 tools/
+          cp original/BUILD-SHA256.txt tools/
+          ls -lh parts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-signing-tools
+          path: tools
+          compression-level: 0
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-apk-part00
+          path: parts/nova-apk.part00
+          compression-level: 0
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-apk-part01
+          path: parts/nova-apk.part01
+          compression-level: 0
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-apk-part02
+          path: parts/nova-apk.part02
+          compression-level: 0
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-apk-part03
+          path: parts/nova-apk.part03
+          compression-level: 0
+          retention-days: 3
