@@ -36,6 +36,34 @@ with tarfile.open(fileobj=read.stdout,mode='r|') as source_tar,tarfile.open(file
 read.stdout.read();assert read.wait()==0
 write.stdin.close();assert write.wait()==0;output.close()
 python.update({'sourceFile':python['file'],'sourceSha256':python['sha256'],'file':filtered.name,'sha256':hashlib.file_digest(filtered.open('rb'),'sha256').hexdigest(),'compressedBytes':filtered.stat().st_size,'uncompressedBytes':size,'removedOptionalCompilerPaths':removed})
+# Include every dependency actually resolved by the XML and Compose template builds.
+# Keep the pinned ARM64 SDK/toolchain, replacing only duplicate Maven entries.
+android=manifest['bundles']['android'];source=dest/android['file']
+supplement=root/'supplemental-maven'
+assert (supplement/'nova-resolved-artifacts.json').is_file(), 'Resolved template Maven repository is required'
+records=json.loads((supplement/'nova-resolved-artifacts.json').read_text())['artifacts']
+for item in records:
+    file=supplement/item['path']
+    assert file.resolve().is_relative_to(supplement.resolve())
+    assert hashlib.file_digest(file.open('rb'),'sha256').hexdigest()==item['sha256']
+files={('root/maven/localMvnRepository/'+p.relative_to(supplement).as_posix()):p for p in supplement.rglob('*') if p.is_file()}
+derived=dest/'nova-android-arm64-2026.09.1.tar.zst'
+read=subprocess.Popen(['zstd','-dc',str(source)],stdout=subprocess.PIPE)
+output=derived.open('wb');write=subprocess.Popen(['zstd','-19','-T0','-c'],stdin=subprocess.PIPE,stdout=output)
+size=0
+with tarfile.open(fileobj=read.stdout,mode='r|') as original,tarfile.open(fileobj=write.stdin,mode='w|') as merged:
+    for entry in original:
+        name=entry.name.removeprefix('./')
+        if name in files or any(p.startswith('._') for p in name.split('/')):continue
+        merged.addfile(entry,original.extractfile(entry) if entry.isfile() else None)
+        if entry.isfile():size+=entry.size
+    for name,file in sorted(files.items()):
+        entry=tarfile.TarInfo(name);entry.size=file.stat().st_size;entry.mode=0o644
+        with file.open('rb') as content:merged.addfile(entry,content)
+        size+=entry.size
+read.stdout.read();assert read.wait()==0
+write.stdin.close();assert write.wait()==0;output.close()
+android.update({'sourceFile':android['file'],'sourceSha256':android['sha256'],'file':derived.name,'sha256':hashlib.file_digest(derived.open('rb'),'sha256').hexdigest(),'compressedBytes':derived.stat().st_size,'uncompressedBytes':size,'resolvedTemplateArtifactCount':len(records)})
 # TypeScript's JS compiler is architecture-independent and runs with bundled ARM64 Node.
 version='5.9.3'
 metadata=json.load(urllib.request.urlopen('https://registry.npmjs.org/typescript/'+version,timeout=60))

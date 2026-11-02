@@ -31,10 +31,22 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts/release -p 'test_*.py'
           ./gradlew :app:testOnlineDebugUnitTest --tests '*OfflineSampleExportTest' -PmhParallelInstall=true --no-daemon
+      - name: Build both real templates and export their resolved Maven dependencies
+        run: |
+          ./gradlew -g "$PWD/template-gradle-cache" -p offline-kotlin assembleDebug --no-daemon --stacktrace
+          ./gradlew -g "$PWD/template-gradle-cache" -p offline-kotlin-compose assembleDebug --no-daemon --stacktrace
+          python3 scripts/offline/export-maven-cache.py template-gradle-cache supplemental-maven
+          find offline-kotlin offline-kotlin-compose -type d \( -name build -o -name .gradle \) -prune -exec rm -rf {} +
       - uses: actions/upload-artifact@v4
         with:
           name: nova-offline-sample
-          path: offline-kotlin
+          path: |
+            offline-kotlin
+            offline-kotlin-compose
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-offline-supplemental-maven
+          path: supplemental-maven
   bionic:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -61,6 +73,10 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: nova-offline-supplemental-maven
+          path: supplemental-maven
       - name: Prepare verified runtime bundles and measured manifest
         run: |
           sudo apt-get update
@@ -71,7 +87,7 @@ jobs:
           mkdir guest
           tar --zstd -xf dist/runtime-bundles/pocketdev-core-arm64-2026.09.5.tar.zst -C guest
           tar --zstd -xf dist/runtime-bundles/nova-python-arm64-2026.09.2.tar.zst -C guest
-          tar --zstd -xf dist/runtime-bundles/pocketdev-android-arm64-2026.09.1.tar.zst -C guest
+          tar --zstd -xf dist/runtime-bundles/nova-android-arm64-2026.09.1.tar.zst -C guest
           tar --zstd -xf dist/runtime-bundles/nova-typescript-arm64-5.9.3.tar.zst -C guest
           mkdir -p guest/tmp guest/workspace guest/dev guest/proc guest/sys
           for pair in 'bin usr/bin' 'lib usr/lib' 'sbin usr/sbin'; do
@@ -90,7 +106,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: nova-offline-sample
-          path: guest/workspace/offline-kotlin
+          path: guest/workspace
       - uses: actions/download-artifact@v4
         with:
           name: nova-ci-android-runtime

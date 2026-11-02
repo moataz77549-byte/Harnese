@@ -52,3 +52,9 @@ gradle --offline --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx1536m --in
 gradle --offline --stacktrace --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx1536m --init-script /root/.gradle/init.d/pocketdev-android.gradle -Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 assembleDebug
 test -s app/build/outputs/apk/debug/app-debug.apk
 /root/android-sdk/build-tools/35.0.0/aapt2 dump badging app/build/outputs/apk/debug/app-debug.apk
+
+# Compose uses the same offline repository and must also produce a real APK.
+cd /workspace/offline-kotlin-compose
+gradle --offline --stacktrace --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx1536m --init-script /root/.gradle/init.d/pocketdev-android.gradle -Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 assembleDebug
+test -s app/build/outputs/apk/debug/app-debug.apk
+/root/android-sdk/build-tools/35.0.0/aapt2 dump badging app/build/outputs/apk/debug/app-debug.apk
