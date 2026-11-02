@@ -45,14 +45,14 @@ val prepareOfflineRuntimeAssets = tasks.register<Sync>("prepareOfflineRuntimeAss
         runtimeBundleDir.file("pocketdev-core-arm64-2026.09.5.tar.zst"),
         runtimeBundleDir.file("pocketdev-claude-arm64-2026.09.1.tar.zst"),
         runtimeBundleDir.file("nova-python-arm64-2026.09.2.tar.zst"),
-        runtimeBundleDir.file("pocketdev-android-arm64-2026.09.1.tar.zst"),
+        runtimeBundleDir.file("nova-android-arm64-2026.09.1.tar.zst"),
         runtimeBundleDir.file("pocketdev-dsh-arm64-2026.09.1.tar.zst"),
         runtimeBundleDir.file("nova-typescript-arm64-5.9.3.tar.zst"),
     )
     from(runtimeBundleDir.file("offline-measured-manifest.json")) { rename { "offline-manifest.json" } }
     doFirst {
         listOf("pocketdev-core-arm64-2026.09.5.tar.zst", "nova-python-arm64-2026.09.2.tar.zst",
-            "pocketdev-android-arm64-2026.09.1.tar.zst", "pocketdev-claude-arm64-2026.09.1.tar.zst",
+            "nova-android-arm64-2026.09.1.tar.zst", "pocketdev-claude-arm64-2026.09.1.tar.zst",
             "pocketdev-dsh-arm64-2026.09.1.tar.zst", "nova-typescript-arm64-5.9.3.tar.zst", "offline-measured-manifest.json").forEach {
             check(runtimeBundleDir.file(it).asFile.isFile) { "Missing verified offline asset: $it. Run scripts/offline/prepare-bundles.py first." }
         }
