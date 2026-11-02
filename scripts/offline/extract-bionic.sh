@@ -19,9 +19,10 @@ if file system.raw.img | grep -qi 'EROFS'; then
 else
   if sudo blkid -s PTTYPE -o value system.raw.img | grep -qx gpt; then
     LOOP_DEVICE=$(sudo losetup --find --show --partscan system.raw.img)
-    lsblk -o NAME,FSTYPE,PARTLABEL "$LOOP_DEVICE"
-    SYSTEM_PART=$(lsblk -lnpo NAME,PARTLABEL "$LOOP_DEVICE" | awk '$2 == "system" { print $1; exit }')
-    if [ -z "$SYSTEM_PART" ]; then SYSTEM_PART=$(lsblk -lnpo NAME,FSTYPE "$LOOP_DEVICE" | awk '$2 == "ext4" || $2 == "erofs" { print $1; exit }'); fi
+    sudo lsblk -o NAME,FSTYPE,PARTLABEL "$LOOP_DEVICE"
+    sudo blkid "${LOOP_DEVICE}"p* || true
+    SYSTEM_PART=$(sudo lsblk -lnpo NAME,PARTLABEL "$LOOP_DEVICE" | awk '$2 == "system" { print $1; exit }')
+    if [ -z "$SYSTEM_PART" ]; then SYSTEM_PART=$(sudo lsblk -lnpo NAME,FSTYPE "$LOOP_DEVICE" | awk '$2 == "ext4" || $2 == "erofs" { print $1; exit }'); fi
     test -n "$SYSTEM_PART"
     sudo mount -o ro "$SYSTEM_PART" android-image
   else

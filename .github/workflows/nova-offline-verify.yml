@@ -111,7 +111,7 @@ jobs:
           retention-days: 7
   build-offline:
     needs: [sample, verify]
-    if: ${{ always() && needs.sample.result == 'success' && needs.verify.result != 'cancelled' }}
+    if: ${{ always() && needs.sample.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
