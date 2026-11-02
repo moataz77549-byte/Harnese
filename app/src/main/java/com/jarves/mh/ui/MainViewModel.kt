@@ -645,25 +645,8 @@ class HarneseRuntimeController(private val application: Application) {
         }
 
         val loadedProjects = preferences.loadProjects()
-        val cleanedProjects = loadedProjects.filter { project ->
-            if (project.kind == ProjectKind.QUICK_PROJECT) {
-                val chats = preferences.loadProjectChats(project.id)
-                val userMessages = chats.sumOf { preferences.loadMessages(project.id, it.id).count { m -> m.fromUser } }
-                val workspaceDir = File(application.filesDir, "workspaces/${project.id}")
-                val userFiles = if (workspaceDir.isDirectory) {
-                    workspaceDir.walkTopDown().filter { file ->
-                        file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
-                    }.count()
-                } else 0
-                val keep = userMessages > 0 || userFiles > 0
-                if (!keep) {
-                    workspaceDir.deleteRecursively()
-                    terminalHistoryFile(project.id).delete()
-                    preferences.deleteProjectChats(project.id)
-                }
-                keep
-            } else true
-        }
+        // Never delete projects or reset workspaces during startup or an app upgrade.
+        val cleanedProjects = loadedProjects
         if (cleanedProjects.size != loadedProjects.size) {
             preferences.saveProjects(cleanedProjects)
             _state.update { it.copy(projects = cleanedProjects) }

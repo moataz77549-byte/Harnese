@@ -52,7 +52,10 @@ jobs:
             read -r link target <<< "$pair"
             if [ ! -e "guest/$link" ] && [ ! -L "guest/$link" ]; then ln -s "$target" "guest/$link"; fi
           done
+          # Match RuntimeInstaller.stripMacosMetadataArtifacts before executing Python.
+          find guest -name '._*' -type f -delete
           cp scripts/offline/smoke-test.sh guest/tmp/nova-smoke.sh
+          readelf -d guest/root/android-sdk/build-tools/35.0.0/aapt2 | grep NEEDED
           file guest/usr/local/bin/node guest/root/android-sdk/build-tools/35.0.0/aapt2
       - uses: actions/download-artifact@v4
         with:

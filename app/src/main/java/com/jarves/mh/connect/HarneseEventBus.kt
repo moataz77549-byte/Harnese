@@ -65,7 +65,6 @@ class HarneseEventBus private constructor(private val context: Context) : SQLite
                     if (contentEnabled()) {
                         val buffer = responses.getOrPut(event.sessionId) { StringBuilder(secrets.openContent(c.getString(4))) }
                         buffer.append(event.text)
-                        if (buffer.length > 1_000_000) buffer.delete(0, buffer.length - 1_000_000)
                         val now = System.currentTimeMillis()
                         if (now - (responseFlushAt[event.sessionId] ?: 0) >= 1000) {
                             db.execSQL("UPDATE sessions SET response=? WHERE id=?", arrayOf(secrets.sealContent(buffer.toString()), event.sessionId))
