@@ -115,6 +115,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Actions artifacts do not preserve executable bits. Android provides this linker on phones.
+          chmod +x guest/system/bin/linker64
           sudo mount --bind /dev guest/dev
           sudo mount -t proc proc guest/proc
           sudo unshare --net /bin/bash -euc '
