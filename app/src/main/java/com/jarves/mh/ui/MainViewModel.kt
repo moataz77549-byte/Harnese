@@ -1264,6 +1264,11 @@ class HarneseRuntimeController(private val application: Application) {
         if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning) return false
         val workspace = findAndroidProjectRoot(projectWorkspaceRoot(project)) ?: return false
         val apk = findReusableDebugApk(workspace) ?: return false
+        val reuseTask = UUID.randomUUID().toString()
+        com.jarves.mh.connect.HarneseEventBus.get(application).publish(
+            id = "build:$reuseTask", project = project.id, chat = current.activeChatId.orEmpty(), task = reuseTask,
+            kind = "build.reused", body = "${project.name} / $action\nاستخدام APK مطابق دون إعادة بناء: ${apk.name} (${apk.length()} bytes)",
+        )
         if (launch) {
             if (AndroidAppInstaller.openIfAlreadyInstalled(getApplication(), apk)) {
                 androidLaunchAtMillis = System.currentTimeMillis()

@@ -18,6 +18,8 @@ class HarneseEventBus private constructor(private val context: Context) : SQLite
         db.execSQL("CREATE INDEX delivery_due ON outbox(state, next_at, created)")
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    private val responses = mutableMapOf<String, StringBuilder>()
+    private val responseFlushAt = mutableMapOf<String, Long>()
     private val secrets by lazy { TelegramSecretStore(context) }
     private val prefs by lazy { context.getSharedPreferences("nova_hub", Context.MODE_PRIVATE) }
     fun prepare(project: String, chat: String, label: String, source: String) {
@@ -34,6 +36,7 @@ class HarneseEventBus private constructor(private val context: Context) : SQLite
     @Synchronized fun setContent(enabled: Boolean) {
         prefs.edit().putBoolean("content", enabled).commit()
         if (!enabled) {
+            responses.clear(); responseFlushAt.clear()
             writableDatabase.execSQL("UPDATE sessions SET response=''")
             writableDatabase.delete("outbox", "state='pending' AND kind IN ('agent.completed','agent.failed')", null)
         }
@@ -59,7 +62,16 @@ class HarneseEventBus private constructor(private val context: Context) : SQLite
             when (event) {
                 is RuntimeEvent.AssistantDelta -> {
                     // Only persist opted-in content; never store raw secrets in the outbox.
-                    if (contentEnabled()) db.execSQL("UPDATE sessions SET response=? WHERE id=?", arrayOf(secrets.sealContent((secrets.openContent(c.getString(4)) + event.text).takeLast(1_000_000)), event.sessionId))
+                    if (contentEnabled()) {
+                        val buffer = responses.getOrPut(event.sessionId) { StringBuilder(secrets.openContent(c.getString(4))) }
+                        buffer.append(event.text)
+                        if (buffer.length > 1_000_000) buffer.delete(0, buffer.length - 1_000_000)
+                        val now = System.currentTimeMillis()
+                        if (now - (responseFlushAt[event.sessionId] ?: 0) >= 1000) {
+                            db.execSQL("UPDATE sessions SET response=? WHERE id=?", arrayOf(secrets.sealContent(buffer.toString()), event.sessionId))
+                            responseFlushAt[event.sessionId] = now
+                        }
+                    }
                     return
                 }
                 is RuntimeEvent.SessionStarted -> publish("${event.sessionId}:start", project, chat, event.sessionId, "agent.started", "$title\nبدأ الوكيل")
@@ -67,7 +79,9 @@ class HarneseEventBus private constructor(private val context: Context) : SQLite
                 is RuntimeEvent.SessionCompleted, is RuntimeEvent.SessionFailed -> {
                     val failed = event is RuntimeEvent.SessionFailed
                     val status = if (failed) "توقفت المهمة: ${(event as RuntimeEvent.SessionFailed).reason}" else "اكتملت الإجابة"
-                    val body = if (contentEnabled()) secrets.openContent(c.getString(4)) else "مزامنة المحتوى معطلة؛ راجع الإجابة في الهاتف."
+                    val body = if (contentEnabled()) responses.remove(event.sessionId)?.toString() ?: secrets.openContent(c.getString(4)) else "مزامنة المحتوى معطلة؛ راجع الإجابة في الهاتف."
+                    responses.remove(event.sessionId)
+                    responseFlushAt.remove(event.sessionId)
                     db.beginTransaction()
                     try {
                         publish("${event.sessionId}:end", project, chat, event.sessionId, if (failed) "agent.failed" else "agent.completed", "$title\n$status\n\n$body")

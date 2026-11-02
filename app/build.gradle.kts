@@ -149,7 +149,8 @@ android {
             )
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             if (hasUploadSigning) {
                 signingConfig = signingConfigs.getByName("upload")
             }

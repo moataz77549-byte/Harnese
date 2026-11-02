@@ -30,7 +30,7 @@ class SecureReviewApprovalService(private val directory: File) {
         file.inputStream().use { stream -> val b = ByteArray(65536); while (true) { val n = stream.read(b); if (n < 0) break; digest.update(b, 0, n) } }
         digest.digest().joinToString("") { "%02x".format(it) }
     }
-    private val excluded = setOf(".git", "node_modules", "build", ".gradle", ".idea")
+    private val excluded = setOf("build", ".gradle", ".idea")
     private fun files(root: File): List<File> = root.walkTopDown().onEnter {
         it == root || (!Files.isSymbolicLink(it.toPath()) && it.name !in excluded)
     }.filter { it.isFile && !Files.isSymbolicLink(it.toPath()) }.toList()
@@ -60,6 +60,17 @@ class SecureReviewApprovalService(private val directory: File) {
             val copy = safe(workspace, path); copy.parentFile.mkdirs(); file.copyTo(copy)
             copy.setExecutable(file.canExecute(), true)
         }
+        root.walkTopDown().onEnter { it == root || (!Files.isSymbolicLink(it.toPath()) && it.name !in excluded) }
+            .filter { Files.isSymbolicLink(it.toPath()) }.forEach { link ->
+                val destination = link.canonicalFile
+                if (destination.toPath().startsWith(root.toPath())) {
+                    val relative = link.relativeTo(root).invariantSeparatorsPath
+                    val copy = File(workspace, relative)
+                    copy.parentFile.mkdirs()
+                    val resolved = workspace.toPath().resolve(destination.relativeTo(root).invariantSeparatorsPath)
+                    Files.createSymbolicLink(copy.toPath(), copy.parentFile.toPath().relativize(resolved))
+                }
+            }
         save(id, JSONObject().put("id", id).put("project", project).put("original", root.path)
             .put("state", "running").put("expires", System.currentTimeMillis() + 24L * 60 * 60 * 1000).put("baseline", baseline))
         return StagedRun(id, workspace)

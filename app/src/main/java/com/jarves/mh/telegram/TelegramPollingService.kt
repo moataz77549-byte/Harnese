@@ -349,6 +349,7 @@ class TelegramPollingService : Service() {
         val connection = (URL("https://api.telegram.org/bot$token/$method").openConnection() as HttpURLConnection)
         try {
             connection.requestMethod = "POST"
+            connection.instanceFollowRedirects = false
             connection.doOutput = true
             connection.connectTimeout = 15_000
             connection.readTimeout = 40_000

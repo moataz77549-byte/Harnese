@@ -48,6 +48,10 @@ jobs:
           for pack in python android; do tar --zstd -xf dist/runtime-bundles/pocketdev-${pack}-arm64-*.tar.zst -C guest; done
           tar --zstd -xf dist/runtime-bundles/nova-typescript-arm64-5.9.3.tar.zst -C guest
           mkdir -p guest/tmp guest/workspace guest/dev guest/proc guest/sys
+          for pair in 'bin usr/bin' 'lib usr/lib' 'sbin usr/sbin'; do
+            read -r link target <<< "$pair"
+            if [ ! -e "guest/$link" ] && [ ! -L "guest/$link" ]; then ln -s "$target" "guest/$link"; fi
+          done
           cp scripts/offline/smoke-test.sh guest/tmp/nova-smoke.sh
           file guest/usr/local/bin/node guest/root/android-sdk/build-tools/35.0.0/aapt2
       - uses: actions/download-artifact@v4
@@ -74,7 +78,8 @@ jobs:
           compression-level: 0
           retention-days: 7
   build-offline:
-    needs: verify
+    needs: [sample, verify]
+    if: ${{ always() && needs.sample.result == 'success' && needs.verify.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
