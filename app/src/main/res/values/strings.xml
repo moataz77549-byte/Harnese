@@ -415,4 +415,9 @@
     <string name="hub_subscribe">Subscribe to this project</string>
     <string name="hub_unsubscribe">Unsubscribe from this project</string>
     <string name="hub_refresh">Refresh events</string>
+    <string name="hub_review_preview">Review staged changes</string>
+    <string name="hub_review_apply">Authenticate and apply</string>
+    <string name="hub_review_rollback">Authenticate and roll back</string>
+    <string name="hub_review_reject">Reject changes</string>
+    <string name="hub_lock_required">Set a screen lock before approving changes.</string>
 </resources>

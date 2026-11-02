@@ -2547,7 +2547,7 @@ class HarneseRuntimeController(private val application: Application) {
 
     fun updateAgent(kind: AgentKind) {
         val update = _state.value.agentUpdates[kind] ?: return
-        if (_state.value.agentUpdating != null || _state.value.agentInstalling != null || _state.value.isRunning) return
+        if (_state.value.agentUpdating != null || _state.value.agentInstalling != null || _state.value.isRunning || _state.value.androidBuildRunning || _state.value.projectTerminalRunning) return
         _state.update {
             it.copy(
                 agentUpdating = kind,
@@ -5428,6 +5428,12 @@ class HarneseRuntimeController(private val application: Application) {
                 val project = command.projectId?.let(::findProject) ?: s.activeProject
                 val journal = com.jarves.mh.connect.HarneseEventBus.get(application)
                 val text = when (command.name) {
+                    "file" -> {
+                        if (project == null) return HarneseCommandResult.error("اختر مشروعًا أولًا.")
+                        val file = com.jarves.mh.connect.ProjectFilePolicy.allowedTextFile(projectWorkspaceRoot(project), command.argument)
+                        file.readText()
+                    }
+                    "diff" -> com.jarves.mh.connect.SecureReviewApprovalService(File(application.filesDir, "secure-reviews")).pending().filter { it.project == project?.id }.joinToString("\n") { "${it.id}\n" + com.jarves.mh.connect.SecureReviewApprovalService(File(application.filesDir, "secure-reviews")).preview(it.id) }.ifBlank { s.changes.joinToString("\n\n") { "${it.path} +${it.additions} -${it.deletions}\n${it.diffLines.joinToString("\n")}" }.ifBlank { "لا توجد فروقات مسجلة" } }
                     "dashboard" -> "المشاريع: ${s.projects.size}\nالوكيل: ${s.agentKind.name}\nمهمة: ${s.isRunning} / بناء: ${s.androidBuildRunning}\nرسائل معلقة: ${journal.pendingCount()}"
                     "active" -> "${s.activeProject?.name ?: "—"}\n${s.activeChatId ?: "—"}"
                     "tasks" -> "وكيل: ${s.isRunning}\nبناء: ${s.androidBuildRunning}\n${s.androidBuildMessage.orEmpty()}"
@@ -5577,6 +5583,11 @@ class HarneseRuntimeController(private val application: Application) {
                 )
             }
             is HarneseCommand.RejectPendingTool -> {
+                val reviews = com.jarves.mh.connect.SecureReviewApprovalService(File(application.filesDir, "secure-reviews"))
+                if (reviews.pending().any { it.id == command.approvalId }) {
+                    reviews.reject(command.approvalId)
+                    return HarneseCommandResult.success("رُفضت التعديلات المعزولة ولم تطبّق على المشروع.")
+                }
                 val pending = _state.value.pendingApproval
                 if (pending?.approvalId != command.approvalId)
                     HarneseCommandResult.error("طلب الموافقة غير صالح أو انتهى.")

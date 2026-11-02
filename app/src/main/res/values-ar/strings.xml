@@ -248,4 +248,9 @@
     <string name="hub_subscribe">الاشتراك في هذا المشروع</string>
     <string name="hub_unsubscribe">إلغاء اشتراك المشروع</string>
     <string name="hub_refresh">تحديث سجل الأحداث</string>
+    <string name="hub_review_preview">مراجعة التعديلات المعزولة</string>
+    <string name="hub_review_apply">تأكيد هوية الهاتف وتطبيق التعديلات</string>
+    <string name="hub_review_rollback">تأكيد الهوية والتراجع</string>
+    <string name="hub_review_reject">رفض التعديلات</string>
+    <string name="hub_lock_required">فعّل قفل الشاشة قبل اعتماد التعديلات.</string>
 </resources>

@@ -105,14 +105,17 @@ class TelegramPollingService : Service() {
                     .put("offset", store.updateOffset())
                     .put("timeout", 25)
                     .put("limit", 30)
-                    .put("allowed_updates", JSONArray().put("message"))
+                    .put("allowed_updates", JSONArray().put("message").put("callback_query"))
                 val response = api(token, "getUpdates", args)
                 val updates = response.getJSONArray("result")
                 connection.value = "متصل — بانتظار الرسائل"
                 for (index in 0 until updates.length()) {
                     val update = updates.getJSONObject(index)
                     if (!store.reserveUpdate(update.getLong("update_id"))) continue
-                    try { handleMessage(token, update.optJSONObject("message")) }
+                    try {
+                        if (update.has("callback_query")) handleCallback(token, update.getJSONObject("callback_query"))
+                        else handleMessage(token, update.optJSONObject("message"))
+                    }
                     catch (_: CancellationException) { throw CancellationException() }
                     catch (_: Exception) { connection.value = "تعذر معالجة أحد الأوامر. أعد إرساله." }
                 }
@@ -151,7 +154,27 @@ class TelegramPollingService : Service() {
             return
         }
         val output = execute(instruction)
-        reply(token, chatId, output)
+        val keyboard = when (instruction) {
+            TelegramInstruction.Projects -> preferences.loadProjects().take(20).map { it.name to "p:${it.id}" }
+            TelegramInstruction.Chats -> store.lastProjectId()?.let { id -> preferences.loadProjectChats(id).take(20).map { it.title to "c:${it.id}" } }.orEmpty()
+            else -> emptyList()
+        }
+        reply(token, chatId, output, keyboard)
+    }
+
+    private suspend fun handleCallback(token: String, callback: JSONObject) {
+        val sender = callback.optJSONObject("from") ?: return
+        val message = callback.optJSONObject("message") ?: return
+        val chat = message.optJSONObject("chat") ?: return
+        if (!store.authorized(sender.optLong("id"), chat.optLong("id"), chat.optString("type") == "private") || sender.optBoolean("is_bot")) return
+        api(token, "answerCallbackQuery", JSONObject().put("callback_query_id", callback.getString("id")))
+        val data = callback.optString("data")
+        val instruction = when {
+            data.startsWith("p:") -> TelegramInstructionParser.parse("/open " + data.removePrefix("p:"))
+            data.startsWith("c:") -> TelegramInstructionParser.parse("/chat " + data.removePrefix("c:"))
+            else -> return
+        }
+        reply(token, chat.getLong("id"), execute(instruction))
     }
 
     private suspend fun execute(instruction: TelegramInstruction): String {
@@ -264,10 +287,13 @@ class TelegramPollingService : Service() {
         }
     }
 
-    private suspend fun reply(token: String, chatId: Long, text: String) {
+    private suspend fun reply(token: String, chatId: Long, text: String, keyboard: List<Pair<String, String>> = emptyList()) {
         for (part in com.jarves.mh.connect.TelegramContentPolicy.chunks(com.jarves.mh.connect.TelegramContentPolicy.redact(text))) {
             val body = JSONObject().put("chat_id", chatId).put("text", part)
                 .put("disable_web_page_preview", true)
+            if (keyboard.isNotEmpty()) body.put("reply_markup", JSONObject().put("inline_keyboard", JSONArray().apply {
+                keyboard.forEach { (label, data) -> put(JSONArray().put(JSONObject().put("text", label.take(60)).put("callback_data", data))) }
+            }))
             api(token, "sendMessage", body)
         }
     }

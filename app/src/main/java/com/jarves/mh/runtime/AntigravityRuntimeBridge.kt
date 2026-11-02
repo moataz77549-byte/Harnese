@@ -185,6 +185,7 @@ class AntigravityRuntimeBridge(
     private val installer = RuntimeInstaller(context)
     private val checkpoints = WorkspaceCheckpoints(context.filesDir, context)
     private val eventBus = MutableSharedFlow<RuntimeEvent>(extraBufferCapacity = 64)
+    private val reviews = com.jarves.mh.connect.SecureReviewApprovalService(File(context.filesDir, "secure-reviews"))
     private val journal = com.jarves.mh.connect.HarneseEventBus.get(context)
     private suspend fun emitEvent(event: RuntimeEvent) {
         journal.runtime(event)
@@ -347,8 +348,10 @@ class AntigravityRuntimeBridge(
             startForegroundRuntime(projectSlug)
             pushForegroundProgress(R.string.rt_bridge_starting, "Antigravity")
             val installed = installer.installedRuntime()
-            val workspace = checkpoints.ensureWorkspace(projectId)
-            checkpoints.createCheckpoint(projectId, workspace)
+            val originalWorkspace = checkpoints.ensureWorkspace(projectId)
+            val stagedRun = reviews.stage(projectId, originalWorkspace)
+            val workspace = stagedRun.workspace
+            checkpoints.createCheckpoint(projectId, originalWorkspace)
             val before = checkpoints.snapshot(workspace)
             val command = antigravityCommand(model(), effort(), conversationId(projectId))
             val process = installer.process(
@@ -465,10 +468,15 @@ class AntigravityRuntimeBridge(
                     friendlyError(pending.toString().takeLast(1_000).ifBlank { "Antigravity exited with code $exit" })
                 }
             }
-            val paths = checkpoints.changedFiles(workspace, before)
+            val stagedReview = reviews.finish(stagedRun.id)
+                if (stagedReview.entries.isNotEmpty()) journal.publish(
+                    id = "review:${stagedRun.id}", project = projectId, chat = "", task = sessionId,
+                    kind = "review.pending", body = "مراجعة تعديلات معزولة: ${stagedRun.id}\n" + stagedReview.entries.joinToString("\n") { it.path } + "\nاعتماد محلي في Agent Hub فقط. الرفض: /reject ${stagedRun.id}",
+                )
+                val paths = checkpoints.changedFiles(workspace, before)
             checkpoints.saveChangedPaths(projectId, paths)
             if (paths.isNotEmpty()) {
-                emitEvent(RuntimeEvent.FilesChanged(sessionId, checkpoints.buildChangeDetails(projectId, workspace, paths)))
+                emitEvent(RuntimeEvent.FilesChanged(sessionId, stagedReview.entries.map { ChangeItem(it.path, 0, 0) }))
             }
             emitCompleted(sessionId)
             finishForegroundRuntime(true, projectSlug, AppStrings.get(context, R.string.rt_bridge_finished_in, "Antigravity", projectSlug))

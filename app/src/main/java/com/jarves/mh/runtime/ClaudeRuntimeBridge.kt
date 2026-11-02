@@ -73,6 +73,7 @@ class ClaudeRuntimeBridge(
 ) : RuntimeBridge {
     private val installer = RuntimeInstaller(context)
     private val eventBus = MutableSharedFlow<RuntimeEvent>(extraBufferCapacity = 64)
+    private val reviews = com.jarves.mh.connect.SecureReviewApprovalService(File(context.filesDir, "secure-reviews"))
     private val journal = com.jarves.mh.connect.HarneseEventBus.get(context)
     private suspend fun emitEvent(event: RuntimeEvent) {
         journal.runtime(event)
@@ -148,8 +149,10 @@ class ClaudeRuntimeBridge(
             // messages into the conversation.
             val installed = installer.installedRuntime()
             installer.ensureSettingsAndHooks()
-            val workspace = ensureWorkspace(projectId)
-            createCheckpoint(projectId, workspace)
+            val originalWorkspace = ensureWorkspace(projectId)
+            val stagedRun = reviews.stage(projectId, originalWorkspace)
+            val workspace = stagedRun.workspace
+            createCheckpoint(projectId, originalWorkspace)
             val before = snapshot(workspace)
             formatGateway = if (provider.kind.protocol in setOf(
                     com.jarves.mh.model.ProviderProtocol.OPENAI_CHAT,
@@ -249,11 +252,16 @@ class ClaudeRuntimeBridge(
                     permission.response.writeText("deny")
                     pending.remove(permission.request.approvalId)
                 }
+                val stagedReview = reviews.finish(stagedRun.id)
+                if (stagedReview.entries.isNotEmpty()) journal.publish(
+                    id = "review:${stagedRun.id}", project = projectId, chat = "", task = sessionId,
+                    kind = "review.pending", body = "مراجعة تعديلات معزولة: ${stagedRun.id}\n" + stagedReview.entries.joinToString("\n") { it.path } + "\nاعتماد محلي في Agent Hub فقط. الرفض: /reject ${stagedRun.id}",
+                )
                 val changed = changedFiles(workspace, before)
                 if (changed.isNotEmpty()) {
                     Log.d("ClaudeBridge", "Changed files: $changed")
                     saveChangedPaths(projectId, changed)
-                    val details = loadPendingChanges(projectId)
+                    val details = stagedReview.entries.map { ChangeItem(it.path, 0, 0) }
                     emitEvent(RuntimeEvent.FilesChanged(sessionId, details))
                 } else if (!File(checkpointDir(projectId), "changes.json").isFile) {
                     acceptLastChanges(projectId)
