@@ -39,6 +39,7 @@ import org.json.JSONObject
 class TelegramPollingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollingJob: Job? = null
+    private var deliveryJob: Job? = null
     private lateinit var store: TelegramSecretStore
     private lateinit var preferences: AppPreferences
 
@@ -74,6 +75,24 @@ class TelegramPollingService : Service() {
             return START_NOT_STICKY
         }
         pollingJob = scope.launch { pollingLoop(token) }
+        deliveryJob = scope.launch {
+            val journal = com.jarves.mh.connect.HarneseEventBus.get(applicationContext)
+            while (isActive) {
+                val item = journal.next()
+                if (item == null) { delay(2000); continue }
+                // Drop queued content after unlink/re-pair; never reroute an old delivery.
+                if (store.linkedChatId() != item.destination || journal.muted()) {
+                    journal.delivered(item.id)
+                    continue
+                }
+                try {
+                    reply(token, item.destination, item.body)
+                    journal.delivered(item.id)
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { journal.failed(item) }
+                delay(1100)
+            }
+        }
         return START_STICKY
     }
 
@@ -217,9 +236,11 @@ class TelegramPollingService : Service() {
     }
 
     private suspend fun reply(token: String, chatId: Long, text: String) {
-        val body = JSONObject().put("chat_id", chatId).put("text", text.take(3900))
-            .put("disable_web_page_preview", true)
-        api(token, "sendMessage", body)
+        for (part in com.jarves.mh.connect.TelegramContentPolicy.chunks(com.jarves.mh.connect.TelegramContentPolicy.redact(text))) {
+            val body = JSONObject().put("chat_id", chatId).put("text", part)
+                .put("disable_web_page_preview", true)
+            api(token, "sendMessage", body)
+        }
     }
 
     private fun api(token: String, method: String, body: JSONObject): JSONObject {
@@ -243,6 +264,7 @@ class TelegramPollingService : Service() {
 
     override fun onDestroy() {
         pollingJob?.cancel()
+        deliveryJob?.cancel()
         scope.cancel()
         connection.value = "متوقف"
         super.onDestroy()

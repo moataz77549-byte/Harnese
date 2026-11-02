@@ -1419,6 +1419,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 toastMessage = null,
             )
         }
+        val buildTaskId = "build:${project.id}:$startedAt"
+        val buildJournal = com.jarves.mh.connect.HarneseEventBus.get(getApplication())
+        val buildChat = _state.value.activeChatId.orEmpty()
+        buildJournal.prepare(project.id, buildChat, _state.value.projectChats.firstOrNull { it.id == buildChat }?.title.orEmpty(), integrationSource)
+        fun buildEvent(kind: String, text: String) = buildJournal.publish(
+            id = "$buildTaskId:$kind", project = project.id, chat = buildChat, task = buildTaskId,
+            kind = "build.$kind", body = "${project.name} / $action / $task\n$text",
+        )
+        buildEvent("started", "بدأ البناء")
         saveAndroidBuildRecord(project.id)
         startAndroidBuildForegroundService(project, task)
         viewModelScope.launch(Dispatchers.IO) {
@@ -1445,6 +1454,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     projectGuestRoot(project),
                 )
                 androidBuildProcess = process
+                var publishedStage: AndroidBuildStage? = null
                 RuntimeTaskController.stopAction = ::cancelAndroidBuild
                 val native = process as? NativeSpawnProcess ?: error(str(R.string.an_unsupported_build_process))
                 var offset = 0L
@@ -1469,6 +1479,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 androidBuildStage = nextStage,
                                 androidBuildMessage = androidStageMessage(nextStage),
                             )
+                        }
+                        val stage = _state.value.androidBuildStage
+                        if (stage != publishedStage) {
+                            publishedStage = stage
+                            buildEvent("stage:$stage", androidStageMessage(stage))
                         }
                     }
                 }
@@ -1510,6 +1525,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     saveAndroidBuildRecord(project.id)
                     refreshAndroidApkInfo()
                 }
+                buildEvent("succeeded", "$message\nAPK: ${apk?.name ?: "—"}\n${apk?.length() ?: 0} bytes / ${buildCompletedAt - startedAt} ms")
                 finishAndroidBuildForegroundService(project, message, failed = false)
                 if (shouldInstallAndRun) beginAndroidInstall(apk!!, launch = true, action = action)
             }.onFailure { error ->
@@ -1532,6 +1548,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     saveAndroidBuildRecord(project.id)
                 }
+                buildEvent(if (cancelled) "cancelled" else "failed", message + "\n" + finalOutput.takeLast(6000))
                 finishAndroidBuildForegroundService(project, message, failed = !cancelled, cancelled = cancelled)
             }.also {
                 androidBuildProcess = null
@@ -4749,7 +4766,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(queuedFollowUps = pendingFollowUps.toList()) }
     }
 
+    private var integrationSource = "android"
+
     private fun startPrompt(project: Project, prompt: String, attachments: List<ChatAttachment>) {
+        com.jarves.mh.connect.HarneseEventBus.get(getApplication()).prepare(
+            project.id, _state.value.activeChatId.orEmpty(),
+            _state.value.projectChats.firstOrNull { it.id == _state.value.activeChatId }?.title.orEmpty(),
+            integrationSource,
+        )
         // requestText is sent to the agent, so it stays English; the chat title is user-facing.
         val requestText = prompt.trim().ifBlank { "Please review the attached files." }
         updateActiveChatTitle(prompt.trim().ifBlank { str(R.string.md_chat_title_attachments) })
@@ -5488,7 +5512,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 switchChat(chat.id)
                 if (_state.value.activeProject?.id != project.id || _state.value.activeChatId != chat.id)
                     return HarneseCommandResult.error("تعذّر تأكيد وجهة الرسالة.")
-                sendPrompt(command.prompt)
+                integrationSource = "telegram"
+                try { sendPrompt(command.prompt) } finally { integrationSource = "android" }
                 HarneseCommandResult.success("تم إرسال التعليمات إلى الوكيل في مشروع ${project.name}، دردشة ${chat.title}.")
             }
             HarneseCommand.PendingApproval -> {
