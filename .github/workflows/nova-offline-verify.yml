@@ -144,7 +144,7 @@ jobs:
           cp -a "$BUILD_TOOLS/lib64" owner-signing/
           cp "$BUILD_TOOLS/aapt" owner-signing/
           cp app/build/outputs/apk/offline/release/*-unsigned.apk owner-signing/Harnese-Nova-v1.3.2-Offline-ARM64-unsigned.apk
-          find owner-signing -type f -print0 | sort -z | xargs -0 sha256sum > owner-signing/BUILD-SHA256.txt
+          find owner-signing -type f ! -name SHA256.txt ! -name BUILD-SHA256.txt -print0 | sort -z | xargs -0 sha256sum > owner-signing/BUILD-SHA256.txt
           stat -c '%n %s bytes' owner-signing/*
       - uses: actions/upload-artifact@v4
         with:
