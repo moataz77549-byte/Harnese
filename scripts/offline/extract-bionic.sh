@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# CI-only Android runtime for executing the actual Android ARM64 aapt2 on Linux ARM64.
+# No Bionic libraries are added to the APK; phones supply their own Android runtime.
+python3 -m unittest discover -s scripts/offline -p 'test_*.py'
+sdkmanager 'system-images;android-30;google_apis;arm64-v8a'
+sudo apt-get update
+sudo apt-get install -y android-sdk-libsparse-utils unzip qemu-utils erofs-utils
+IMAGE="$ANDROID_HOME/system-images/android-30/google_apis/arm64-v8a/system.img"
+mkdir -p android-image android-runtime/system/bin android-runtime/system/lib64 apex-image
+file "$IMAGE"
+if file "$IMAGE" | grep -qi 'sparse'; then simg2img "$IMAGE" system.raw.img
+elif file "$IMAGE" | grep -qi 'QCOW'; then qemu-img convert -O raw "$IMAGE" system.raw.img
+else cp "$IMAGE" system.raw.img; fi
+file system.raw.img
+sudo blkid system.raw.img || true
+if file system.raw.img | grep -qi 'EROFS'; then
+  fsck.erofs --extract=android-image system.raw.img
+  IMAGE_MOUNTED=false
+else
+  if sudo blkid -s PTTYPE -o value system.raw.img | grep -qx gpt; then
+    LOOP_DEVICE=$(sudo losetup --find --show --partscan system.raw.img)
+    sudo lsblk -o NAME,FSTYPE,PARTLABEL "$LOOP_DEVICE"
+    sudo blkid "${LOOP_DEVICE}"p* || true
+    SYSTEM_PART=$(sudo lsblk -lnpo NAME,PARTLABEL "$LOOP_DEVICE" | awk '$2 == "system" { print $1; exit }')
+    if [ -z "$SYSTEM_PART" ]; then
+      SUPER_PART=''
+      for part in "${LOOP_DEVICE}"p*; do
+        if [ "$(sudo blkid -s PARTLABEL -o value "$part" || true)" = super ]; then SUPER_PART=$part; break; fi
+      done
+      if [ -n "$SUPER_PART" ]; then
+        sudo python3 scripts/offline/extract-super-system.py "$SUPER_PART" system-logical.img
+        sudo mount -o loop,ro system-logical.img android-image
+      else
+        SYSTEM_PART=$(sudo lsblk -lnpo NAME,FSTYPE "$LOOP_DEVICE" | awk '$2 == "ext4" || $2 == "erofs" { print $1; exit }')
+        test -n "$SYSTEM_PART"
+        sudo mount -o ro "$SYSTEM_PART" android-image
+      fi
+    else
+      sudo mount -o ro "$SYSTEM_PART" android-image
+    fi
+  else
+    sudo mount -o loop,ro system.raw.img android-image
+  fi
+  IMAGE_MOUNTED=true
+fi
+SYSTEM=android-image/system
+if [ ! -d "$SYSTEM/lib64" ]; then SYSTEM=android-image; fi
+APEX=$(find "$SYSTEM/apex" -maxdepth 1 -name 'com.android.runtime*.apex' -print -quit)
+test -n "$APEX"
+unzip -p "$APEX" apex_payload.img > runtime-apex.img
+sudo mount -o loop,ro runtime-apex.img apex-image
+cp apex-image/bin/linker64 android-runtime/system/bin/linker64
+for name in libc.so libm.so libdl.so; do cp "apex-image/lib64/bionic/$name" "android-runtime/system/lib64/$name"; done
+cp "$SYSTEM/lib64/libz.so" android-runtime/system/lib64/libz.so
+chmod 755 android-runtime/system/bin/linker64
+sha256sum android-runtime/system/bin/linker64 android-runtime/system/lib64/* > android-runtime/SHA256.txt
+sudo umount apex-image
+if [ "$IMAGE_MOUNTED" = true ]; then sudo umount android-image; fi
+
+if [ -n "${LOOP_DEVICE:-}" ]; then sudo losetup -d "$LOOP_DEVICE"; fi

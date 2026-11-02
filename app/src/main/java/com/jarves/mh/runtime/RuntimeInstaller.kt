@@ -205,10 +205,11 @@ class RuntimeInstaller(private val context: Context) {
         // Node.js and Git are always available in the Core runtime. Python,
         // C/C++, PHP, and Android remain opt-in stacks during onboarding.
         val coreNeeded = !File(rootfs, "usr/bin/git").exists() || !isSupportedCoreToolsVersion()
+        if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) check(!coreNeeded) { "Embedded Core failed validation; repair from the APK is required" }
         if (coreNeeded) {
             installNodeIfNeeded(proot, 0.58f, 0.66f, onProgress)
         }
-        if (systemUpgradeMarker.readTextOrNull() != SYSTEM_UPGRADE_VERSION) {
+        if (!BuildConfig.OFFLINE_RUNTIME_BUNDLES && systemUpgradeMarker.readTextOrNull() != SYSTEM_UPGRADE_VERSION) {
             runSystemMaintenance(proot, onProgress)
             systemUpgradeMarker.writeText(SYSTEM_UPGRADE_VERSION)
         }
@@ -225,17 +226,19 @@ class RuntimeInstaller(private val context: Context) {
             coreToolsMarker.writeText(CORE_TOOLS_VERSION)
         }
 
-        val missingStacks = selectedStacks.filterNot(::isStackInstalled)
+        val requiredStacks = if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) selectedStacks + setOf(DevStack.WEB, DevStack.PYTHON, DevStack.ANDROID) else selectedStacks
+        val missingStacks = requiredStacks.filterNot(::isStackInstalled)
         missingStacks.forEachIndexed { index, stack ->
             val slice = 0.26f / maxOf(1, missingStacks.size)
             val from = 0.72f + index * slice
             applyStack(proot, stack, from, from + slice, onProgress)
         }
 
+        if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) ensureEmbeddedTypeScript(proot, onProgress)
         when (agent) {
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.985f, onProgress)
-            com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.985f, onProgress)
+            com.jarves.mh.model.AgentKind.ANTIGRAVITY -> if (!BuildConfig.OFFLINE_RUNTIME_BUNDLES) ensureAgyInstalled(proot, 0.985f, onProgress)
         }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_setup_complete), 1f))
         return InstalledRuntime(proot, rootfs)
@@ -616,29 +619,9 @@ class RuntimeInstaller(private val context: Context) {
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
         if (isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) return
-        if (!BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
-            // A fresh online installation must use Google's latest verified release,
-            // not require the obsolete 2026.09 prebundled Antigravity archive.
-            val version = fetchAgyManifest().getString("version")
-            updateAgy(InstalledRuntime(proot, rootfs), version, onProgress)
-            require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-                "Official Antigravity CLI installation is incomplete"
-            }
-            return
-        }
-        installRuntimeOverlay(
-            bundle = AGY_BUNDLE,
-            message = str(R.string.rt_install_installing_version, "Antigravity CLI", AGY_VERSION),
-            from = fraction,
-            to = 0.995f,
-            onProgress = onProgress,
-            forceEmbedded = true,
-        )
-        verifyGuest(proot, "$AGY_GUEST_PATH --version", str(R.string.rt_install_verify_failed, "Antigravity CLI"))
-        agyMarker.writeText(AGY_VERSION)
-        require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-            "Antigravity CLI installation is incomplete"
-        }
+        val version = fetchAgyManifest().getString("version")
+        updateAgy(InstalledRuntime(proot, rootfs), version, onProgress)
+        require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) { "Official Antigravity CLI installation is incomplete" }
     }
 
     private suspend fun ensureDshInstalled(
@@ -866,9 +849,10 @@ class RuntimeInstaller(private val context: Context) {
             DevStack.PYTHON -> {
                 installRuntimeOverlay(PYTHON_BUNDLE, str(R.string.rt_install_python), from, to, onProgress)
                 runCatching {
-                    verifyGuest(proot, "python3 --version && pip3 --version", str(R.string.rt_install_verify_failed, "Python"))
+                    verifyGuest(proot, "python3 --version && pip3 --version && python3 -c 'import unittest,venv; assert sum([1,2,3]) == 6'", str(R.string.rt_install_verify_failed, "Python"))
                 }.onFailure { error ->
                     verified = false
+                    if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) throw error
                     onProgress(
                         RuntimeInstallProgress(
                             str(R.string.rt_install_python_verify_failed, error.message?.take(120).orEmpty()),
@@ -984,6 +968,94 @@ class RuntimeInstaller(private val context: Context) {
         )
     }
 
+    /** Reapply only managed tool files; never replace the user's rootfs or project data. */
+    suspend fun repairEnvironment(name: String, onProgress: suspend (RuntimeInstallProgress) -> Unit) {
+        val runtime = installedRuntime()
+        when (name) {
+            "python" -> applyStack(runtime.proot, DevStack.PYTHON, 0.05f, 0.95f, onProgress)
+            "androidsdk" -> {
+                File(rootfs, "root/.pocket-android-tools-version").delete()
+                installAndroidToolchain(runtime.proot, 0.05f, 0.95f, onProgress)
+            }
+            "typescript" -> {
+                require(BuildConfig.OFFLINE_RUNTIME_BUNDLES) { "TypeScript repair requires the Offline APK" }
+                File(rootfs, ".nova-typescript-version").delete()
+                ensureEmbeddedTypeScript(runtime.proot, onProgress)
+            }
+            "node" -> {
+                require(BuildConfig.OFFLINE_RUNTIME_BUNDLES) { "Node repair requires the Offline APK" }
+                val archive = obtainRuntimeBundle(CORE_BUNDLE, true, 0.05f, 0.5f, onProgress)
+                // Core contains shell/home files too: copy ONLY Node-owned paths.
+                TarArchiveInputStream(ZstdCompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
+                    var entry = tar.nextEntry
+                    while (entry != null) {
+                        val path = entry.name.removePrefix("./")
+                        if (path.startsWith("usr/local/lib/nodejs/") && !path.split('/').any { it.startsWith("._") }) {
+                            val dest = safeChild(rootfs, path)
+                            when {
+                                entry.isDirectory -> dest.mkdirs()
+                                entry.isSymbolicLink -> { dest.parentFile.mkdirs(); if (dest.exists() || java.nio.file.Files.isSymbolicLink(dest.toPath())) dest.delete(); Os.symlink(entry.linkName,dest.path) }
+                                entry.isFile -> { dest.parentFile.mkdirs(); FileOutputStream(dest).use { tar.copyTo(it) }; Os.chmod(dest.path,entry.mode and 511) }
+                            }
+                        }
+                        entry = tar.nextEntry
+                    }
+                }
+                for (tool in listOf("node","npm","npx")) {
+                    val link=File(rootfs,"usr/local/bin/$tool")
+                    if(link.exists() || java.nio.file.Files.isSymbolicLink(link.toPath())) link.delete()
+                    Os.symlink("../lib/nodejs/bin/$tool",link.path)
+                }
+                verifyGuest(runtime.proot,"node --version && npm --version && node -e 'if(6*7!==42) process.exit(1)'","Node repair failed")
+                archive.delete()
+            }
+            else -> error("Unsupported environment repair")
+        }
+        onProgress(RuntimeInstallProgress("$name: verified",1f))
+    }
+
+    suspend fun probeEnvironment(name: String): String {
+        if (name == "disk") return "Available: ${context.filesDir.usableSpace} bytes\nTotal: ${context.filesDir.totalSpace} bytes"
+        val runtime = installedRuntime()
+        val probeRoot = File(context.cacheDir, "nova-probe-${java.util.UUID.randomUUID()}")
+        probeRoot.mkdirs()
+        val command = when (name) {
+            "python" -> "python3 --version && python3 -m pip --version && python3 -c 'import unittest,venv; assert sum([1,2,3])==6; print(42)'"
+            "node" -> "node --version && npm --version && node -e 'if (6*7 !== 42) process.exit(1); console.log(42)'"
+            "typescript" -> "printf 'const n: number = 42; console.log(n);' > smoke.ts && tsc --version && tsc --target ES2020 --module commonjs smoke.ts && node smoke.js | grep -qx 42"
+            "androidsdk" -> "java -version && gradle --version && aapt2 version"
+            "runtimes" -> """for tool in python3 node npm tsc java gradle agy php gcc clang; do echo --- "${'$'}tool"; command -v "${'$'}tool" || true; done"""
+            "runtimehealth" -> {
+                AndroidProjectTemplateGenerator.generate(File(probeRoot, "android"), "NovaOfflineProbe", com.jarves.mh.model.AndroidTemplate.XML)
+                "python3 -c 'import unittest,venv; assert 6*7==42' && printf 'const n: number = 42; console.log(n);' > smoke.ts && tsc smoke.ts && node smoke.js | grep -qx 42 && cd android && gradle --offline --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx512m --init-script /root/.gradle/init.d/pocketdev-android.gradle -Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 assembleDebug && test -s app/build/outputs/apk/debug/app-debug.apk && aapt2 dump badging app/build/outputs/apk/debug/app-debug.apk"
+            }
+            else -> error("Unsupported environment probe")
+        }
+        var running: Process? = null
+        try {
+            val probe = process(runtime.proot, runtime.rootfs, probeRoot, emptyMap(), listOf("/usr/bin/bash", "-lc", command))
+            running = probe
+            withTimeout(if (name == "runtimehealth") 15 * 60_000L else 90_000L) { while (probe.isAlive) delay(100) }
+            val result = probe.waitFor()
+            val output = (probe as? NativeSpawnProcess)?.outputFile?.readTailText(14000).orEmpty()
+            return "[$name] exit=$result\n$output"
+        } finally {
+            running?.let { if (it.isAlive) it.destroyForcibly() }
+            probeRoot.deleteRecursively()
+        }
+    }
+
+    private suspend fun ensureEmbeddedTypeScript(proot: File, onProgress: suspend (RuntimeInstallProgress) -> Unit) {
+        val manifest = JSONObject(context.assets.open("runtime/offline-manifest.json").bufferedReader().use { it.readText() }).getJSONObject("bundles").getJSONObject("typescript")
+        val marker = File(rootfs, ".nova-typescript-version")
+        if (marker.readTextOrNull() != manifest.getString("version") || !File(rootfs, "opt/nova/typescript/lib/tsc.js").isFile) {
+            val bundle = RuntimeBundle("TypeScript", manifest.getString("file"), manifest.getString("sha256"), manifest.getLong("compressedBytes"))
+            installRuntimeOverlay(bundle, "TypeScript", 0.94f, 0.98f, onProgress, forceEmbedded = true)
+            verifyGuest(proot, """mkdir -p /tmp/nova-ts-probe && printf 'const value: number = 42; console.log(value);' > /tmp/nova-ts-probe/smoke.ts && tsc --target ES2020 --module commonjs /tmp/nova-ts-probe/smoke.ts && node /tmp/nova-ts-probe/smoke.js | grep -qx 42""", "TypeScript offline compile/run failed")
+            marker.writeText(manifest.getString("version"))
+        }
+    }
+
     private suspend fun installRuntimeOverlay(
         bundle: RuntimeBundle,
         message: String,
@@ -1033,13 +1105,24 @@ class RuntimeInstaller(private val context: Context) {
     }
 
     private suspend fun obtainRuntimeBundle(
-        bundle: RuntimeBundle,
+        requestedBundle: RuntimeBundle,
         preferEmbedded: Boolean,
         from: Float,
         to: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ): File {
+        val bundle = if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
+            val manifest = JSONObject(context.assets.open("runtime/offline-manifest.json").bufferedReader().use { it.readText() }).getJSONObject("bundles")
+            val info = manifest.keys().asSequence().map { manifest.getJSONObject(it) }.first { it.getString("file") == requestedBundle.fileName || it.optString("sourceFile") == requestedBundle.fileName }
+            requestedBundle.copy(fileName = info.getString("file"), sha256 = info.getString("sha256"), compressedBytes = info.getLong("compressedBytes"))
+        } else requestedBundle
         downloads.mkdirs()
+        if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
+            val embedded = JSONObject(context.assets.open("runtime/offline-manifest.json").bufferedReader().use { it.readText() }).getJSONObject("bundles")
+            val info = embedded.keys().asSequence().map { embedded.getJSONObject(it) }.first { it.getString("file") == bundle.fileName }
+            val required = bundle.compressedBytes + info.getLong("uncompressedBytes") * 2 + 64L * 1024 * 1024
+            check(context.filesDir.usableSpace >= required) { "Insufficient storage: need $required bytes for ${bundle.label}" }
+        }
         val destination = File(downloads, bundle.fileName)
         val useEmbedded = preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES
         if (useEmbedded) {

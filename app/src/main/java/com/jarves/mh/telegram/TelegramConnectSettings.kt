@@ -38,6 +38,11 @@ fun TelegramConnectSettings() {
     var linkedId by remember { mutableStateOf(store.linkedUserId()) }
     var pairCode by remember { mutableStateOf<String?>(null) }
     var enablePrompts by remember { mutableStateOf(store.remoteTasksEnabled()) }
+    val journal = remember(context) { com.jarves.mh.connect.HarneseEventBus.get(context) }
+    var streamContent by remember { mutableStateOf(journal.streamingEnabled()) }
+    var syncContent by remember { mutableStateOf(journal.contentEnabled()) }
+    var mute by remember { mutableStateOf(journal.muted()) }
+    var showHub by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     val connection by TelegramPollingService.connection.collectAsState()
 
@@ -92,6 +97,18 @@ fun TelegramConnectSettings() {
                     store.setRemoteTasksEnabled(it)
                 })
             }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(stringResource(R.string.hub_sync_content), modifier = Modifier.weight(1f))
+                Switch(checked = syncContent, onCheckedChange = { syncContent = it; journal.setContent(it) })
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(stringResource(R.string.hub_stream), modifier = Modifier.weight(1f))
+                Switch(checked = streamContent, enabled = syncContent, onCheckedChange = { streamContent = it; journal.setStreaming(it) })
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(stringResource(R.string.hub_mute), modifier = Modifier.weight(1f))
+                Switch(checked = mute, onCheckedChange = { mute = it; journal.setMuted(it) })
+            }
             Text(stringResource(R.string.tg_security_notice), style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(onClick = {
@@ -111,6 +128,8 @@ fun TelegramConnectSettings() {
                 Text(stringResource(R.string.tg_refresh_link))
             }
         }
+        OutlinedButton(onClick = { showHub = !showHub }) { Text("Agent Hub") }
+        if (showHub) AgentHubPanel()
         if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.primary)
     }
 }
