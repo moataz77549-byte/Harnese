@@ -2,6 +2,7 @@ package com.jarves.mh.telegram
 
 /** Only explicit commands have remote execution authority; ordinary chat text is ignored. */
 sealed interface TelegramInstruction {
+    data class Control(val name: String, val argument: String) : TelegramInstruction
     data object Help : TelegramInstruction
     data class Pair(val code: String) : TelegramInstruction
     data object Projects : TelegramInstruction
@@ -37,11 +38,13 @@ object TelegramInstructionParser {
             "/chats" -> TelegramInstruction.Chats
             "/chat" -> if (argument.length in 4..36) TelegramInstruction.Chat(argument) else TelegramInstruction.Unknown
             "/newchat" -> TelegramInstruction.NewChat
-            "/ask" -> if (argument.isNotBlank() && argument.length <= 4000) TelegramInstruction.Ask(argument) else TelegramInstruction.Unknown
+            "/ask", "/reply" -> if (argument.isNotBlank() && argument.length <= 4000) TelegramInstruction.Ask(argument) else TelegramInstruction.Unknown
             "/status" -> TelegramInstruction.Status
-            "/stop" -> TelegramInstruction.Stop
+            "/stop", "/cancel" -> TelegramInstruction.Stop
             "/pending" -> TelegramInstruction.Pending
             "/reject" -> if (argument.length in 8..64) TelegramInstruction.Reject(argument) else TelegramInstruction.Unknown
+            "/dashboard", "/active", "/tasks", "/model", "/models", "/agent", "/build", "/buildlog", "/apk", "/health", "/updates", "/subscribe", "/unsubscribe", "/notify" ->
+                if (argument.length <= 80) TelegramInstruction.Control(command.removePrefix("/"), argument) else TelegramInstruction.Unknown
             else -> TelegramInstruction.Unknown
         }
     }

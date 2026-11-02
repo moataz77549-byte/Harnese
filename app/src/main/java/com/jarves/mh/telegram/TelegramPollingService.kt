@@ -47,6 +47,7 @@ class TelegramPollingService : Service() {
         super.onCreate()
         store = TelegramSecretStore(applicationContext)
         preferences = AppPreferences(applicationContext)
+        com.jarves.mh.ui.HarneseRuntimeOwner.get(application as android.app.Application)
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(
             CHANNEL_ID, "Harnese Connect Telegram control", NotificationManager.IMPORTANCE_LOW
@@ -162,6 +163,27 @@ class TelegramPollingService : Service() {
         suspend fun dispatch(cmd: HarneseCommand): HarneseCommandResult = HarneseCommandBus.dispatch(cmd)
         fun noProject() = "اختر مشروعًا أولًا: /projects ثم /open <معرّف>."
         return when (instruction) {
+            is TelegramInstruction.Control -> {
+                val journal = com.jarves.mh.connect.HarneseEventBus.get(applicationContext)
+                when (instruction.name) {
+                    "subscribe", "unsubscribe" -> {
+                        val project = if (instruction.argument == "all") "*" else store.lastProjectId() ?: return noProject()
+                        journal.setSubscription(project, instruction.name == "subscribe")
+                        "تم تحديث الاشتراك: $project"
+                    }
+                    "notify" -> when (instruction.argument) {
+                        "mute" -> { journal.setMuted(true); "الإشعارات مكتومة" }
+                        "unmute" -> { journal.setMuted(false); "الإشعارات مفعلة" }
+                        "status" -> { journal.setContent(false); "إشعارات الحالة فقط" }
+                        "content" -> "فعّل مزامنة المحتوى من الهاتف لحماية خصوصيتك."
+                        else -> "/notify mute | unmute | status\nالمعلّق: ${journal.pendingCount()}"
+                    }
+                    else -> {
+                        if (instruction.name in setOf("build", "updates") && !store.remoteTasksEnabled()) return "فعّل المهام عن بعد من الهاتف أولًا."
+                        dispatch(HarneseCommand.HubOperation(store.lastProjectId(), instruction.name, instruction.argument)).text
+                    }
+                }
+            }
             TelegramInstruction.Help -> """🤖 Harnese Connect
 /projects — المشاريع
 /newproject NAME — إنشاء مشروع
@@ -172,6 +194,13 @@ class TelegramPollingService : Service() {
 /chat ID — اختيار دردشة
 /newchat — إنشاء دردشة
 /ask TEXT — رسالة للوكيل (يلزم تفعيل الأوامر من الهاتف)
+/reply TEXT — متابعة المحادثة
+/dashboard /active /tasks — المتابعة
+/model /models /agent — الوكيل والنموذج
+/build /buildlog /apk — البناء ونتيجته
+/subscribe [all] /unsubscribe [all] — الاشتراك
+/notify mute|unmute|status — الإشعارات
+/health /updates — البيئة والتحديثات
 /status — حالة المشروع
 /pending — طلبات الموافقة
 /reject ID — رفض طلب أداة

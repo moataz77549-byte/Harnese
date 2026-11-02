@@ -121,6 +121,9 @@ class HarneseEventBus private constructor(private val context: Context) : SQLite
         }, "id=?", arrayOf(item.id))
     }
     fun pendingCount(): Long = readableDatabase.rawQuery("SELECT count(*) FROM outbox WHERE state='pending'", null).use { it.moveToFirst(); it.getLong(0) }
+    fun recentEvents(): List<String> = readableDatabase.rawQuery("SELECT kind,body FROM events ORDER BY created DESC LIMIT 20", null).use { c ->
+        buildList { while (c.moveToNext()) add("${c.getString(0)}: ${c.getString(1).take(300)}") }
+    }
     companion object {
         private const val RETENTION = 7L * 24 * 60 * 60 * 1000
         @Volatile private var instance: HarneseEventBus? = null

@@ -408,4 +408,11 @@
     <string name="tg_stopped">Requested bot stop.</string>
     <string name="tg_connection_status">Status: %1$s</string>
     <string name="tg_refresh_link">Refresh pairing</string>
+    <string name="hub_sync_content">Forward agent answer content to Telegram (known secrets are redacted)</string>
+    <string name="hub_mute">Mute Telegram notifications</string>
+    <string name="hub_tasks">Agent running: %1$s · Build running: %2$s</string>
+    <string name="hub_pending">Pending deliveries: %1$d</string>
+    <string name="hub_subscribe">Subscribe to this project</string>
+    <string name="hub_unsubscribe">Unsubscribe from this project</string>
+    <string name="hub_refresh">Refresh events</string>
 </resources>

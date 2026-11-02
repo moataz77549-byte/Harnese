@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 
 /** Typed command entry point shared by Android UI and external integrations. */
 sealed interface HarneseCommand {
+    data class HubOperation(val projectId: String?, val name: String, val argument: String = "") : HarneseCommand
     data object ListProjects : HarneseCommand
     data class CreateProject(val name: String) : HarneseCommand
     data class ListFiles(val projectId: String) : HarneseCommand
@@ -31,8 +32,8 @@ fun interface HarneseCommandHandler {
 }
 
 /**
- * The ViewModel owns the actual execution. A background service never stores
- * or calls a ViewModel reference; unavailable UI is explicitly reported.
+ * The application runtime owns execution. Services dispatch typed commands without
+ * retaining an Activity or ViewModel. Handlers run on the main dispatcher.
  */
 object HarneseCommandBus {
     private val guard = Any()

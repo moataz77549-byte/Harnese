@@ -241,4 +241,11 @@
     <string name="tg_stopped">تم طلب إيقاف البوت.</string>
     <string name="tg_connection_status">الحالة: %1$s</string>
     <string name="tg_refresh_link">تحديث الاقتران</string>
+    <string name="hub_sync_content">مزامنة محتوى الردود مع تيليجرام (تنقيح الأسرار المعروفة)</string>
+    <string name="hub_mute">كتم إشعارات تيليجرام</string>
+    <string name="hub_tasks">الوكيل يعمل: %1$s · البناء يعمل: %2$s</string>
+    <string name="hub_pending">رسائل بانتظار الإرسال: %1$d</string>
+    <string name="hub_subscribe">الاشتراك في هذا المشروع</string>
+    <string name="hub_unsubscribe">إلغاء اشتراك المشروع</string>
+    <string name="hub_refresh">تحديث سجل الأحداث</string>
 </resources>
