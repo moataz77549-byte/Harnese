@@ -27,7 +27,9 @@ class HarneseEventBus private constructor(private val context: Context) : SQLite
             .putString("source:$project", source).commit()
     }
     @Synchronized fun setSubscription(project: String, enabled: Boolean) {
-        prefs.edit().putBoolean("sub:$project", enabled).commit()
+        val editor = prefs.edit()
+        if (project == "*") prefs.all.keys.filter { it.startsWith("sub:") }.forEach { editor.remove(it) }
+        editor.putBoolean("sub:$project", enabled).commit()
         if (!enabled) {
             if (project == "*") writableDatabase.delete("outbox", "state='pending'", null)
             else writableDatabase.delete("outbox", "state='pending' AND project=?", arrayOf(project))

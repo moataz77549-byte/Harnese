@@ -270,6 +270,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun keepLastChanges() = runtime.keepLastChanges()
     fun undoFileChange(path: String) = runtime.undoFileChange(path)
     fun keepFileChange(path: String) = runtime.keepFileChange(path)
+    override fun onCleared() { runtime.stopAndroidLogcat(); super.onCleared() }
     companion object {
         const val LOGCAT_GRANT_COMMAND = HarneseRuntimeController.LOGCAT_GRANT_COMMAND
     }

@@ -53,6 +53,7 @@ object HarneseCommandBus {
         val target = synchronized(guard) { handler }
             ?: return@withContext HarneseCommandResult.error("افتح تطبيق Harnese لتفعيل التحكم بالمشاريع.")
         try { target.execute(command) }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (_: Exception) { HarneseCommandResult.error("تعذر تنفيذ الأمر. راجع حالة التطبيق وأعد المحاولة.") }
     }
 }
