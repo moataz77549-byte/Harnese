@@ -3,7 +3,6 @@ package com.jarves.mh.mcp
 import android.content.Context
 import com.jarves.mh.telegram.TelegramSecretStore
 import java.net.HttpURLConnection
-import java.net.URI
 import java.net.URL
 import java.util.UUID
 import org.json.JSONArray
@@ -19,8 +18,7 @@ class McpConnectionManager(context: Context) {
     private fun profiles(): JSONObject = prefs.getString("profiles", null)?.let { JSONObject(vault.openContent(it)) } ?: JSONObject()
     @Synchronized fun servers(): List<Server> { val json=profiles(); return json.keys().asSequence().map { id -> val o=json.getJSONObject(id);Server(id,o.getString("name"),o.getString("endpoint")) }.toList() }
     @Synchronized fun save(name: String, endpoint: String, bearer: String): Server {
-        val uri=URI(endpoint.trim())
-        require(uri.scheme=="https" && !uri.host.isNullOrBlank() && uri.userInfo==null && uri.rawQuery==null && uri.fragment==null) { "Use an HTTPS endpoint without credentials in its URL" }
+        val uri=McpEndpointPolicy.validate(endpoint)
         val id=UUID.randomUUID().toString();val json=profiles()
         json.put(id,JSONObject().put("name",name.take(80)).put("endpoint",uri.toString()).put("bearer",bearer))
         check(prefs.edit().putString("profiles",vault.sealContent(json.toString())).commit())
