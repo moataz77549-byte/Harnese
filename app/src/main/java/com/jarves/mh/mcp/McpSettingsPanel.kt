@@ -32,7 +32,7 @@ fun McpSettingsPanel(project: String?, agent: String) {
         } }
     }
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
-        Text("MCP — HTTPS / Streamable HTTP (2025)")
+        Text("MCP — HTTPS / Streamable HTTP (2026 / 2025)")
         OutlinedTextField(value=endpoint,onValueChange={endpoint=it},label={Text("HTTPS endpoint (Neon / Supabase / MCP)")})
         OutlinedTextField(value=bearer,onValueChange={bearer=it},label={Text("Bearer token")},visualTransformation=PasswordVisualTransformation())
         OutlinedButton(onClick={ runCatching { manager.save("MCP",endpoint,bearer);servers=manager.servers();bearer="" }.onFailure {status=it.message.orEmpty()} }) {Text("Save / حفظ")}
