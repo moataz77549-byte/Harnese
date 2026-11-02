@@ -198,6 +198,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun finishBackgroundSetup() = runtime.finishBackgroundSetup()
     fun selectAgent(kind: AgentKind) = runtime.selectAgent(kind)
     fun installAgent(kind: AgentKind) = runtime.installAgent(kind)
+    fun requestEnvironmentProbe(name: String) = runtime.requestEnvironmentProbe(name)
+    fun installRequestedRuntime() = runtime.installRequestedRuntime()
     fun checkAgentUpdates() = runtime.checkAgentUpdates()
     fun updateAgent(kind: AgentKind) = runtime.updateAgent(kind)
     fun startAntigravityLogin() = runtime.startAntigravityLogin()

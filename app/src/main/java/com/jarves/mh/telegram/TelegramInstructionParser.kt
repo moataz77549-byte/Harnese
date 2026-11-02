@@ -43,7 +43,7 @@ object TelegramInstructionParser {
             "/stop", "/cancel" -> TelegramInstruction.Stop
             "/pending" -> TelegramInstruction.Pending
             "/reject" -> if (argument.length in 8..64) TelegramInstruction.Reject(argument) else TelegramInstruction.Unknown
-            "/file", "/diff", "/dashboard", "/active", "/tasks", "/model", "/models", "/agent", "/build", "/buildlog", "/apk", "/health", "/updates", "/subscribe", "/unsubscribe", "/notify" ->
+            "/runtimes", "/python", "/node", "/typescript", "/androidsdk", "/installruntime", "/runtimehealth", "/disk", "/file", "/diff", "/dashboard", "/active", "/tasks", "/model", "/models", "/agent", "/build", "/buildlog", "/apk", "/health", "/updates", "/subscribe", "/unsubscribe", "/notify" ->
                 if (argument.length <= 80) TelegramInstruction.Control(command.removePrefix("/"), argument) else TelegramInstruction.Unknown
             else -> TelegramInstruction.Unknown
         }

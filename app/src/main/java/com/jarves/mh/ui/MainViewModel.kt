@@ -399,6 +399,8 @@ data class AppUiState(
     val antigravityModels: List<String> = emptyList(),
     val antigravityModelsLoading: Boolean = false,
     val antigravityModelsError: String? = null,
+    val pendingRuntimeInstall: String? = null,
+    val runtimeProbeRunning: Boolean = false,
     val androidBuildRunning: Boolean = false,
     val androidBuildMessage: String? = null,
     val androidBuildPhase: AndroidBuildPhase = AndroidBuildPhase.IDLE,
@@ -1390,7 +1392,7 @@ class HarneseRuntimeController(private val application: Application) {
 
     private fun startAndroidGradleTask(task: String, action: AndroidAction) {
         val project = _state.value.activeProject ?: return
-        if (_state.value.androidBuildRunning) return
+        if (_state.value.androidBuildRunning || _state.value.runtimeProbeRunning) return
         if (!installer.isStackInstalled(DevStack.ANDROID)) {
             _state.update {
                 it.copy(toastMessage = str(R.string.vm_android_tools_missing))
@@ -2525,6 +2527,28 @@ class HarneseRuntimeController(private val application: Application) {
                 )
             }
         }
+    }
+
+    fun requestEnvironmentProbe(name: String) {
+        if (_state.value.runtimeProbeRunning || _state.value.isRunning || _state.value.androidBuildRunning) return
+        _state.update { it.copy(runtimeProbeRunning = true) }
+        val project = _state.value.activeProject
+        val task = UUID.randomUUID().toString()
+        val journal = com.jarves.mh.connect.HarneseEventBus.get(application)
+        journal.publish(id = "$task:start", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.started", body = name)
+        runtimeScope.launch {
+            val output = withContext(Dispatchers.IO) { runCatching { installer.probeEnvironment(name) }.getOrElse { it.message ?: "Probe failed" } }
+            _state.update { it.copy(runtimeProbeRunning = false, agentMessage = output) }
+            journal.publish(id = "$task:end", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.result", body = output)
+        }
+    }
+    fun installRequestedRuntime() {
+        when (_state.value.pendingRuntimeInstall) {
+            "php" -> installDevStack(DevStack.PHP)
+            "cpp" -> installDevStack(DevStack.CPP)
+            "antigravity" -> installAgent(AgentKind.ANTIGRAVITY)
+        }
+        _state.update { it.copy(pendingRuntimeInstall = null) }
     }
 
     fun checkAgentUpdates() {
@@ -4717,6 +4741,7 @@ class HarneseRuntimeController(private val application: Application) {
         }
         val attachments = state.value.pendingAttachments
         if (prompt.isBlank() && attachments.isEmpty()) return
+        if (state.value.runtimeProbeRunning) return
         if (state.value.isRunning || state.value.androidBuildRunning) {
             queueFollowUp(project, prompt, attachments)
             return
@@ -5419,7 +5444,7 @@ class HarneseRuntimeController(private val application: Application) {
     private fun executeIntegrationCommand(command: HarneseCommand): HarneseCommandResult {
         fun findProject(projectId: String): Project? =
             _state.value.projects.firstOrNull { it.id == projectId }
-        fun busy(): Boolean = _state.value.isRunning ||
+        fun busy(): Boolean = _state.value.runtimeProbeRunning || _state.value.isRunning ||
             _state.value.projectTerminalRunning || _state.value.androidBuildRunning
 
         return when (command) {
@@ -5428,6 +5453,16 @@ class HarneseRuntimeController(private val application: Application) {
                 val project = command.projectId?.let(::findProject) ?: s.activeProject
                 val journal = com.jarves.mh.connect.HarneseEventBus.get(application)
                 val text = when (command.name) {
+                    "runtimes", "python", "node", "typescript", "androidsdk", "runtimehealth", "disk" -> {
+                        if (busy() || s.runtimeProbeRunning) return HarneseCommandResult.error("توجد مهمة متعارضة.")
+                        requestEnvironmentProbe(command.name)
+                        "استُلم طلب الفحص؛ ستصلك النتيجة الفعلية عند انتهائه."
+                    }
+                    "installruntime" -> {
+                        if (command.argument !in setOf("php", "cpp", "antigravity")) return HarneseCommandResult.error("/installruntime php | cpp | antigravity")
+                        _state.update { it.copy(pendingRuntimeInstall = command.argument) }
+                        "حُفظ طلب تثبيت ${command.argument}. اعتمده من بيئات البرمجة على الهاتف؛ لن يبدأ تنزيل تلقائي."
+                    }
                     "file" -> {
                         if (project == null) return HarneseCommandResult.error("اختر مشروعًا أولًا.")
                         val file = com.jarves.mh.connect.ProjectFilePolicy.allowedTextFile(projectWorkspaceRoot(project), command.argument)

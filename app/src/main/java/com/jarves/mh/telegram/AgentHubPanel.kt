@@ -68,6 +68,7 @@ fun AgentHubPanel() {
             }
         }
         if (reviewMessage.isNotBlank()) Text(reviewMessage)
+        DevelopmentEnvironmentsPanel(runtime)
         com.jarves.mh.mcp.McpSettingsPanel(state.activeProject?.id, state.agentKind.stableId)
         events.forEach { Text(it) }
     }

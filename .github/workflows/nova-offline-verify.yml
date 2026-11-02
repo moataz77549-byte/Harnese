@@ -19,6 +19,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
       - name: Export real Kotlin Android template
         env:
@@ -67,5 +69,46 @@ jobs:
             dist/runtime-bundles/offline-measured-manifest.json
             offline-smoke.log
             guest/workspace/offline-kotlin/app/build/outputs/apk/debug/*.apk
+          compression-level: 0
+          retention-days: 7
+  build-offline:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: nova-offline-bundles-and-evidence
+          path: verified-inputs
+      - name: Stage verified embedded bundles
+        run: |
+          cp verified-inputs/dist/runtime-bundles/* dist/runtime-bundles/
+          test -s dist/runtime-bundles/offline-measured-manifest.json
+      - name: Test and build Nova Offline (unsigned until original owner key is provided)
+        run: ./gradlew :app:testOfflineDebugUnitTest :app:assembleOfflineRelease -PmhParallelInstall=true --no-daemon --stacktrace
+      - name: Preserve unsigned APK and official signing tools for owner signing
+        run: |
+          mkdir -p owner-signing
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          cp "$BUILD_TOOLS/lib/apksigner.jar" owner-signing/
+          cp "$BUILD_TOOLS/aapt" owner-signing/
+          cp app/build/outputs/apk/offline/release/*-unsigned.apk owner-signing/Harnese-Nova-v1.3.2-Offline-ARM64-unsigned.apk
+          sha256sum owner-signing/* > owner-signing/BUILD-SHA256.txt
+          stat -c '%n %s bytes' owner-signing/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-offline-owner-signing
+          path: owner-signing
           compression-level: 0
           retention-days: 7
