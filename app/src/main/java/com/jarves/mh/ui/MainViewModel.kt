@@ -532,6 +532,7 @@ class HarneseRuntimeController(private val application: Application) {
     )
 
     init {
+        com.jarves.mh.connect.SecureReviewApprovalService.get(File(application.filesDir, "secure-reviews")).recoverInterruptedStaging()
         HarneseCommandBus.register(this, HarneseCommandHandler { command ->
             executeIntegrationCommand(command)
         })
@@ -5468,7 +5469,7 @@ class HarneseRuntimeController(private val application: Application) {
                         val file = com.jarves.mh.connect.ProjectFilePolicy.allowedTextFile(projectWorkspaceRoot(project), command.argument)
                         file.readText()
                     }
-                    "diff" -> com.jarves.mh.connect.SecureReviewApprovalService(File(application.filesDir, "secure-reviews")).pending().filter { it.project == project?.id }.joinToString("\n") { "${it.id}\n" + com.jarves.mh.connect.SecureReviewApprovalService(File(application.filesDir, "secure-reviews")).preview(it.id) }.ifBlank { s.changes.joinToString("\n\n") { "${it.path} +${it.additions} -${it.deletions}\n${it.diffLines.joinToString("\n")}" }.ifBlank { "لا توجد فروقات مسجلة" } }
+                    "diff" -> com.jarves.mh.connect.SecureReviewApprovalService.get(File(application.filesDir, "secure-reviews")).pending().filter { it.project == project?.id }.joinToString("\n") { "${it.id}\n" + com.jarves.mh.connect.SecureReviewApprovalService.get(File(application.filesDir, "secure-reviews")).preview(it.id) }.ifBlank { s.changes.joinToString("\n\n") { "${it.path} +${it.additions} -${it.deletions}\n${it.diffLines.joinToString("\n")}" }.ifBlank { "لا توجد فروقات مسجلة" } }
                     "dashboard" -> "المشاريع: ${s.projects.size}\nالوكيل: ${s.agentKind.name}\nمهمة: ${s.isRunning} / بناء: ${s.androidBuildRunning}\nرسائل معلقة: ${journal.pendingCount()}"
                     "active" -> "${s.activeProject?.name ?: "—"}\n${s.activeChatId ?: "—"}"
                     "tasks" -> "وكيل: ${s.isRunning}\nبناء: ${s.androidBuildRunning}\n${s.androidBuildMessage.orEmpty()}"
@@ -5500,7 +5501,12 @@ class HarneseRuntimeController(private val application: Application) {
                     "apk" -> {
                         if (project == null) return HarneseCommandResult.error("اختر مشروعًا أولًا.")
                         val record = loadAndroidBuildRecord(project.id)
-                        "آخر بناء: ${record.phase}\n${record.message.orEmpty()}\nاستخدم مشاركة APK من الهاتف."
+                        if (command.argument == "send") {
+                            val path = record.apkPath ?: return HarneseCommandResult.error("لا يوجد APK محفوظ.")
+                            val apk = com.jarves.mh.connect.ProjectFilePolicy.allowedApk(projectWorkspaceRoot(project), path)
+                            return HarneseCommandResult(true, "APK: ${apk.name} (${apk.length()} bytes)", apk.path)
+                        }
+                        "آخر بناء: ${record.phase}\n${record.message.orEmpty()}\n/apk send — إرسال الملف إن سمح حجمه."
                     }
                     "health" -> "Linux: ${runCatching { installer.installedRuntime(); true }.getOrDefault(false)}\n${s.androidHealthChecks.joinToString("\n") { it.toString() }}"
                     "updates" -> {
@@ -5618,7 +5624,7 @@ class HarneseRuntimeController(private val application: Application) {
                 )
             }
             is HarneseCommand.RejectPendingTool -> {
-                val reviews = com.jarves.mh.connect.SecureReviewApprovalService(File(application.filesDir, "secure-reviews"))
+                val reviews = com.jarves.mh.connect.SecureReviewApprovalService.get(File(application.filesDir, "secure-reviews"))
                 if (reviews.pending().any { it.id == command.approvalId }) {
                     reviews.reject(command.approvalId)
                     return HarneseCommandResult.success("رُفضت التعديلات المعزولة ولم تطبّق على المشروع.")

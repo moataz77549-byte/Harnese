@@ -21,7 +21,7 @@ sealed interface HarneseCommand {
     data object StopTask : HarneseCommand
 }
 
-data class HarneseCommandResult(val ok: Boolean, val text: String) {
+data class HarneseCommandResult(val ok: Boolean, val text: String, val filePath: String? = null) {
     companion object {
         fun success(text: String) = HarneseCommandResult(true, text)
         fun error(text: String) = HarneseCommandResult(false, text)

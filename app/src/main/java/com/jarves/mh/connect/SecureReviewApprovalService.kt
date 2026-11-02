@@ -10,6 +10,13 @@ import org.json.JSONObject
 
 /** Agents edit copies. Only a locally authenticated caller may commit a pending review. */
 class SecureReviewApprovalService(private val directory: File) {
+    companion object {
+        private val instances = mutableMapOf<String, SecureReviewApprovalService>()
+        @Synchronized fun get(directory: File): SecureReviewApprovalService = instances.getOrPut(directory.canonicalPath) { SecureReviewApprovalService(directory) }
+    }
+    @Synchronized fun recoverInterruptedStaging() {
+        records().filter { it.state == "running" }.forEach { runCatching { finish(it.id) } }
+    }
     data class StagedRun(val id: String, val workspace: File)
     data class Entry(val path: String, val before: String?, val after: String?)
     data class Review(val id: String, val project: String, val state: String, val expires: Long, val entries: List<Entry>)
@@ -106,7 +113,7 @@ class SecureReviewApprovalService(private val directory: File) {
             require(hash(safe(original, e.path)) == e.before) { "Original changed: ${e.path}" }
             require(hash(safe(staged, e.path)) == e.after) { "Proposal changed: ${e.path}" }
             val source = safe(original, e.path)
-            if (source.isFile) { val dest = safe(backup, e.path); dest.parentFile.mkdirs(); source.copyTo(dest, overwrite = true) }
+            if (source.isFile) { val dest = safe(backup, e.path); dest.parentFile.mkdirs(); source.copyTo(dest, overwrite = true); dest.setExecutable(source.canExecute(), true) }
         }
         // Persist before mutation. A crash leaves an explicit recovery record, never an auto approval.
         save(id, json.put("state", "applying"))
@@ -132,7 +139,7 @@ class SecureReviewApprovalService(private val directory: File) {
     private fun restore(original: File, backup: File, entries: List<Entry>) {
         entries.forEach { e -> val dest = safe(original, e.path)
             if (e.before == null) { check(!dest.exists() || dest.delete()) }
-            else { dest.parentFile.mkdirs(); safe(backup, e.path).copyTo(dest, overwrite = true) }
+            else { dest.parentFile.mkdirs(); safe(backup, e.path).copyTo(dest, overwrite = true); dest.setExecutable(safe(backup,e.path).canExecute(),true) }
         }
     }
     @Synchronized fun rollbackLocally(id: String) {

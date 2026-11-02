@@ -38,6 +38,8 @@ import org.json.JSONObject
  */
 class TelegramPollingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val sendMutex = kotlinx.coroutines.sync.Mutex()
+    private var lastSentAt = 0L
     private var pollingJob: Job? = null
     private var deliveryJob: Job? = null
     private lateinit var store: TelegramSecretStore
@@ -154,6 +156,20 @@ class TelegramPollingService : Service() {
         if (!store.authorized(userId, chatId, isPrivate)) {
             if (instruction == TelegramInstruction.Help) reply(token, chatId,
                 "Harnese Connect: افتح إعدادات تيليجرام في تطبيق Harnese، ثم أرسل /pair مع الرمز المؤقت.")
+            return
+        }
+        if (instruction is TelegramInstruction.Control && instruction.name == "apk" && instruction.argument == "send") {
+            val result = HarneseCommandBus.dispatch(HarneseCommand.HubOperation(store.lastProjectId(), "apk", "send"))
+            reply(token, chatId, result.text)
+            result.filePath?.let { path ->
+                scope.launch {
+                    val journal = com.jarves.mh.connect.HarneseEventBus.get(applicationContext)
+                    val task = java.util.UUID.randomUUID().toString()
+                    val outcome = runCatching { sendDocument(token, chatId, java.io.File(path)) }
+                    journal.publish(id = "apk:$task", project = store.lastProjectId().orEmpty(), chat = store.lastChatId().orEmpty(), task = task,
+                        kind = "apk.upload", body = if (outcome.isSuccess) "اكتمل إرسال APK" else "تعذر رفع APK أو لم يتأكد الإرسال. استخدم مشاركة الملف من الهاتف أو أعد الطلب يدويًا.")
+                }
+            }
             return
         }
         val output = execute(instruction)
@@ -297,8 +313,34 @@ class TelegramPollingService : Service() {
             if (keyboard.isNotEmpty()) body.put("reply_markup", JSONObject().put("inline_keyboard", JSONArray().apply {
                 keyboard.forEach { (label, data) -> put(JSONArray().put(JSONObject().put("text", label.take(60)).put("callback_data", data))) }
             }))
-            api(token, "sendMessage", body)
+            sendMutex.lock()
+            try {
+                delay((1100L - (System.currentTimeMillis() - lastSentAt)).coerceAtLeast(0))
+                api(token, "sendMessage", body)
+                lastSentAt = System.currentTimeMillis()
+            } finally { sendMutex.unlock() }
         }
+    }
+
+    private suspend fun sendDocument(token: String, chatId: Long, file: java.io.File) {
+        require(store.linkedChatId() == chatId && file.length() in 1..49_000_000L)
+        val project = preferences.loadProjects().firstOrNull { it.id == store.lastProjectId() } ?: error("Project unavailable")
+        val root = java.io.File(applicationContext.filesDir, "workspaces/${project.id}")
+        com.jarves.mh.connect.ProjectFilePolicy.allowedApk(root, file.path)
+        val boundary = "Nova${java.util.UUID.randomUUID()}"
+        val prefix = ("--$boundary\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n$chatId\r\n" +
+            "--$boundary\r\nContent-Disposition: form-data; name=\"document\"; filename=\"project.apk\"\r\nContent-Type: application/vnd.android.package-archive\r\n\r\n").toByteArray(Charsets.UTF_8)
+        val suffix = "\r\n--$boundary--\r\n".toByteArray(Charsets.UTF_8)
+        val connection = URL("https://api.telegram.org/bot$token/sendDocument").openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "POST"; connection.doOutput = true; connection.instanceFollowRedirects = false
+            connection.connectTimeout = 15000; connection.readTimeout = 120000
+            connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            connection.setFixedLengthStreamingMode(prefix.size + file.length() + suffix.size)
+            file.inputStream().use { input -> connection.outputStream.use { output -> output.write(prefix); input.copyTo(output, 64*1024); output.write(suffix) } }
+            check(connection.responseCode in 200..299)
+            check(JSONObject(connection.inputStream.bufferedReader().use { it.readText() }).optBoolean("ok"))
+        } finally { connection.disconnect() }
     }
 
     private class TelegramRejectedException : java.io.IOException()

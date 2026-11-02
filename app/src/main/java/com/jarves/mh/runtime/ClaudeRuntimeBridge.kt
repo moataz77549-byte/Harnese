@@ -73,7 +73,7 @@ class ClaudeRuntimeBridge(
 ) : RuntimeBridge {
     private val installer = RuntimeInstaller(context)
     private val eventBus = MutableSharedFlow<RuntimeEvent>(extraBufferCapacity = 64)
-    private val reviews = com.jarves.mh.connect.SecureReviewApprovalService(File(context.filesDir, "secure-reviews"))
+    private val reviews = com.jarves.mh.connect.SecureReviewApprovalService.get(File(context.filesDir, "secure-reviews"))
     private val journal = com.jarves.mh.connect.HarneseEventBus.get(context)
     private suspend fun emitEvent(event: RuntimeEvent) {
         journal.runtime(event)

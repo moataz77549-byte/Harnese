@@ -107,7 +107,7 @@ class McpConnectionManager(context: Context) {
     @Synchronized fun executeLocally(id: String): JSONObject {
         val json=JSONObject(review(id));require(json.getLong("expires")>System.currentTimeMillis()) { "Review expired" }
         require(enabled(json.getString("server"),json.getString("project"),json.getString("agent")))
-        check(prefs.edit().remove("pending:$id").putString("audit:$id","started").commit())
+        check(prefs.edit().remove("pending:$id").putString("audit:$id","started:${System.currentTimeMillis()}").putString("audit_body:$id",vault.sealContent(json.toString())).commit())
         try {
             val result=request(connect(json.getString("server")),"tools/call",JSONObject().put("name",json.getString("tool")).put("arguments",json.getJSONObject("arguments")))
             prefs.edit().putString("audit:$id","completed").commit();return result

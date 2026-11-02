@@ -23,7 +23,7 @@ fun AgentHubPanel() {
     val runtime = remember { HarneseRuntimeOwner.get(context.applicationContext as Application) }
     val state by runtime.state.collectAsState()
     val journal = remember { HarneseEventBus.get(context) }
-    val reviews = remember { com.jarves.mh.connect.SecureReviewApprovalService(java.io.File(context.filesDir, "secure-reviews")) }
+    val reviews = remember { com.jarves.mh.connect.SecureReviewApprovalService.get(java.io.File(context.filesDir, "secure-reviews")) }
     var reviewList by remember { mutableStateOf(reviews.records()) }
     var selectedReview by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf("") }
