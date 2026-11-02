@@ -426,4 +426,5 @@
     <string name="hub_optional_install">Optional download request</string>
     <string name="hub_confirm_download">Approve download on this phone</string>
     <string name="hub_repair">Repair embedded tool files</string>
+    <string name="hub_stream">Edit a Telegram progress message while generating (at most every 5 seconds)</string>
 </resources>

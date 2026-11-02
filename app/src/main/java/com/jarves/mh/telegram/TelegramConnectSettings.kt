@@ -39,6 +39,7 @@ fun TelegramConnectSettings() {
     var pairCode by remember { mutableStateOf<String?>(null) }
     var enablePrompts by remember { mutableStateOf(store.remoteTasksEnabled()) }
     val journal = remember(context) { com.jarves.mh.connect.HarneseEventBus.get(context) }
+    var streamContent by remember { mutableStateOf(journal.streamingEnabled()) }
     var syncContent by remember { mutableStateOf(journal.contentEnabled()) }
     var mute by remember { mutableStateOf(journal.muted()) }
     var showHub by remember { mutableStateOf(false) }
@@ -99,6 +100,10 @@ fun TelegramConnectSettings() {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(stringResource(R.string.hub_sync_content), modifier = Modifier.weight(1f))
                 Switch(checked = syncContent, onCheckedChange = { syncContent = it; journal.setContent(it) })
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(stringResource(R.string.hub_stream), modifier = Modifier.weight(1f))
+                Switch(checked = streamContent, enabled = syncContent, onCheckedChange = { streamContent = it; journal.setStreaming(it) })
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(stringResource(R.string.hub_mute), modifier = Modifier.weight(1f))

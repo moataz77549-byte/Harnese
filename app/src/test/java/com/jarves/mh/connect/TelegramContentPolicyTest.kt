@@ -16,5 +16,10 @@ class TelegramContentPolicyTest {
         assertEquals(text, parts.joinToString(""))
         assertTrue(parts.all { it.length <= 3500 && !it.last().isHighSurrogate() })
     }
+    @Test fun partialStreamingCredentialsAndOpenEnvBlocksAreRedacted() {
+        assertFalse(TelegramContentPolicy.redact("sk-abc").contains("sk-abc"))
+        assertFalse(TelegramContentPolicy.redact("123456789:abc").contains(":abc"))
+        assertFalse(TelegramContentPolicy.redact("```env\nCUSTOM_VALUE=private").contains("private"))
+    }
     @Test fun emptyTextHasValidTelegramBody() { assertEquals(listOf("—"), TelegramContentPolicy.chunks("")) }
 }

@@ -83,7 +83,19 @@ class TelegramPollingService : Service() {
             journal.recoverInterruptedDeliveries()
             while (isActive) {
                 val item = journal.next()
-                if (item == null) { delay(2000); continue }
+                if (item == null) {
+                    val progress = journal.nextProgress()
+                    if (progress == null) { delay(2000); continue }
+                    if (store.linkedChatId() != progress.destination || journal.muted() || !journal.contentEnabled() || !journal.streamingEnabled()) { journal.closeProgress(progress.task); continue }
+                    journal.beginProgress(progress.task)
+                    try { journal.progressSent(progress.task,sendProgress(token,progress),progress.revision) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (rejected: TelegramRejectedException) {
+                        if (rejected.status == 400 || rejected.status == 403) journal.closeProgress(progress.task)
+                        else journal.progressFailed(progress.task,false,rejected.retryAfterSeconds*1000)
+                    } catch (_: Exception) { journal.progressFailed(progress.task,true) }
+                    continue
+                }
                 // Drop queued content after unlink/re-pair; never reroute an old delivery.
                 if (store.linkedChatId() != item.destination || journal.muted()) {
                     journal.delivered(item.id)
@@ -320,6 +332,20 @@ class TelegramPollingService : Service() {
                 lastSentAt = System.currentTimeMillis()
             } finally { sendMutex.unlock() }
         }
+    }
+
+    private suspend fun sendProgress(token: String, item: com.jarves.mh.connect.HarneseEventBus.Progress): Long {
+        sendMutex.lock()
+        try {
+            delay((1100L-(System.currentTimeMillis()-lastSentAt)).coerceIn(0,1100))
+            val body=JSONObject().put("chat_id",item.destination).put("text",item.body.take(3900)).put("disable_web_page_preview",true)
+            if(item.messageId!=0L) body.put("message_id",item.messageId)
+            val result=api(token,if(item.messageId==0L) "sendMessage" else "editMessageText",body)
+            lastSentAt=System.currentTimeMillis()
+            val id = result.optJSONObject("result")?.optLong("message_id")?.takeIf { it!=0L } ?: item.messageId
+            check(id != 0L) { "Telegram message ID unavailable" }
+            return id
+        } finally { sendMutex.unlock() }
     }
 
     private suspend fun sendDocument(token: String, chatId: Long, file: java.io.File) {

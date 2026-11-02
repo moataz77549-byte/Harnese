@@ -532,6 +532,7 @@ class HarneseRuntimeController(private val application: Application) {
     )
 
     init {
+        com.jarves.mh.connect.HarneseEventBus.get(application).recoverInterruptedTasks()
         com.jarves.mh.connect.SecureReviewApprovalService.get(File(application.filesDir, "secure-reviews")).recoverInterruptedStaging()
         HarneseCommandBus.register(this, HarneseCommandHandler { command ->
             executeIntegrationCommand(command)
@@ -2577,6 +2578,8 @@ class HarneseRuntimeController(private val application: Application) {
     fun checkAgentUpdates() {
         if (_state.value.agentUpdatesChecking || _state.value.agentUpdating != null || _state.value.isRunning) return
         _state.update { it.copy(agentUpdatesChecking = true, agentUpdateMessage = str(R.string.vm_checking_agent_releases)) }
+        val task = UUID.randomUUID().toString()
+        val project = _state.value.activeProject
         runtimeScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { installer.checkAgentUpdates() } }
             _state.update {
@@ -2589,6 +2592,10 @@ class HarneseRuntimeController(private val application: Application) {
                     ),
                 )
             }
+            com.jarves.mh.connect.HarneseEventBus.get(application).publish(
+                id = "$task:updates", project = project?.id.orEmpty(), chat = "", task = task, kind = "agent.updates",
+                body = result.fold(onSuccess = { updates -> if(updates.isEmpty()) "لا توجد تحديثات متاحة وفق المصدر الرسمي." else updates.entries.joinToString("\n") { "${it.key.name}: ${it.value.installedVersion} → ${it.value.latestVersion}" } },onFailure = { it.message ?: "تعذر فحص التحديثات" }),
+            )
         }
     }
 

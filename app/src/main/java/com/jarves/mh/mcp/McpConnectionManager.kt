@@ -133,7 +133,7 @@ class McpConnectionManager(context: Context) {
         val request=JSONObject().put("toolDefinitionHash",McpProtocolPolicy.fingerprint(definition)).put("server",server).put("project",project).put("agent",agent).put("tool",tool)
             .put("arguments",arguments).put("expires",System.currentTimeMillis()+5*60_000L)
         check(prefs.edit().putString("pending:$id",vault.sealContent(request.toString())).commit())
-        journal.publish(id="mcp:$id",project=project,chat="",task=id,kind="mcp.review",body="MCP: $tool — مراجعة محلية مطلوبة؛ لا تُنفذ استعلامات SQL تلقائيًا.")
+        journal.publish(id="mcp:$id",project=project,chat="",task=id,kind="mcp.review",body="MCP: $tool — مراجعة محلية مطلوبة؛ لا تُنفذ استعلامات SQL تلقائيًا.",source="mcp")
         return id
     }
     fun review(id: String): String = vault.openContent(prefs.getString("pending:$id",null) ?: error("Review unavailable"))

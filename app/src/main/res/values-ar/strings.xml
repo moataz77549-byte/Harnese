@@ -259,4 +259,5 @@
     <string name="hub_optional_install">طلب تنزيل اختياري</string>
     <string name="hub_confirm_download">الموافقة على التنزيل من هذا الهاتف</string>
     <string name="hub_repair">إصلاح الأدوات من الحزمة المضمنة</string>
+    <string name="hub_stream">تحديث رسالة تقدم تيليجرام أثناء التوليد (كل 5 ثوانٍ كحد أقصى)</string>
 </resources>
