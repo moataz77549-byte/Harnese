@@ -425,4 +425,5 @@
     <string name="hub_probe">Run real check</string>
     <string name="hub_optional_install">Optional download request</string>
     <string name="hub_confirm_download">Approve download on this phone</string>
+    <string name="hub_repair">Repair embedded tool files</string>
 </resources>

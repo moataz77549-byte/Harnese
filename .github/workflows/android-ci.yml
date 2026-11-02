@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: read
+concurrency:
+  group: nova-development-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   online-debug:

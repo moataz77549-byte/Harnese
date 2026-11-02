@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: nova-offline-verification-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   sample:
     runs-on: ubuntu-latest
@@ -30,8 +33,28 @@ jobs:
         with:
           name: nova-offline-sample
           path: offline-kotlin
+  bionic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Extract official Android runtime for the ARM64 CI tool test
+        shell: bash
+        run: bash scripts/offline/extract-bionic.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-ci-android-runtime
+          path: android-runtime
+          retention-days: 1
   verify:
-    needs: sample
+    needs: [sample, bionic]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 50
     steps:
@@ -52,6 +75,7 @@ jobs:
             read -r link target <<< "$pair"
             if [ ! -e "guest/$link" ] && [ ! -L "guest/$link" ]; then ln -s "$target" "guest/$link"; fi
           done
+          python3 scripts/offline/prepare-guest.py guest
           # Match RuntimeInstaller.stripMacosMetadataArtifacts before executing Python.
           find guest -name '._*' -type f -delete
           cp scripts/offline/smoke-test.sh guest/tmp/nova-smoke.sh
@@ -61,13 +85,17 @@ jobs:
         with:
           name: nova-offline-sample
           path: guest/workspace/offline-kotlin
+      - uses: actions/download-artifact@v4
+        with:
+          name: nova-ci-android-runtime
+          path: guest
       - name: Run Python, TypeScript and Gradle offline with network namespace isolated
         shell: bash
         run: |
           set -euo pipefail
           sudo mount --bind /dev guest/dev
           sudo mount -t proc proc guest/proc
-          sudo unshare --net chroot guest /usr/bin/env -i HOME=/root USER=root LANG=C.UTF-8 PATH=/usr/local/bin:/usr/bin:/bin:/opt/gradle/gradle-8.14.3/bin:/opt/jdk-17.0.20.1+1/bin JAVA_HOME=/opt/jdk-17.0.20.1+1 ANDROID_HOME=/root/android-sdk /bin/bash /tmp/nova-smoke.sh 2>&1 | tee offline-smoke.log
+          sudo unshare --net chroot guest /usr/bin/env -i HOME=/root USER=root LANG=C.UTF-8 PATH=/root/android-sdk/build-tools/35.0.0:/usr/local/bin:/usr/bin:/bin:/opt/gradle/gradle-8.14.3/bin:/opt/jdk-17.0.20.1+1/bin JAVA_HOME=/opt/jdk-17.0.20.1+1 ANDROID_HOME=/root/android-sdk /bin/bash /tmp/nova-smoke.sh 2>&1 | tee offline-smoke.log
       - name: Preserve measured inputs and verification evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -49,6 +49,9 @@ fun DevelopmentEnvironmentsPanel(runtime: HarneseRuntimeController) {
         for (name in listOf("python", "node", "typescript", "androidsdk", "runtimehealth", "disk")) {
             OutlinedButton(onClick = { runtime.requestEnvironmentProbe(name) }, enabled = !state.runtimeProbeRunning && !state.isRunning && !state.androidBuildRunning) { Text("$name — ${stringResource(R.string.hub_probe)}") }
         }
+        if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) for (name in listOf("python", "node", "typescript", "androidsdk")) {
+            OutlinedButton(onClick = { runtime.repairDevelopmentEnvironment(name) }, enabled = !state.runtimeProbeRunning && !state.isRunning && !state.androidBuildRunning) { Text("$name — ${stringResource(R.string.hub_repair)}") }
+        }
         state.pendingRuntimeInstall?.let { name ->
             Text("${stringResource(R.string.hub_optional_install)}: $name")
             OutlinedButton(onClick = { runtime.installRequestedRuntime() }) { Text(stringResource(R.string.hub_confirm_download)) }

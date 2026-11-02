@@ -31,7 +31,7 @@ with tarfile.open(fileobj=io.BytesIO(blob),mode='r:gz') as archive:
         assert rel.parts[0]=='package' and '..' not in rel.parts
         if entry.isfile():
             file=stage/'opt/nova/typescript'/pathlib.Path(*rel.parts[1:]);file.parent.mkdir(parents=True,exist_ok=True)
-            file.write_bytes(archive.extractfile(entry).read())
+            file.write_bytes(archive.extractfile(entry).read());file.chmod(entry.mode & 0o777)
 binpath=stage/'usr/local/bin';binpath.mkdir(parents=True)
 for name in ['tsc','tsserver']:(binpath/name).symlink_to('/opt/nova/typescript/bin/'+name)
 output=dest/'nova-typescript-arm64-5.9.3.tar.zst'

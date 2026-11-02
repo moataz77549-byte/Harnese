@@ -2531,12 +2531,17 @@ class HarneseRuntimeController(private val application: Application) {
             journal.publish(id = "$task:end", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.result", body = output)
         }
     }
+    fun repairDevelopmentEnvironment(name: String) {
+        _state.update { it.copy(pendingRuntimeInstall = "repair/$name") }
+        installRequestedRuntime()
+    }
     fun installRequestedRuntime() {
         val name = _state.value.pendingRuntimeInstall ?: return
         if (_state.value.isRunning || _state.value.androidBuildRunning || _state.value.projectTerminalRunning || _state.value.runtimeProbeRunning) return
+        val repair = name.removePrefix("repair/").takeIf { name.startsWith("repair/") && it in setOf("python","node","typescript","androidsdk") }
         val stack = when (name) { "php" -> DevStack.PHP; "cpp" -> DevStack.CPP; else -> null }
         val agent = if (name == "antigravity") AgentKind.ANTIGRAVITY else null
-        if (stack == null && agent == null) return
+        if (stack == null && agent == null && repair == null) return
         val project = _state.value.activeProject
         val task = UUID.randomUUID().toString()
         val journal = com.jarves.mh.connect.HarneseEventBus.get(application)
@@ -2556,7 +2561,8 @@ class HarneseRuntimeController(private val application: Application) {
                         journal.publish(id = "$task:progress:$now", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.install.progress", body = "$name: ${update.message} ${update.downloadedBytes ?: 0}/${update.totalBytes ?: 0}")
                     }
                 }
-                if (stack != null) installer.ensureStackInstalled(stack, progress) else installer.ensureAgentInstalled(agent!!, progress)
+                if (repair != null) installer.repairEnvironment(repair, progress)
+                else if (stack != null) installer.ensureStackInstalled(stack, progress) else installer.ensureAgentInstalled(agent!!, progress)
             } }
             val message = result.fold(onSuccess = { "$name: ready" }, onFailure = { "$name: ${it.message ?: "failed"}" })
             _state.update { it.copy(runtimeProbeRunning = false, devStackMessage = message,

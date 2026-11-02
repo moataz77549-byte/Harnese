@@ -988,6 +988,52 @@ class RuntimeInstaller(private val context: Context) {
         )
     }
 
+    /** Reapply only managed tool files; never replace the user's rootfs or project data. */
+    suspend fun repairEnvironment(name: String, onProgress: suspend (RuntimeInstallProgress) -> Unit) {
+        val runtime = installedRuntime()
+        when (name) {
+            "python" -> applyStack(runtime.proot, DevStack.PYTHON, 0.05f, 0.95f, onProgress)
+            "androidsdk" -> {
+                File(rootfs, "root/.pocket-android-tools-version").delete()
+                installAndroidToolchain(runtime.proot, 0.05f, 0.95f, onProgress)
+            }
+            "typescript" -> {
+                require(BuildConfig.OFFLINE_RUNTIME_BUNDLES) { "TypeScript repair requires the Offline APK" }
+                File(rootfs, ".nova-typescript-version").delete()
+                ensureEmbeddedTypeScript(runtime.proot, onProgress)
+            }
+            "node" -> {
+                require(BuildConfig.OFFLINE_RUNTIME_BUNDLES) { "Node repair requires the Offline APK" }
+                val archive = obtainRuntimeBundle(CORE_BUNDLE, true, 0.05f, 0.5f, onProgress)
+                // Core contains shell/home files too: copy ONLY Node-owned paths.
+                TarArchiveInputStream(ZstdCompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
+                    var entry = tar.nextEntry
+                    while (entry != null) {
+                        val path = entry.name.removePrefix("./")
+                        if (path.startsWith("usr/local/lib/nodejs/") && !path.split('/').any { it.startsWith("._") }) {
+                            val dest = safeChild(rootfs, path)
+                            when {
+                                entry.isDirectory -> dest.mkdirs()
+                                entry.isSymbolicLink -> { dest.parentFile.mkdirs(); if (dest.exists() || java.nio.file.Files.isSymbolicLink(dest.toPath())) dest.delete(); Os.symlink(entry.linkName,dest.path) }
+                                entry.isFile -> { dest.parentFile.mkdirs(); FileOutputStream(dest).use { tar.copyTo(it) }; Os.chmod(dest.path,entry.mode and 511) }
+                            }
+                        }
+                        entry = tar.nextEntry
+                    }
+                }
+                for (tool in listOf("node","npm","npx")) {
+                    val link=File(rootfs,"usr/local/bin/$tool")
+                    if(link.exists() || java.nio.file.Files.isSymbolicLink(link.toPath())) link.delete()
+                    Os.symlink("../lib/nodejs/bin/$tool",link.path)
+                }
+                verifyGuest(runtime.proot,"node --version && npm --version && node -e 'if(6*7!==42) process.exit(1)'","Node repair failed")
+                archive.delete()
+            }
+            else -> error("Unsupported environment repair")
+        }
+        onProgress(RuntimeInstallProgress("$name: verified",1f))
+    }
+
     suspend fun probeEnvironment(name: String): String {
         if (name == "disk") return "Available: ${context.filesDir.usableSpace} bytes\nTotal: ${context.filesDir.totalSpace} bytes"
         val runtime = installedRuntime()
