@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: nova-offline-verification-${{ github.ref }}
+  group: nova-offline-verification-v2-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   sample:
