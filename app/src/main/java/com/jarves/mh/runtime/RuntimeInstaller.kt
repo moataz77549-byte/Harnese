@@ -238,7 +238,7 @@ class RuntimeInstaller(private val context: Context) {
         when (agent) {
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.985f, onProgress)
-            com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.985f, onProgress)
+            com.jarves.mh.model.AgentKind.ANTIGRAVITY -> if (!BuildConfig.OFFLINE_RUNTIME_BUNDLES) ensureAgyInstalled(proot, 0.985f, onProgress)
         }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_setup_complete), 1f))
         return InstalledRuntime(proot, rootfs)
@@ -619,29 +619,9 @@ class RuntimeInstaller(private val context: Context) {
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
         if (isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) return
-        if (!BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
-            // A fresh online installation must use Google's latest verified release,
-            // not require the obsolete 2026.09 prebundled Antigravity archive.
-            val version = fetchAgyManifest().getString("version")
-            updateAgy(InstalledRuntime(proot, rootfs), version, onProgress)
-            require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-                "Official Antigravity CLI installation is incomplete"
-            }
-            return
-        }
-        installRuntimeOverlay(
-            bundle = AGY_BUNDLE,
-            message = str(R.string.rt_install_installing_version, "Antigravity CLI", AGY_VERSION),
-            from = fraction,
-            to = 0.995f,
-            onProgress = onProgress,
-            forceEmbedded = true,
-        )
-        verifyGuest(proot, "$AGY_GUEST_PATH --version", str(R.string.rt_install_verify_failed, "Antigravity CLI"))
-        agyMarker.writeText(AGY_VERSION)
-        require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-            "Antigravity CLI installation is incomplete"
-        }
+        val version = fetchAgyManifest().getString("version")
+        updateAgy(InstalledRuntime(proot, rootfs), version, onProgress)
+        require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) { "Official Antigravity CLI installation is incomplete" }
     }
 
     private suspend fun ensureDshInstalled(
@@ -1125,12 +1105,17 @@ class RuntimeInstaller(private val context: Context) {
     }
 
     private suspend fun obtainRuntimeBundle(
-        bundle: RuntimeBundle,
+        requestedBundle: RuntimeBundle,
         preferEmbedded: Boolean,
         from: Float,
         to: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ): File {
+        val bundle = if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
+            val manifest = JSONObject(context.assets.open("runtime/offline-manifest.json").bufferedReader().use { it.readText() }).getJSONObject("bundles")
+            val info = manifest.keys().asSequence().map { manifest.getJSONObject(it) }.first { it.getString("file") == requestedBundle.fileName || it.optString("sourceFile") == requestedBundle.fileName }
+            requestedBundle.copy(fileName = info.getString("file"), sha256 = info.getString("sha256"), compressedBytes = info.getLong("compressedBytes"))
+        } else requestedBundle
         downloads.mkdirs()
         if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
             val embedded = JSONObject(context.assets.open("runtime/offline-manifest.json").bufferedReader().use { it.readText() }).getJSONObject("bundles")

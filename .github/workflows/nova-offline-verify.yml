@@ -68,7 +68,8 @@ jobs:
         run: |
           mkdir guest
           tar --zstd -xf dist/runtime-bundles/pocketdev-core-arm64-2026.09.5.tar.zst -C guest
-          for pack in python android; do tar --zstd -xf dist/runtime-bundles/pocketdev-${pack}-arm64-*.tar.zst -C guest; done
+          tar --zstd -xf dist/runtime-bundles/nova-python-arm64-2026.09.2.tar.zst -C guest
+          tar --zstd -xf dist/runtime-bundles/pocketdev-android-arm64-2026.09.1.tar.zst -C guest
           tar --zstd -xf dist/runtime-bundles/nova-typescript-arm64-5.9.3.tar.zst -C guest
           mkdir -p guest/tmp guest/workspace guest/dev guest/proc guest/sys
           for pair in 'bin usr/bin' 'lib usr/lib' 'sbin usr/sbin'; do

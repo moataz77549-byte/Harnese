@@ -18,6 +18,24 @@ for name in ['core','python','android','claude','dsh']:
     with tarfile.open(fileobj=pipe.stdout,mode='r|') as archive:
         bundle['uncompressedBytes']=sum(entry.size for entry in archive if entry.isfile())
     pipe.stdout.read();assert pipe.wait()==0
+# Derive a Python overlay without optional C/C++ compiler executables or AppleDouble data.
+python=manifest['bundles']['python'];source=dest/python['file']
+filtered=dest/'nova-python-arm64-2026.09.2.tar.zst'
+read=subprocess.Popen(['zstd','-dc',str(source)],stdout=subprocess.PIPE)
+output=filtered.open('wb');write=subprocess.Popen(['zstd','-19','-T0','-c'],stdin=subprocess.PIPE,stdout=output)
+removed=[];size=0
+import re
+with tarfile.open(fileobj=read.stdout,mode='r|') as source_tar,tarfile.open(fileobj=write.stdin,mode='w|') as target_tar:
+    for entry in source_tar:
+        name=entry.name.removeprefix('./')
+        compiler=bool(re.match(r'(?:usr/)?bin/(?:[a-z0-9_-]+-)?(?:gcc|g\+\+|cc|cpp|c\+\+|clang(?:\+\+)?|gfortran)(?:-[0-9.]+)?$',name))
+        excluded=compiler or name.startswith(('usr/lib/gcc/','usr/include/c++/')) or any(part.startswith('._') for part in name.split('/'))
+        if excluded:removed.append(name);continue
+        target_tar.addfile(entry,source_tar.extractfile(entry) if entry.isfile() else None)
+        if entry.isfile():size+=entry.size
+read.stdout.read();assert read.wait()==0
+write.stdin.close();assert write.wait()==0;output.close()
+python.update({'sourceFile':python['file'],'sourceSha256':python['sha256'],'file':filtered.name,'sha256':hashlib.file_digest(filtered.open('rb'),'sha256').hexdigest(),'compressedBytes':filtered.stat().st_size,'uncompressedBytes':size,'removedOptionalCompilerPaths':removed})
 # TypeScript's JS compiler is architecture-independent and runs with bundled ARM64 Node.
 version='5.9.3'
 metadata=json.load(urllib.request.urlopen('https://registry.npmjs.org/typescript/'+version,timeout=60))
