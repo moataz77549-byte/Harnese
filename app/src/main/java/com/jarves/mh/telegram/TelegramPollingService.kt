@@ -78,6 +78,7 @@ class TelegramPollingService : Service() {
         pollingJob = scope.launch { pollingLoop(token) }
         deliveryJob = scope.launch {
             val journal = com.jarves.mh.connect.HarneseEventBus.get(applicationContext)
+            journal.recoverInterruptedDeliveries()
             while (isActive) {
                 val item = journal.next()
                 if (item == null) { delay(2000); continue }
@@ -86,11 +87,13 @@ class TelegramPollingService : Service() {
                     journal.delivered(item.id)
                     continue
                 }
+                journal.beginDelivery(item.id)
                 try {
                     reply(token, item.destination, item.body)
                     journal.delivered(item.id)
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { journal.failed(item) }
+                catch (_: TelegramRejectedException) { journal.failed(item) }
+                catch (_: Exception) { journal.uncertain(item.id) }
                 delay(1100)
             }
         }
@@ -298,6 +301,8 @@ class TelegramPollingService : Service() {
         }
     }
 
+    private class TelegramRejectedException : java.io.IOException()
+
     private fun api(token: String, method: String, body: JSONObject): JSONObject {
         val connection = (URL("https://api.telegram.org/bot$token/$method").openConnection() as HttpURLConnection)
         try {
@@ -308,9 +313,9 @@ class TelegramPollingService : Service() {
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
-            if (status !in 200..299) error("HTTP $status")
+            if (status !in 200..299) throw TelegramRejectedException()
             val result = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
-            check(result.optBoolean("ok")) { "Telegram rejected the request" }
+            if (!result.optBoolean("ok")) throw TelegramRejectedException()
             return result
         } finally {
             connection.disconnect()

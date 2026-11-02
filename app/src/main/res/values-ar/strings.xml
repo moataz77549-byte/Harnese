@@ -253,4 +253,5 @@
     <string name="hub_review_rollback">تأكيد الهوية والتراجع</string>
     <string name="hub_review_reject">رفض التعديلات</string>
     <string name="hub_lock_required">فعّل قفل الشاشة قبل اعتماد التعديلات.</string>
+    <string name="hub_uncertain">إرسال غير مؤكد بعد انقطاع الشبكة: %1$d. لا يُعاد تلقائيًا لمنع التكرار.</string>
 </resources>

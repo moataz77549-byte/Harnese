@@ -47,6 +47,7 @@ fun AgentHubPanel() {
         Text(state.androidBuildMessage.orEmpty())
         state.pendingApproval?.let { Text("${it.toolName}: ${it.risk}") }
         Text(stringResource(R.string.hub_pending, pending))
+        Text(stringResource(R.string.hub_uncertain, journal.uncertainCount()))
         state.activeProject?.let { project ->
             OutlinedButton(onClick = { journal.setSubscription(project.id, true) }) { Text(stringResource(R.string.hub_subscribe)) }
             OutlinedButton(onClick = { journal.setSubscription(project.id, false) }) { Text(stringResource(R.string.hub_unsubscribe)) }
@@ -67,6 +68,7 @@ fun AgentHubPanel() {
             }
         }
         if (reviewMessage.isNotBlank()) Text(reviewMessage)
+        com.jarves.mh.mcp.McpSettingsPanel(state.activeProject?.id, state.agentKind.stableId)
         events.forEach { Text(it) }
     }
 }

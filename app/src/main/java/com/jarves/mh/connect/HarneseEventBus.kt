@@ -112,15 +112,25 @@ class HarneseEventBus private constructor(private val context: Context) : SQLite
         "SELECT id,destination,body,attempts FROM outbox WHERE state='pending' AND next_at<=? AND created>=? ORDER BY created,rowid LIMIT 1",
         arrayOf(System.currentTimeMillis().toString(), (System.currentTimeMillis()-RETENTION).toString())
     ).use { c -> if (c.moveToFirst()) Delivery(c.getString(0), c.getLong(1), c.getString(2), c.getInt(3)) else null }
+    @Synchronized fun beginDelivery(id: String) {
+        writableDatabase.execSQL("UPDATE outbox SET state='sending' WHERE id=? AND state='pending'", arrayOf(id))
+    }
+    @Synchronized fun recoverInterruptedDeliveries() {
+        writableDatabase.execSQL("UPDATE outbox SET state='uncertain' WHERE state='sending'")
+    }
+    @Synchronized fun uncertain(id: String) {
+        writableDatabase.execSQL("UPDATE outbox SET state='uncertain' WHERE id=?", arrayOf(id))
+    }
     @Synchronized fun delivered(id: String) { writableDatabase.execSQL("UPDATE outbox SET state='sent',body='' WHERE id=?", arrayOf(id)) }
     @Synchronized fun failed(item: Delivery) {
         val count = item.attempts + 1
         writableDatabase.update("outbox", ContentValues().apply {
             put("attempts", count); put("next_at", System.currentTimeMillis() + minOf(3_600_000L, 5000L * (1L shl count.coerceAtMost(10))))
-            if (count >= 8) put("state", "failed")
+            put("state", if (count >= 8) "failed" else "pending")
         }, "id=?", arrayOf(item.id))
     }
     fun pendingCount(): Long = readableDatabase.rawQuery("SELECT count(*) FROM outbox WHERE state='pending'", null).use { it.moveToFirst(); it.getLong(0) }
+    fun uncertainCount(): Long = readableDatabase.rawQuery("SELECT count(*) FROM outbox WHERE state='uncertain'", null).use { it.moveToFirst(); it.getLong(0) }
     fun recentEvents(): List<String> = readableDatabase.rawQuery("SELECT kind,body FROM events ORDER BY created DESC LIMIT 20", null).use { c ->
         buildList { while (c.moveToNext()) add("${c.getString(0)}: ${c.getString(1).take(300)}") }
     }

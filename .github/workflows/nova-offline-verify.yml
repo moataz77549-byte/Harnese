@@ -1,0 +1,71 @@
+name: Verify real ARM64 offline development bundles
+on:
+  push:
+    branches: [feat/nova-telegram-agent-hub]
+    paths: ['scripts/offline/**', '.github/workflows/nova-offline-verify.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Export real Kotlin Android template
+        env:
+          NOVA_OFFLINE_SAMPLE_DIR: ${{ github.workspace }}/offline-kotlin
+        run: ./gradlew :app:testOnlineDebugUnitTest --tests '*OfflineSampleExportTest' -PmhParallelInstall=true --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-offline-sample
+          path: offline-kotlin
+  verify:
+    needs: sample
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare verified runtime bundles and measured manifest
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
+          python3 scripts/offline/prepare-bundles.py
+      - name: Extract shared ARM64 rootfs and overlays
+        run: |
+          mkdir guest
+          tar --zstd -xf dist/runtime-bundles/pocketdev-core-arm64-2026.09.5.tar.zst -C guest
+          for pack in python android; do tar --zstd -xf dist/runtime-bundles/pocketdev-${pack}-arm64-*.tar.zst -C guest; done
+          tar --zstd -xf dist/runtime-bundles/nova-typescript-arm64-5.9.3.tar.zst -C guest
+          mkdir -p guest/tmp guest/workspace
+          cp scripts/offline/smoke-test.sh guest/tmp/nova-smoke.sh
+          file guest/usr/local/bin/node guest/root/android-sdk/build-tools/35.0.0/aapt2
+      - uses: actions/download-artifact@v4
+        with:
+          name: nova-offline-sample
+          path: guest/workspace/offline-kotlin
+      - name: Run Python, TypeScript and Gradle offline with network namespace isolated
+        run: |
+          sudo mount --bind /dev guest/dev
+          sudo mount -t proc proc guest/proc
+          sudo unshare --net chroot guest /usr/bin/env -i HOME=/root USER=root LANG=C.UTF-8 PATH=/usr/local/bin:/usr/bin:/bin:/opt/gradle/gradle-8.14.3/bin:/opt/jdk-17.0.20.1+1/bin JAVA_HOME=/opt/jdk-17.0.20.1+1 ANDROID_HOME=/root/android-sdk /bin/bash /tmp/nova-smoke.sh 2>&1 | tee offline-smoke.log
+      - name: Preserve measured inputs and verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-offline-bundles-and-evidence
+          path: |
+            dist/runtime-bundles/*.tar.zst
+            dist/runtime-bundles/offline-measured-manifest.json
+            offline-smoke.log
+            guest/workspace/offline-kotlin/app/build/outputs/apk/debug/*.apk
+          compression-level: 0
+          retention-days: 7

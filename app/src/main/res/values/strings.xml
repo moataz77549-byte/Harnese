@@ -420,4 +420,5 @@
     <string name="hub_review_rollback">Authenticate and roll back</string>
     <string name="hub_review_reject">Reject changes</string>
     <string name="hub_lock_required">Set a screen lock before approving changes.</string>
+    <string name="hub_uncertain">Delivery uncertain after network loss: %1$d. Not resent automatically to prevent duplicates.</string>
 </resources>
