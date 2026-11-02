@@ -3,6 +3,7 @@ name: Build Harnese Android APK
 on:
   push:
     branches: [main, feat/nova-telegram-agent-hub]
+    paths-ignore: [release-candidate.json]
   workflow_dispatch:
 
 permissions:

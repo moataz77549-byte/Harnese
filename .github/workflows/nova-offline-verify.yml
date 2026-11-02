@@ -2,7 +2,7 @@ name: Verify real ARM64 offline development bundles
 on:
   push:
     branches: [feat/nova-telegram-agent-hub]
-    paths: ['scripts/offline/**', '.github/workflows/nova-offline-verify.yml']
+    paths: ['app/**', 'scripts/offline/**', 'scripts/release/**', '.github/workflows/nova-offline-verify.yml', '.github/workflows/nova-release.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -28,7 +28,9 @@ jobs:
       - name: Export real Kotlin Android template
         env:
           NOVA_OFFLINE_SAMPLE_DIR: ${{ github.workspace }}/offline-kotlin
-        run: ./gradlew :app:testOnlineDebugUnitTest --tests '*OfflineSampleExportTest' -PmhParallelInstall=true --no-daemon
+        run: |
+          python3 -m unittest discover -s scripts/release -p 'test_*.py'
+          ./gradlew :app:testOnlineDebugUnitTest --tests '*OfflineSampleExportTest' -PmhParallelInstall=true --no-daemon
       - uses: actions/upload-artifact@v4
         with:
           name: nova-offline-sample
@@ -96,7 +98,11 @@ jobs:
           set -euo pipefail
           sudo mount --bind /dev guest/dev
           sudo mount -t proc proc guest/proc
-          sudo unshare --net chroot guest /usr/bin/env -i HOME=/root USER=root LANG=C.UTF-8 PATH=/root/android-sdk/build-tools/35.0.0:/usr/local/bin:/usr/bin:/bin:/opt/gradle/gradle-8.14.3/bin:/opt/jdk-17.0.20.1+1/bin JAVA_HOME=/opt/jdk-17.0.20.1+1 ANDROID_HOME=/root/android-sdk /bin/bash /tmp/nova-smoke.sh 2>&1 | tee offline-smoke.log
+          sudo unshare --net /bin/bash -euc '
+            ip link set lo up
+            ip -brief address
+            exec chroot guest /usr/bin/env -i HOME=/root USER=root LANG=C.UTF-8 PATH=/root/android-sdk/build-tools/35.0.0:/usr/local/bin:/usr/bin:/bin:/opt/gradle/gradle-8.14.3/bin:/opt/jdk-17.0.20.1+1/bin JAVA_HOME=/opt/jdk-17.0.20.1+1 ANDROID_HOME=/root/android-sdk /bin/bash /tmp/nova-smoke.sh
+          ' 2>&1 | tee offline-smoke.log
       - name: Preserve measured inputs and verification evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -142,8 +148,10 @@ jobs:
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           cp "$BUILD_TOOLS/lib/apksigner.jar" owner-signing/
           cp -a "$BUILD_TOOLS/lib64" owner-signing/
-          cp "$BUILD_TOOLS/aapt" owner-signing/
-          cp app/build/outputs/apk/offline/release/*-unsigned.apk owner-signing/Harnese-Nova-v1.3.2-Offline-ARM64-unsigned.apk
+          cp "$BUILD_TOOLS/aapt" "$BUILD_TOOLS/zipalign" owner-signing/
+          BASE=$(find app/build/outputs/apk/offline/release -name '*-unsigned.apk' -print -quit)
+          "$BUILD_TOOLS/zipalign" -P 16 -f 4 "$BASE" owner-signing/Harnese-Nova-v1.3.2-Offline-ARM64-unsigned.apk
+          "$BUILD_TOOLS/zipalign" -c -P 16 4 owner-signing/Harnese-Nova-v1.3.2-Offline-ARM64-unsigned.apk
           find owner-signing -type f ! -name SHA256.txt ! -name BUILD-SHA256.txt -print0 | sort -z | xargs -0 sha256sum > owner-signing/BUILD-SHA256.txt
           stat -c '%n %s bytes' owner-signing/*
       - uses: actions/upload-artifact@v4
