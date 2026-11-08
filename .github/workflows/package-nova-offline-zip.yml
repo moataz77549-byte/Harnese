@@ -1,0 +1,29 @@
+name: Package original signed Nova Offline APK in ZIP
+on:
+  push:
+    branches: [ops/nova-owner-signing-transport]
+    paths: ['.github/workflows/package-nova-offline-zip.yml']
+permissions:
+  contents: write
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: harnese-nova-v1.3.2
+      BASE: Harnese-Nova-v1.3.2-Offline-ARM64
+      DIGEST: 36ebf6960202a4a3bf5e4172c8747aad796ad603b8aa0d5faf8531464ef0ac60
+    steps:
+      - name: Download and verify published signed APK
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$BASE.apk"
+          echo "$DIGEST  $BASE.apk" | sha256sum -c -
+      - name: Compress and verify extracted bytes
+        run: |
+          set -euo pipefail
+          zip -9 "$BASE.zip" "$BASE.apk"
+          unzip -t "$BASE.zip"
+          test "$(unzip -p "$BASE.zip" "$BASE.apk" | sha256sum | cut -d' ' -f1)" = "$DIGEST"
+          wc -c "$BASE.apk" "$BASE.zip"
+      - name: Attach archive to existing release
+        run: gh release upload "$TAG" "$BASE.zip" --repo "$GITHUB_REPOSITORY"
