@@ -1,7 +1,7 @@
 name: Verify real ARM64 offline development bundles
 on:
   push:
-    branches: [feat/nova-telegram-agent-hub]
+    branches: [archive/nova-full-offline]
     paths: ['app/**', 'scripts/offline/**', 'scripts/release/**', '.github/workflows/nova-offline-verify.yml', '.github/workflows/nova-release.yml']
   workflow_dispatch:
 permissions:

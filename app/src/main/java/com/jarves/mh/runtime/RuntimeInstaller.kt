@@ -226,7 +226,7 @@ class RuntimeInstaller(private val context: Context) {
             coreToolsMarker.writeText(CORE_TOOLS_VERSION)
         }
 
-        val requiredStacks = if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) selectedStacks + setOf(DevStack.WEB, DevStack.PYTHON, DevStack.ANDROID) else selectedStacks
+        val requiredStacks = if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) selectedStacks + setOf(DevStack.WEB, DevStack.PYTHON) else selectedStacks
         val missingStacks = requiredStacks.filterNot(::isStackInstalled)
         missingStacks.forEachIndexed { index, stack ->
             val slice = 0.26f / maxOf(1, missingStacks.size)
@@ -235,7 +235,7 @@ class RuntimeInstaller(private val context: Context) {
         }
 
         if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) ensureEmbeddedTypeScript(proot, onProgress)
-        when (agent) {
+        if (!BuildConfig.OFFLINE_RUNTIME_BUNDLES) when (agent) {
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> if (!BuildConfig.OFFLINE_RUNTIME_BUNDLES) ensureAgyInstalled(proot, 0.985f, onProgress)
@@ -1111,20 +1111,22 @@ class RuntimeInstaller(private val context: Context) {
         to: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ): File {
-        val bundle = if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
-            val manifest = JSONObject(context.assets.open("runtime/offline-manifest.json").bufferedReader().use { it.readText() }).getJSONObject("bundles")
-            val info = manifest.keys().asSequence().map { manifest.getJSONObject(it) }.first { it.getString("file") == requestedBundle.fileName || it.optString("sourceFile") == requestedBundle.fileName }
-            requestedBundle.copy(fileName = info.getString("file"), sha256 = info.getString("sha256"), compressedBytes = info.getLong("compressedBytes"))
-        } else requestedBundle
+        val embeddedFiles = context.assets.list("runtime").orEmpty().toSet()
+        val manifest = if ("offline-manifest.json" in embeddedFiles) {
+            JSONObject(context.assets.open("runtime/offline-manifest.json").bufferedReader().use { it.readText() }).getJSONObject("bundles")
+        } else JSONObject()
+        val info = manifest.keys().asSequence().map { manifest.getJSONObject(it) }
+            .firstOrNull { (it.getString("file") == requestedBundle.fileName || it.optString("sourceFile") == requestedBundle.fileName) && it.getString("file") in embeddedFiles }
+        val bundle = info?.let {
+            requestedBundle.copy(fileName = it.getString("file"), sha256 = it.getString("sha256"), compressedBytes = it.getLong("compressedBytes"))
+        } ?: requestedBundle
         downloads.mkdirs()
-        if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
-            val embedded = JSONObject(context.assets.open("runtime/offline-manifest.json").bufferedReader().use { it.readText() }).getJSONObject("bundles")
-            val info = embedded.keys().asSequence().map { embedded.getJSONObject(it) }.first { it.getString("file") == bundle.fileName }
+        if (info != null) {
             val required = bundle.compressedBytes + info.getLong("uncompressedBytes") * 2 + 64L * 1024 * 1024
             check(context.filesDir.usableSpace >= required) { "Insufficient storage: need $required bytes for ${bundle.label}" }
         }
         val destination = File(downloads, bundle.fileName)
-        val useEmbedded = preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES
+        val useEmbedded = bundle.fileName in embeddedFiles && (preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES)
         if (useEmbedded) {
             val loadingLabel = str(R.string.rt_install_loading_bundle, bundle.label)
             onProgress(RuntimeInstallProgress(loadingLabel, from, 0, bundle.compressedBytes))
