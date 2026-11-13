@@ -2,7 +2,7 @@ name: Build Nova Light Android 10 ARM64
 on:
   push:
     branches: [feat/nova-telegram-agent-hub]
-    paths: ['app/**', 'scripts/offline/**', '.github/workflows/nova-light-build.yml']
+    paths: ['app/**', 'scripts/offline/**', 'scripts/release/**', '.github/workflows/nova-light-build.yml']
 permissions:
   contents: read
 jobs:
@@ -37,6 +37,8 @@ jobs:
           cp -a "$BT/lib64" delivery/
           APK=$(find app/build/outputs/apk/offline/release -name '*unsigned.apk' -print -quit)
           "$BT/zipalign" -P 16 -f 4 "$APK" delivery/unsigned.apk
+          python3 scripts/release/check_zstd_jni.py delivery/unsigned.apk | tee delivery/zstd-jni-check.txt
+          cp app/build/outputs/mapping/offlineRelease/mapping.txt delivery/
           "$BT/aapt" dump badging delivery/unsigned.apk > delivery/package.txt
           grep "sdkVersion:'29'" delivery/package.txt
           grep "native-code: 'arm64-v8a'" delivery/package.txt
