@@ -2,11 +2,15 @@ name: Build Harnese Android APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/nova-telegram-agent-hub]
+    paths-ignore: [release-candidate.json]
   workflow_dispatch:
 
 permissions:
   contents: read
+concurrency:
+  group: nova-development-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   online-debug:
@@ -56,3 +60,16 @@ jobs:
           path: app/build/outputs/apk/online/release/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Preserve official signing and package-inspection tools
+        run: |
+          mkdir -p owner-signing-tools
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          cp "$BUILD_TOOLS/lib/apksigner.jar" "$BUILD_TOOLS/aapt" owner-signing-tools/
+          cp -a "$BUILD_TOOLS/lib64" owner-signing-tools/
+          find owner-signing-tools -type f ! -name SHA256.txt ! -name BUILD-SHA256.txt -print0 | sort -z | xargs -0 sha256sum > owner-signing-tools/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-owner-signing-tools
+          path: owner-signing-tools
+          retention-days: 7
