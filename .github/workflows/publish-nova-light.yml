@@ -1,4 +1,4 @@
-name: Publish owner signed Nova Light 1.3.3
+name: Publish owner signed Nova Light 1.3.4
 on:
   push:
     branches: [ops/nova-owner-signing-transport]
@@ -27,8 +27,10 @@ jobs:
           test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$RUN --jq .head_sha)" = "$SOURCE"
           test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$RUN --jq .path)" = .github/workflows/nova-light-build.yml
           gh run download "$RUN" --repo "$GITHUB_REPOSITORY" --name nova-light-unsigned --dir delivery
+          python3 scripts/release/check_zstd_jni.py delivery/unsigned.apk
           mkdir release
-          APK=release/Harnese-Nova-v1.3.3-Light-ARM64.apk
+          cp delivery/zstd-jni-check.txt release/
+          APK=release/Harnese-Nova-v1.3.4-Light-ARM64.apk
           python3 scripts/release/apk_signature_patch.py apply delivery/unsigned.apk nova-light-candidate.json "$APK"
           java -jar delivery/apksigner.jar verify --verbose --print-certs "$APK" > release/certificate.txt
           grep 'certificate SHA-256 digest: d7f31fde154fc9b46fe8ef333fd12ecdfbd9b331d71a5284c24a6ad8ad45de51' release/certificate.txt
@@ -36,17 +38,17 @@ jobs:
           export LD_LIBRARY_PATH="$PWD/delivery/lib64"
           delivery/zipalign -c -P 16 4 "$APK"
           delivery/aapt dump badging "$APK" > release/package.txt
-          grep "package: name='com.moataz.harnese.nova' versionCode='16' versionName='1.3.3'" release/package.txt
+          grep "package: name='com.moataz.harnese.nova' versionCode='17' versionName='1.3.4'" release/package.txt
           grep "sdkVersion:'29'" release/package.txt
           grep "native-code: 'arm64-v8a'" release/package.txt
           test "$(stat -c %s "$APK")" -lt 150000000
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
           python3 - <<'PY'
           import pathlib,json,hashlib,os
-          p=pathlib.Path('release/Harnese-Nova-v1.3.3-Light-ARM64.apk')
-          item={'url':f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/releases/download/harnese-nova-v1.3.3/{p.name}','sha256':hashlib.file_digest(p.open('rb'),'sha256').hexdigest(),'sizeBytes':p.stat().st_size}
-          pathlib.Path('release/harnese-nova-update.json').write_text(json.dumps({'versionCode':16,'versionName':'1.3.3','notes':'Light ARM64 edition for Android 10+. Core, Python and TypeScript embedded. Android tools and agents download on request. Actual installed Antigravity version detection.','artifacts':{'online':item,'offline':item}},indent=2))
+          p=pathlib.Path('release/Harnese-Nova-v1.3.4-Light-ARM64.apk')
+          item={'url':f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/releases/download/harnese-nova-v1.3.4/{p.name}','sha256':hashlib.file_digest(p.open('rb'),'sha256').hexdigest(),'sizeBytes':p.stat().st_size}
+          pathlib.Path('release/harnese-nova-update.json').write_text(json.dumps({'versionCode':17,'versionName':'1.3.4','notes':'Fixes native SIGABRT during runtime extraction caused by R8 renaming zstd JNI fields. Core, Python and TypeScript embedded; Android tools download on request.','artifacts':{'online':item,'offline':item}},indent=2))
           PY
       - name: Publish direct APK
         run: |
-          gh release create harnese-nova-v1.3.3 release/* --repo "$GITHUB_REPOSITORY" --target "$(jq -r .sourceCommit nova-light-candidate.json)" --title "Harnese Nova 1.3.3 Light — Android 10+ ARM64" --notes "Python, Node.js, npm and TypeScript are embedded. Android SDK/JDK/Gradle and coding agents download on request. Initial setup no longer installs every toolchain and the default agent. Antigravity update checks read the actual CLI version before comparing with the official release. Signed with the original Nova certificate. Unit tests, Release build, package identity, ARM64, API 29 minimum and APK alignment verified. Physical-device startup and account-specific model availability still require device testing."
+          gh release create harnese-nova-v1.3.4 release/* --repo "$GITHUB_REPOSITORY" --target "$(jq -r .sourceCommit nova-light-candidate.json)" --title "Harnese Nova 1.3.4 Light — Android 10+ ARM64" --notes "Fixes the reported Android 10 ARM64 native crash during runtime extraction: R8 had renamed srcPos/dstPos required by zstd JNI. Preserves the complete zstd JNI boundary and checks the final minified APK for the required long instance fields. The same check rejects 1.3.3. Python, Node.js, npm and TypeScript remain embedded; Android tools and agents download on request. Signed with the original Nova certificate; install as an update without uninstalling or clearing app data. Unit tests, Release build, final DEX fields, package identity, ARM64, API 29 minimum and APK alignment verified. Full startup on the affected Redmi still requires confirmation on the device."
