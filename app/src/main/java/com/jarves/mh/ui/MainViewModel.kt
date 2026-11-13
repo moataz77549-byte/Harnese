@@ -2656,6 +2656,7 @@ class HarneseRuntimeController(private val application: Application) {
             val result = withContext(Dispatchers.IO) { runCatching { installer.checkAgentUpdates() } }
             _state.update {
                 it.copy(
+                    installedAgentVersions = installer.installedAgentVersions(),
                     agentUpdates = result.getOrDefault(emptyMap()),
                     agentUpdatesChecking = false,
                     agentUpdateMessage = result.fold(

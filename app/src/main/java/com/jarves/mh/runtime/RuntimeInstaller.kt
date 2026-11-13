@@ -369,6 +369,20 @@ class RuntimeInstaller(private val context: Context) {
 
     /** Checks each installed agent against its own authoritative release source. */
     suspend fun checkAgentUpdates(): Map<com.jarves.mh.model.AgentKind, AgentUpdateInfo> {
+        if (isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
+            val runtime = installedRuntime()
+            val probe = process(runtime.proot, rootfs, File(rootfs, "root"), emptyMap(), listOf(AGY_GUEST_PATH, "--version"))
+            try {
+                withTimeout(30_000L) { while (probe.isAlive) delay(50) }
+                check(probe.waitFor() == 0) { "Could not read installed Antigravity version" }
+                val output = (probe as? NativeSpawnProcess)?.outputFile?.let(::readProcessOutputSafely).orEmpty()
+                val version = Regex("[0-9]+\\.[0-9]+\\.[0-9]+").find(output)?.value
+                    ?: error("Antigravity did not report a valid version")
+                agyMarker.writeText(version)
+            } finally {
+                if (probe.isAlive) probe.destroy()
+            }
+        }
         val installed = installedAgentVersions()
         return buildMap {
             installed[com.jarves.mh.model.AgentKind.CLAUDE_CODE]?.let { current ->
