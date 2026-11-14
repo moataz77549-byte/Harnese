@@ -22,6 +22,9 @@ val uploadKeyPassword = providers.environmentVariable("MH_UPLOAD_KEY_PASSWORD").
 // Harnese Connect is a distinct application, deliberately isolated from earlier Harnese installs.
 // The owner must keep the NEW signing key for all future updates of this package.
 val parallelTrialInstall = providers.gradleProperty("mhParallelInstall").orNull == "true"
+// Only for a separately installable QA build when the original Nova key is unavailable.
+// Never use this package ID for owner-signed production updates.
+val repairTestInstall = providers.gradleProperty("mhRepairTestInstall").orNull == "true"
 val hasUploadSigning = listOf(
     uploadStorePath,
     uploadStorePassword,
@@ -80,10 +83,18 @@ android {
     }
 
     defaultConfig {
-        applicationId = if (parallelTrialInstall) "com.moataz.harnese.nova" else "com.jarves.harnese"
-        manifestPlaceholders["harneseAppLabel"] = if (parallelTrialInstall) "Harnese Nova" else "Harnese"
-        manifestPlaceholders["harneseAppIcon"] = if (parallelTrialInstall) "@mipmap/ic_launcher_nova" else "@mipmap/ic_launcher"
-        manifestPlaceholders["harneseAppRoundIcon"] = if (parallelTrialInstall) "@mipmap/ic_launcher_nova_round" else "@mipmap/ic_launcher_round"
+        applicationId = when {
+            repairTestInstall -> "com.moataz.harnese.nova.repair"
+            parallelTrialInstall -> "com.moataz.harnese.nova"
+            else -> "com.jarves.harnese"
+        }
+        manifestPlaceholders["harneseAppLabel"] = when {
+            repairTestInstall -> "Harnese Nova Repair"
+            parallelTrialInstall -> "Harnese Nova"
+            else -> "Harnese"
+        }
+        manifestPlaceholders["harneseAppIcon"] = if (parallelTrialInstall || repairTestInstall) "@mipmap/ic_launcher_nova" else "@mipmap/ic_launcher"
+        manifestPlaceholders["harneseAppRoundIcon"] = if (parallelTrialInstall || repairTestInstall) "@mipmap/ic_launcher_nova_round" else "@mipmap/ic_launcher_round"
         minSdk = 29
         // The direct APK retains the proven target-28 PRoot execution path. The
         // Play build targets current Android while its runtime path is validated.
