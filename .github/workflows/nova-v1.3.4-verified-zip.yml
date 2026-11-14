@@ -1,0 +1,87 @@
+name: Verify and ZIP Harnese Nova v1.3.4 Light ARM64
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/nova-v1.3.4-verified-zip.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package-verified-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Prepare Android APK verification tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools build-tools;35.0.0'
+
+      - name: Download the exact owner-signed APK and its published checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cd dist
+          gh release download harnese-nova-v1.3.4 --repo "$GITHUB_REPOSITORY"             --pattern 'Harnese-Nova-v1.3.4-Light-ARM64.apk' --pattern 'SHA256SUMS.txt'
+          test -s Harnese-Nova-v1.3.4-Light-ARM64.apk
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Verify archive integrity, Android 10+ ARM64 identity, and APK signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK='dist/Harnese-Nova-v1.3.4-Light-ARM64.apk'
+          unzip -t "$APK" > "$RUNNER_TEMP/apk-integrity.txt"
+          grep 'No errors detected' "$RUNNER_TEMP/apk-integrity.txt"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          "$BUILD_TOOLS/aapt" dump badging "$APK" > "$RUNNER_TEMP/apk-badging.txt"
+          grep -F "package: name='com.moataz.harnese.nova'" "$RUNNER_TEMP/apk-badging.txt"
+          grep -F "sdkVersion:'29'" "$RUNNER_TEMP/apk-badging.txt"
+          grep -F "'arm64-v8a'" "$RUNNER_TEMP/apk-badging.txt"
+          unzip -Z1 "$APK" | grep -E '^lib/arm64-v8a/[^/]+[.]so$' > "$RUNNER_TEMP/arm64-libs.txt"
+          if unzip -Z1 "$APK" | grep -E '^lib/(armeabi-v7a|armeabi|x86|x86_64)/'; then
+            echo "::error::Unexpected 32-bit or non-ARM64 native library in ARM64 package"
+            exit 1
+          fi
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/signature.txt"
+          grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
+          grep 'Signer #1 certificate SHA-256 digest:' "$RUNNER_TEMP/signature.txt"
+
+      - name: Wrap the unmodified APK in ZIP and verify contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          APK='Harnese-Nova-v1.3.4-Light-ARM64.apk'
+          ZIP='Harnese-Nova-v1.3.4-Light-ARM64-Verified.zip'
+          zip -0 "$ZIP" "$APK"
+          unzip -t "$ZIP"
+          expected="$(sha256sum "$APK" | cut -d' ' -f1)"
+          actual="$(unzip -p "$ZIP" "$APK" | sha256sum | cut -d' ' -f1)"
+          test "$expected" = "$actual"
+          sha256sum "$ZIP" > Harnese-Nova-v1.3.4-Light-ARM64-Verified-ZIP-SHA256.txt
+
+      - name: Publish ZIP for direct download beside the original APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload harnese-nova-v1.3.4             dist/Harnese-Nova-v1.3.4-Light-ARM64-Verified.zip             dist/Harnese-Nova-v1.3.4-Light-ARM64-Verified-ZIP-SHA256.txt             --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view harnese-nova-v1.3.4 --repo "$GITHUB_REPOSITORY" --json assets             --jq '.assets[].name'
+
+      - name: Keep the verified ZIP as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: harnese-nova-v1.3.4-light-arm64-verified-zip
+          path: |
+            dist/Harnese-Nova-v1.3.4-Light-ARM64-Verified.zip
+            dist/Harnese-Nova-v1.3.4-Light-ARM64-Verified-ZIP-SHA256.txt
+          if-no-files-found: error
+          retention-days: 14
