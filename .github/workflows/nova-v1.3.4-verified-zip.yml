@@ -50,8 +50,9 @@ jobs:
             exit 1
           fi
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/signature.txt"
-          grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
-          grep 'Signer #1 certificate SHA-256 digest:' "$RUNNER_TEMP/signature.txt"
+          cat "$RUNNER_TEMP/signature.txt"
+          grep -E 'Verified using v(2|3) scheme .*: true' "$RUNNER_TEMP/signature.txt"
+          grep -E 'Signer #1 certificate SHA-256 digest:' "$RUNNER_TEMP/signature.txt"
 
       - name: Wrap the unmodified APK in ZIP and verify contents
         shell: bash
