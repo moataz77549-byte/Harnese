@@ -241,4 +241,23 @@
     <string name="tg_stopped">تم طلب إيقاف البوت.</string>
     <string name="tg_connection_status">الحالة: %1$s</string>
     <string name="tg_refresh_link">تحديث الاقتران</string>
+    <string name="hub_sync_content">مزامنة محتوى الردود مع تيليجرام (تنقيح الأسرار المعروفة)</string>
+    <string name="hub_mute">كتم إشعارات تيليجرام</string>
+    <string name="hub_tasks">الوكيل يعمل: %1$s · البناء يعمل: %2$s</string>
+    <string name="hub_pending">رسائل بانتظار الإرسال: %1$d</string>
+    <string name="hub_subscribe">الاشتراك في هذا المشروع</string>
+    <string name="hub_unsubscribe">إلغاء اشتراك المشروع</string>
+    <string name="hub_refresh">تحديث سجل الأحداث</string>
+    <string name="hub_review_preview">مراجعة التعديلات المعزولة</string>
+    <string name="hub_review_apply">تأكيد هوية الهاتف وتطبيق التعديلات</string>
+    <string name="hub_review_rollback">تأكيد الهوية والتراجع</string>
+    <string name="hub_review_reject">رفض التعديلات</string>
+    <string name="hub_lock_required">فعّل قفل الشاشة قبل اعتماد التعديلات.</string>
+    <string name="hub_uncertain">إرسال غير مؤكد بعد انقطاع الشبكة: %1$d. لا يُعاد تلقائيًا لمنع التكرار.</string>
+    <string name="hub_environments">بيئات البرمجة — Development Environments</string>
+    <string name="hub_probe">تشغيل فحص فعلي</string>
+    <string name="hub_optional_install">طلب تنزيل اختياري</string>
+    <string name="hub_confirm_download">الموافقة على التنزيل من هذا الهاتف</string>
+    <string name="hub_repair">إصلاح الأدوات من الحزمة المضمنة</string>
+    <string name="hub_stream">تحديث رسالة تقدم تيليجرام أثناء التوليد (كل 5 ثوانٍ كحد أقصى)</string>
 </resources>

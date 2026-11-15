@@ -48,6 +48,12 @@ class DshRuntimeBridge(
     private val installer = RuntimeInstaller(context)
     private val checkpoints = WorkspaceCheckpoints(context.filesDir, context)
     private val eventBus = MutableSharedFlow<RuntimeEvent>(extraBufferCapacity = 64)
+    private val reviews = com.jarves.mh.connect.SecureReviewApprovalService.get(File(context.filesDir, "secure-reviews"))
+    private val journal = com.jarves.mh.connect.HarneseEventBus.get(context)
+    private suspend fun emitEvent(event: RuntimeEvent) {
+        journal.runtime(event)
+        eventBus.emit(event)
+    }
     override val events: Flow<RuntimeEvent> = eventBus
     private val finishedSessions = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var activeProcess: Process? = null
@@ -69,15 +75,16 @@ class DshRuntimeBridge(
         lastForegroundProgressAt = 0L
         foregroundResultPosted = false
         lastThinkingUpdateAt = 0L
-        eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
+        journal.begin(sessionId, projectId, "DeepSeek Harness")
+        emitEvent(RuntimeEvent.SessionStarted(sessionId))
         pushForegroundProgress(R.string.rt_bridge_starting, "DeepSeek Harness")
         val secret = secretFor(provider).orEmpty().ifBlank { localServerPlaceholderKey(provider) }
         if (secret.isBlank()) {
-            eventBus.emit(RuntimeEvent.SessionFailed(sessionId, "No API key is saved for ${provider.kind.title}."))
+            emitEvent(RuntimeEvent.SessionFailed(sessionId, "No API key is saved for ${provider.kind.title}."))
             return@withContext sessionId
         }
         if (provider.kind == ProviderKind.CLAUDE) {
-            eventBus.emit(
+            emitEvent(
                 RuntimeEvent.SessionFailed(
                     sessionId,
                     "Claude subscription login is not supported by DeepSeek Harness. Pick a key-based provider in Settings.",
@@ -105,8 +112,10 @@ class DshRuntimeBridge(
                 "DeepSeek Harness is not installed. Open Settings → Coding agent to install it."
             }
             installer.ensureDshAndroidCompatibility()
-            val workspace = checkpoints.ensureWorkspace(projectId)
-            checkpoints.createCheckpoint(projectId, workspace)
+            val originalWorkspace = checkpoints.ensureWorkspace(projectId)
+            val stagedRun = reviews.stage(projectId, originalWorkspace)
+            val workspace = stagedRun.workspace
+            checkpoints.createCheckpoint(projectId, originalWorkspace)
             val before = checkpoints.snapshot(workspace)
             val baseRoute = DshRouteMapper.forProfile(provider)
             openRouterGateway = if (
@@ -155,12 +164,17 @@ class DshRuntimeBridge(
             )
             val exit = process.waitFor()
             Log.d("DshBridge", "SDK process exited with code $exit")
-            val changed = checkpoints.changedFiles(workspace, before)
+            val stagedReview = reviews.finish(stagedRun.id)
+                if (stagedReview.entries.isNotEmpty()) journal.publish(
+                    id = "review:${stagedRun.id}", project = projectId, chat = "", task = sessionId,
+                    kind = "review.pending", body = "مشروع: ${com.jarves.mh.data.AppPreferences(context).loadProjects().firstOrNull { it.id == projectId }?.name ?: projectId}\nالمخاطر: مراجعة محلية مطلوبة قبل أي تطبيق\nمراجعة تعديلات معزولة: ${stagedRun.id}\n" + stagedReview.entries.joinToString("\n") { it.path } + "\nاعتماد محلي في Agent Hub فقط. الرفض: /reject ${stagedRun.id}",
+                )
+                val changed = checkpoints.changedFiles(workspace, before)
             if (changed.isNotEmpty()) {
                 Log.d("DshBridge", "Changed files: $changed")
                 checkpoints.saveChangedPaths(projectId, changed)
-                val details = checkpoints.buildChangeDetails(projectId, workspace, checkpoints.readChangedPaths(projectId))
-                eventBus.emit(RuntimeEvent.FilesChanged(sessionId, details))
+                val details = stagedReview.entries.map { ChangeItem(it.path, 0, 0) }
+                emitEvent(RuntimeEvent.FilesChanged(sessionId, details))
             } else if (!File(checkpoints.checkpointDir(projectId), "changes.json").isFile) {
                 acceptLastChanges(projectId)
             }
@@ -298,19 +312,19 @@ class DshRuntimeBridge(
                 }
                 is DshSdkProtocolEvent.ToolStarted -> {
                     sawActivity = true
-                    eventBus.emit(
+                    emitEvent(
                         RuntimeEvent.ToolStarted(sessionId, protocolEvent.name, protocolEvent.detail),
                     )
                 }
                 is DshSdkProtocolEvent.ToolCompleted -> {
                     sawActivity = true
-                    eventBus.emit(
+                    emitEvent(
                         RuntimeEvent.ToolCompleted(sessionId, protocolEvent.name, protocolEvent.summary),
                     )
                 }
                 is DshSdkProtocolEvent.AssistantText -> if (protocolEvent.text.isNotEmpty()) {
                     sawActivity = true
-                    eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, protocolEvent.text))
+                    emitEvent(RuntimeEvent.AssistantDelta(sessionId, protocolEvent.text))
                 }
                 is DshSdkProtocolEvent.Failed -> failure = protocolEvent.message
                 DshSdkProtocolEvent.TurnCompleted -> {
@@ -506,7 +520,7 @@ class DshRuntimeBridge(
         val summary = compactDshText(text, MAX_DSH_REASONING_BUFFER, MAX_DSH_REASONING_SUMMARY)
         if (summary.isBlank()) return
         lastThinkingUpdateAt = now
-        eventBus.emit(
+        emitEvent(
             RuntimeEvent.ReasoningSummary(
                 sessionId = sessionId,
                 summary = summary,
@@ -520,7 +534,7 @@ class DshRuntimeBridge(
 
     private suspend fun emitCompletedOnce(sessionId: String) {
         if (finishedSessions.add(sessionId)) {
-            eventBus.emit(RuntimeEvent.SessionCompleted(sessionId))
+            emitEvent(RuntimeEvent.SessionCompleted(sessionId))
             finishForegroundRuntime(
                 completed = true,
                 projectName = activeProjectSlug ?: AppStrings.get(context, R.string.rt_exec_default_project),
@@ -531,7 +545,7 @@ class DshRuntimeBridge(
 
     private suspend fun emitFailureOnce(sessionId: String, reason: String) {
         if (finishedSessions.add(sessionId)) {
-            eventBus.emit(RuntimeEvent.SessionFailed(sessionId, reason))
+            emitEvent(RuntimeEvent.SessionFailed(sessionId, reason))
             if (userStopRequested) {
                 cancelForegroundRuntime()
             } else {

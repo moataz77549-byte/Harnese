@@ -1,0 +1,195 @@
+name: Verify real ARM64 offline development bundles
+on:
+  push:
+    branches: [archive/nova-full-offline]
+    paths: ['app/**', 'scripts/offline/**', 'scripts/release/**', '.github/workflows/nova-offline-verify.yml', '.github/workflows/nova-release.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nova-offline-verification-v2-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Export real Kotlin Android template
+        env:
+          NOVA_OFFLINE_SAMPLE_DIR: ${{ github.workspace }}/offline-kotlin
+        run: |
+          python3 -m unittest discover -s scripts/release -p 'test_*.py'
+          ./gradlew :app:testOnlineDebugUnitTest --tests '*OfflineSampleExportTest' -PmhParallelInstall=true --no-daemon
+      - name: Build both real templates and export their resolved Maven dependencies
+        run: |
+          ./gradlew -g "$PWD/template-gradle-cache" -p offline-kotlin assembleDebug --no-daemon --stacktrace
+          ./gradlew -g "$PWD/template-gradle-cache" -p offline-kotlin-compose assembleDebug --no-daemon --stacktrace
+          python3 scripts/offline/export-maven-cache.py template-gradle-cache supplemental-maven
+          find offline-kotlin offline-kotlin-compose -type d \( -name build -o -name .gradle \) -prune -exec rm -rf {} +
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-offline-sample
+          path: |
+            offline-kotlin
+            offline-kotlin-compose
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-offline-supplemental-maven
+          path: supplemental-maven
+  bionic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Extract official Android runtime for the ARM64 CI tool test
+        shell: bash
+        run: bash scripts/offline/extract-bionic.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-ci-android-runtime
+          path: android-runtime
+          retention-days: 1
+  verify:
+    needs: [sample, bionic]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: nova-offline-supplemental-maven
+          path: supplemental-maven
+      - name: Prepare verified runtime bundles and measured manifest
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
+          python3 scripts/offline/prepare-bundles.py
+      - name: Extract shared ARM64 rootfs and overlays
+        run: |
+          mkdir guest
+          tar --zstd -xf dist/runtime-bundles/pocketdev-core-arm64-2026.09.5.tar.zst -C guest
+          tar --zstd -xf dist/runtime-bundles/nova-python-arm64-2026.09.2.tar.zst -C guest
+          tar --zstd -xf dist/runtime-bundles/nova-android-arm64-2026.09.1.tar.zst -C guest
+          tar --zstd -xf dist/runtime-bundles/nova-typescript-arm64-5.9.3.tar.zst -C guest
+          mkdir -p guest/tmp guest/workspace guest/dev guest/proc guest/sys
+          for pair in 'bin usr/bin' 'lib usr/lib' 'sbin usr/sbin'; do
+            read -r link target <<< "$pair"
+            if [ ! -e "guest/$link" ] && [ ! -L "guest/$link" ]; then ln -s "$target" "guest/$link"; fi
+          done
+          python3 scripts/offline/prepare-guest.py guest
+          # Match RuntimeInstaller.stripMacosMetadataArtifacts before executing Python.
+          find guest -name '._*' -type f -delete
+          cp scripts/offline/smoke-test.sh guest/tmp/nova-smoke.sh
+          # Inventory the embedded repository so any offline resolution gap is explicit.
+          find guest/root/maven/localMvnRepository -name '*.pom' | sed 's@guest/root/maven/localMvnRepository/@@' | sort > offline-maven-inventory.txt
+          readelf -d guest/root/android-sdk/build-tools/35.0.0/aapt2 | grep NEEDED
+          file guest/usr/local/bin/node guest/root/android-sdk/build-tools/35.0.0/aapt2
+          python3 scripts/offline/measure-runtime.py guest
+      - uses: actions/download-artifact@v4
+        with:
+          name: nova-offline-sample
+          path: guest/workspace
+      - uses: actions/download-artifact@v4
+        with:
+          name: nova-ci-android-runtime
+          path: guest
+      - name: Run Python, TypeScript and Gradle offline with network namespace isolated
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Actions artifacts do not preserve executable bits. Android provides this linker on phones.
+          chmod +x guest/system/bin/linker64
+          sudo mount --bind /dev guest/dev
+          sudo mount -t proc proc guest/proc
+          sudo unshare --net /bin/bash -euc '
+            ip link set lo up
+            ip -brief address
+            exec chroot guest /usr/bin/env -i HOME=/root USER=root LANG=C.UTF-8 PATH=/root/android-sdk/build-tools/35.0.0:/usr/local/bin:/usr/bin:/bin:/opt/gradle/gradle-8.14.3/bin:/opt/jdk-17.0.20.1+1/bin JAVA_HOME=/opt/jdk-17.0.20.1+1 ANDROID_HOME=/root/android-sdk /bin/bash /tmp/nova-smoke.sh
+          ' 2>&1 | tee offline-smoke.log
+      - name: Preserve focused verification diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-offline-diagnostics
+          path: |
+            offline-smoke.log
+            offline-maven-inventory.txt
+            offline-runtime-measurements.json
+            dist/runtime-bundles/offline-measured-manifest.json
+          retention-days: 7
+      - name: Preserve measured inputs and verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-offline-bundles-and-evidence
+          path: |
+            dist/runtime-bundles/*.tar.zst
+            dist/runtime-bundles/offline-measured-manifest.json
+            offline-smoke.log
+            offline-maven-inventory.txt
+            guest/workspace/offline-kotlin/app/build/outputs/apk/debug/*.apk
+          compression-level: 0
+          retention-days: 7
+  build-offline:
+    needs: [sample, verify]
+    if: ${{ !cancelled() && needs.sample.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: nova-offline-bundles-and-evidence
+          path: verified-inputs
+      - name: Stage verified embedded bundles
+        run: |
+          cp verified-inputs/dist/runtime-bundles/* dist/runtime-bundles/
+          test -s dist/runtime-bundles/offline-measured-manifest.json
+      - name: Test and build Nova Offline (unsigned until original owner key is provided)
+        run: ./gradlew :app:testOfflineDebugUnitTest :app:assembleOfflineRelease -PmhParallelInstall=true --no-daemon --stacktrace
+      - name: Preserve unsigned APK and official signing tools for owner signing
+        run: |
+          mkdir -p owner-signing
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          cp "$BUILD_TOOLS/lib/apksigner.jar" owner-signing/
+          cp -a "$BUILD_TOOLS/lib64" owner-signing/
+          cp "$BUILD_TOOLS/aapt" "$BUILD_TOOLS/zipalign" owner-signing/
+          BASE=$(find app/build/outputs/apk/offline/release -name '*-unsigned.apk' -print -quit)
+          "$BUILD_TOOLS/zipalign" -P 16 -f 4 "$BASE" owner-signing/Harnese-Nova-v1.3.2-Offline-ARM64-unsigned.apk
+          "$BUILD_TOOLS/zipalign" -c -P 16 4 owner-signing/Harnese-Nova-v1.3.2-Offline-ARM64-unsigned.apk
+          find owner-signing -type f ! -name SHA256.txt ! -name BUILD-SHA256.txt -print0 | sort -z | xargs -0 sha256sum > owner-signing/BUILD-SHA256.txt
+          stat -c '%n %s bytes' owner-signing/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-offline-owner-signing
+          path: owner-signing
+          compression-level: 0
+          retention-days: 7

@@ -43,11 +43,16 @@ val prepareBundledAgentAssets = tasks.register<Sync>("prepareBundledAgentAssets"
 val prepareOfflineRuntimeAssets = tasks.register<Sync>("prepareOfflineRuntimeAssets") {
     from(
         runtimeBundleDir.file("pocketdev-core-arm64-2026.09.5.tar.zst"),
-        runtimeBundleDir.file("pocketdev-claude-arm64-2026.09.1.tar.zst"),
-        runtimeBundleDir.file("pocketdev-python-arm64-2026.09.2.tar.zst"),
-        runtimeBundleDir.file("pocketdev-android-arm64-2026.09.1.tar.zst"),
-        runtimeBundleDir.file("pocketdev-dsh-arm64-2026.09.1.tar.zst"),
+        runtimeBundleDir.file("nova-python-arm64-2026.09.2.tar.zst"),
+        runtimeBundleDir.file("nova-typescript-arm64-5.9.3.tar.zst"),
     )
+    from(runtimeBundleDir.file("offline-measured-manifest.json")) { rename { "offline-manifest.json" } }
+    doFirst {
+        listOf("pocketdev-core-arm64-2026.09.5.tar.zst", "nova-python-arm64-2026.09.2.tar.zst",
+            "nova-typescript-arm64-5.9.3.tar.zst", "offline-measured-manifest.json").forEach {
+            check(runtimeBundleDir.file(it).asFile.isFile) { "Missing verified offline asset: $it. Run scripts/offline/prepare-bundles.py first." }
+        }
+    }
     into(generatedRuntimeAssets.map { it.dir("offline/runtime") })
 }
 
@@ -79,14 +84,14 @@ android {
         manifestPlaceholders["harneseAppLabel"] = if (parallelTrialInstall) "Harnese Nova" else "Harnese"
         manifestPlaceholders["harneseAppIcon"] = if (parallelTrialInstall) "@mipmap/ic_launcher_nova" else "@mipmap/ic_launcher"
         manifestPlaceholders["harneseAppRoundIcon"] = if (parallelTrialInstall) "@mipmap/ic_launcher_nova_round" else "@mipmap/ic_launcher_round"
-        minSdk = 28
+        minSdk = 29
         // The direct APK retains the proven target-28 PRoot execution path. The
         // Play build targets current Android while its runtime path is validated.
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 14
-        versionName = "1.3.1-harnese.nova.1"
+        versionCode = 17
+        versionName = "1.3.4"
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
         providers.gradleProperty("appVersionName").orNull?.let { versionName = it }
 
@@ -121,13 +126,15 @@ android {
             dimension = "runtimeDelivery"
             buildConfigField("boolean", "OFFLINE_RUNTIME_BUNDLES", "true")
             buildConfigField("String", "RUNTIME_RELEASE_BASE_URL", buildConfigString(runtimeReleaseBaseUrl))
-            buildConfigField("String", "APP_UPDATE_MANIFEST_URL", buildConfigString(appUpdateManifestUrl))
+            buildConfigField("String", "APP_UPDATE_MANIFEST_URL", buildConfigString(
+                if (parallelTrialInstall) "https://github.com/moataz77549-byte/Harnese/releases/latest/download/harnese-nova-update.json" else appUpdateManifestUrl
+            ))
             buildConfigField("String", "APP_VARIANT", "\"offline\"")
         }
     }
 
     sourceSets.getByName("offline").assets.srcDir(generatedRuntimeAssets.map { it.dir("offline") })
-    sourceSets.getByName("main").assets.srcDir(generatedRuntimeAssets.map { it.dir("shared") })
+    sourceSets.getByName("online").assets.srcDir(generatedRuntimeAssets.map { it.dir("shared") })
 
     buildTypes {
         debug {
@@ -138,7 +145,8 @@ android {
             )
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             if (hasUploadSigning) {
                 signingConfig = signingConfigs.getByName("upload")
             }

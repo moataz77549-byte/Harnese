@@ -73,6 +73,12 @@ class ClaudeRuntimeBridge(
 ) : RuntimeBridge {
     private val installer = RuntimeInstaller(context)
     private val eventBus = MutableSharedFlow<RuntimeEvent>(extraBufferCapacity = 64)
+    private val reviews = com.jarves.mh.connect.SecureReviewApprovalService.get(File(context.filesDir, "secure-reviews"))
+    private val journal = com.jarves.mh.connect.HarneseEventBus.get(context)
+    private suspend fun emitEvent(event: RuntimeEvent) {
+        journal.runtime(event)
+        eventBus.emit(event)
+    }
     override val events: Flow<RuntimeEvent> = eventBus
     private val pending = ConcurrentHashMap<String, PendingPermission>()
     private val toolNames = ConcurrentHashMap<String, String>()
@@ -109,7 +115,8 @@ class ClaudeRuntimeBridge(
         lastThinkingUpdateAt = 0L
         currentThinkingBlockId = 0L
         streamedThinking.clear()
-        eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
+        journal.begin(sessionId, projectId, "Claude Code")
+        emitEvent(RuntimeEvent.SessionStarted(sessionId))
         pushForegroundProgress(R.string.rt_bridge_starting, "Claude Code")
         val secret = secretFor(provider).orEmpty().ifBlank { localServerPlaceholderKey(provider) }
         if (secret.isBlank()) {
@@ -118,7 +125,7 @@ class ClaudeRuntimeBridge(
             } else {
                 "No API key is saved for ${provider.kind.title}."
             }
-            eventBus.emit(RuntimeEvent.SessionFailed(sessionId, message))
+            emitEvent(RuntimeEvent.SessionFailed(sessionId, message))
             return@withContext sessionId
         }
 
@@ -142,8 +149,10 @@ class ClaudeRuntimeBridge(
             // messages into the conversation.
             val installed = installer.installedRuntime()
             installer.ensureSettingsAndHooks()
-            val workspace = ensureWorkspace(projectId)
-            createCheckpoint(projectId, workspace)
+            val originalWorkspace = ensureWorkspace(projectId)
+            val stagedRun = reviews.stage(projectId, originalWorkspace)
+            val workspace = stagedRun.workspace
+            createCheckpoint(projectId, originalWorkspace)
             val before = snapshot(workspace)
             formatGateway = if (provider.kind.protocol in setOf(
                     com.jarves.mh.model.ProviderProtocol.OPENAI_CHAT,
@@ -224,7 +233,7 @@ class ClaudeRuntimeBridge(
                                 if (!consumeClaudeEvent(sessionId, line)) {
                                     lastDiagnostic = line.takeLast(500)
                                     terminalStatus(line)?.let { (title, detail) ->
-                                        eventBus.emit(RuntimeEvent.RuntimeLog(sessionId, title, detail))
+                                        emitEvent(RuntimeEvent.RuntimeLog(sessionId, title, detail))
                                     }
                                 }
                             }
@@ -243,12 +252,17 @@ class ClaudeRuntimeBridge(
                     permission.response.writeText("deny")
                     pending.remove(permission.request.approvalId)
                 }
+                val stagedReview = reviews.finish(stagedRun.id)
+                if (stagedReview.entries.isNotEmpty()) journal.publish(
+                    id = "review:${stagedRun.id}", project = projectId, chat = "", task = sessionId,
+                    kind = "review.pending", body = "مشروع: ${com.jarves.mh.data.AppPreferences(context).loadProjects().firstOrNull { it.id == projectId }?.name ?: projectId}\nالمخاطر: مراجعة محلية مطلوبة قبل أي تطبيق\nمراجعة تعديلات معزولة: ${stagedRun.id}\n" + stagedReview.entries.joinToString("\n") { it.path } + "\nاعتماد محلي في Agent Hub فقط. الرفض: /reject ${stagedRun.id}",
+                )
                 val changed = changedFiles(workspace, before)
                 if (changed.isNotEmpty()) {
                     Log.d("ClaudeBridge", "Changed files: $changed")
                     saveChangedPaths(projectId, changed)
-                    val details = loadPendingChanges(projectId)
-                    eventBus.emit(RuntimeEvent.FilesChanged(sessionId, details))
+                    val details = stagedReview.entries.map { ChangeItem(it.path, 0, 0) }
+                    emitEvent(RuntimeEvent.FilesChanged(sessionId, details))
                 } else if (!File(checkpointDir(projectId), "changes.json").isFile) {
                     acceptLastChanges(projectId)
                 }
@@ -347,7 +361,7 @@ class ClaudeRuntimeBridge(
     override suspend fun respondToApproval(request: ToolRequest, approved: Boolean) = withContext(Dispatchers.IO) {
         val permission = pending.remove(request.approvalId) ?: return@withContext
         permission.response.writeText(if (approved) "allow" else "deny")
-        eventBus.emit(
+        emitEvent(
             if (approved) RuntimeEvent.ToolApproved(request.sessionId, request.approvalId)
             else RuntimeEvent.ToolRejected(request.sessionId, request.approvalId),
         )
@@ -456,7 +470,7 @@ class ClaudeRuntimeBridge(
                     val response = File(file.parentFile, "$approvalId.response")
                     response.writeText("allow")
 
-                    eventBus.emit(RuntimeEvent.ToolCompleted(sessionId, toolName, explanation))
+                    emitEvent(RuntimeEvent.ToolCompleted(sessionId, toolName, explanation))
                 }.onFailure {
                     File(file.parentFile, "$approvalId.response").writeText("allow")
                 }
@@ -477,7 +491,7 @@ class ClaudeRuntimeBridge(
             "system" -> when (json.optString("subtype")) {
                 "init" -> Unit
                 "thinking_tokens" -> emitReasoningProgress(sessionId, json.optInt("estimated_tokens"))
-                "permission_denied" -> eventBus.emit(
+                "permission_denied" -> emitEvent(
                     RuntimeEvent.RuntimeLog(
                         sessionId,
                         "Permission denied",
@@ -509,7 +523,7 @@ class ClaudeRuntimeBridge(
                     }
                     "text_delta", "" -> delta.optString("text").takeIf(String::isNotEmpty)?.let {
                         streamedText.append(it)
-                        eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, it))
+                        emitEvent(RuntimeEvent.AssistantDelta(sessionId, it))
                     }
                 }
             }
@@ -526,7 +540,7 @@ class ClaudeRuntimeBridge(
                     when (block.optString("type")) {
                         "text" -> if (streamedText.isEmpty()) {
                             block.optString("text").takeIf(String::isNotBlank)?.let {
-                                eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, it))
+                                emitEvent(RuntimeEvent.AssistantDelta(sessionId, it))
                             }
                         }
                         "thinking" -> block.optString("thinking").takeIf(String::isNotBlank)?.let {
@@ -564,7 +578,7 @@ class ClaudeRuntimeBridge(
                         val toolName = toolNames.remove(toolId) ?: "Tool"
                         val result = block.optString("content")
                             .ifBlank { if (block.optBoolean("is_error")) "Tool failed" else "Completed successfully" }
-                        eventBus.emit(RuntimeEvent.ToolCompleted(sessionId, toolName, sanitizeForDisplay(result)))
+                        emitEvent(RuntimeEvent.ToolCompleted(sessionId, toolName, sanitizeForDisplay(result)))
                     }
                 }
             }
@@ -594,7 +608,7 @@ class ClaudeRuntimeBridge(
         val now = android.os.SystemClock.elapsedRealtime()
         if (startsNewBlock || isFinal || force || now - lastThinkingUpdateAt >= 150) {
             lastThinkingUpdateAt = now
-            eventBus.emit(
+            emitEvent(
                 RuntimeEvent.ReasoningSummary(
                     sessionId = sessionId,
                     summary = summary,
@@ -613,7 +627,7 @@ class ClaudeRuntimeBridge(
         if (tokens - lastReasoningTokens >= 25 || now - lastReasoningUpdateAt >= 500) {
             lastReasoningTokens = tokens
             lastReasoningUpdateAt = now
-            eventBus.emit(RuntimeEvent.ReasoningProgress(sessionId, tokens))
+            emitEvent(RuntimeEvent.ReasoningProgress(sessionId, tokens))
             pushForegroundProgress(R.string.rt_bridge_thinking)
         }
     }
@@ -633,7 +647,7 @@ class ClaudeRuntimeBridge(
             }
             else -> input.optString("description").ifBlank { "Running $name" }
         }
-        eventBus.emit(RuntimeEvent.ToolStarted(sessionId, name, sanitizeForDisplay(detail.ifBlank { "Running $name" })))
+        emitEvent(RuntimeEvent.ToolStarted(sessionId, name, sanitizeForDisplay(detail.ifBlank { "Running $name" })))
         pushForegroundProgress(R.string.rt_bridge_running_tool, name, detail.replace(Regex("\\s+"), " ").trim().take(80).ifBlank { name })
     }
 
@@ -641,7 +655,7 @@ class ClaudeRuntimeBridge(
 
     private suspend fun emitCompletedOnce(sessionId: String) {
         if (finishedSessions.add(sessionId)) {
-            eventBus.emit(RuntimeEvent.SessionCompleted(sessionId))
+            emitEvent(RuntimeEvent.SessionCompleted(sessionId))
             // Post the completion notification immediately. Waiting for process
             // teardown is unsafe: the PRoot/Node wrapper can hang after the answer
             // is already done, which would freeze the notification on its last step.
@@ -655,7 +669,7 @@ class ClaudeRuntimeBridge(
 
     private suspend fun emitFailureOnce(sessionId: String, reason: String) {
         if (finishedSessions.add(sessionId)) {
-            eventBus.emit(RuntimeEvent.SessionFailed(sessionId, reason))
+            emitEvent(RuntimeEvent.SessionFailed(sessionId, reason))
             if (userStopRequested) {
                 cancelForegroundRuntime()
             } else {
