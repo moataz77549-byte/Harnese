@@ -19,7 +19,6 @@ import android.system.Os
 import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.jarves.mh.BuildConfig
@@ -115,6 +114,7 @@ import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
@@ -399,6 +399,8 @@ data class AppUiState(
     val antigravityModels: List<String> = emptyList(),
     val antigravityModelsLoading: Boolean = false,
     val antigravityModelsError: String? = null,
+    val pendingRuntimeInstall: String? = null,
+    val runtimeProbeRunning: Boolean = false,
     val androidBuildRunning: Boolean = false,
     val androidBuildMessage: String? = null,
     val androidBuildPhase: AndroidBuildPhase = AndroidBuildPhase.IDLE,
@@ -422,7 +424,11 @@ data class AppUiState(
     val appUpdateError: String? = null,
 )
 
-class MainViewModel(application: Application) : AndroidViewModel(application) {
+class HarneseRuntimeController(private val application: Application) {
+    private val runtimeScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main.immediate)
+    @Suppress("UNCHECKED_CAST")
+    private fun <T : Application> getApplication(): T = application as T
+
     /** Resolves a user-visible string in the language selected in the app. */
     private fun str(@StringRes id: Int, vararg args: Any): String = AppStrings.get(getApplication(), id, *args)
 
@@ -526,10 +532,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     init {
+        com.jarves.mh.connect.HarneseEventBus.get(application).recoverInterruptedTasks()
+        com.jarves.mh.connect.SecureReviewApprovalService.get(File(application.filesDir, "secure-reviews")).recoverInterruptedStaging()
         HarneseCommandBus.register(this, HarneseCommandHandler { command ->
             executeIntegrationCommand(command)
         })
-        viewModelScope.launch {
+        runtimeScope.launch {
             AndroidAppInstaller.events.collect { event ->
                 if (event.operationId != pendingAndroidInstallId) return@collect
                 val project = _state.value.activeProject
@@ -575,9 +583,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // GitHub's official CLI owns its OAuth credential. Remove credentials from
         // the retired custom OAuth implementation and discover the real CLI status.
         vault.remove(LEGACY_GITHUB_TOKEN_KEY)
-        viewModelScope.launch { refreshGitHubConnection() }
+        runtimeScope.launch { refreshGitHubConnection() }
         RuntimeSetupController.restore(application)
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             for (pending in transcriptWrites) {
                 delay(TRANSCRIPT_WRITE_DEBOUNCE_MS)
                 val latestByChat = linkedMapOf((pending.projectId to pending.chatId) to pending)
@@ -590,9 +598,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        viewModelScope.launch { dshRuntime.events.collect(::onRuntimeEvent) }
-        viewModelScope.launch { antigravityRuntime.events.collect(::onRuntimeEvent) }
-        viewModelScope.launch {
+        runtimeScope.launch { dshRuntime.events.collect(::onRuntimeEvent) }
+        runtimeScope.launch { antigravityRuntime.events.collect(::onRuntimeEvent) }
+        runtimeScope.launch {
             antigravityAuthController.state.collect { auth ->
                 _state.update { it.copy(antigravityAuth = auth) }
                 auth.authorizationUrl?.takeIf { it != lastOpenedAntigravityAuthUrl }?.let { url ->
@@ -610,7 +618,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (antigravityAuthController.hasOfficialCredential() &&
             (!preferences.antigravitySignedIn || preferences.antigravityAccountEmail.isBlank())
         ) {
-            viewModelScope.launch { antigravityAuthController.beginLogin() }
+            runtimeScope.launch { antigravityAuthController.beginLogin() }
         }
         if (!preferences.legacySeededCredentialRemoved) {
             vault.remove(ProviderKind.CUSTOM.name)
@@ -638,25 +646,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val loadedProjects = preferences.loadProjects()
-        val cleanedProjects = loadedProjects.filter { project ->
-            if (project.kind == ProjectKind.QUICK_PROJECT) {
-                val chats = preferences.loadProjectChats(project.id)
-                val userMessages = chats.sumOf { preferences.loadMessages(project.id, it.id).count { m -> m.fromUser } }
-                val workspaceDir = File(application.filesDir, "workspaces/${project.id}")
-                val userFiles = if (workspaceDir.isDirectory) {
-                    workspaceDir.walkTopDown().filter { file ->
-                        file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
-                    }.count()
-                } else 0
-                val keep = userMessages > 0 || userFiles > 0
-                if (!keep) {
-                    workspaceDir.deleteRecursively()
-                    terminalHistoryFile(project.id).delete()
-                    preferences.deleteProjectChats(project.id)
-                }
-                keep
-            } else true
-        }
+        // Never delete projects or reset workspaces during startup or an app upgrade.
+        val cleanedProjects = loadedProjects
         if (cleanedProjects.size != loadedProjects.size) {
             preferences.saveProjects(cleanedProjects)
             _state.update { it.copy(projects = cleanedProjects) }
@@ -687,7 +678,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isTerminalRunning.value = true
         _terminalCurrentCommand.value = command
         _terminalLiveOutput.value = ""
-        viewModelScope.launch {
+        runtimeScope.launch {
             val (output, exitCode) = withContext(Dispatchers.IO) {
                 runCatching {
                     if (!installer.isInstalled()) {
@@ -824,7 +815,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 previewUrl = requestedPreviewUrl ?: it.previewUrl,
             )
         }
-        viewModelScope.launch {
+        runtimeScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching { runProjectTerminalProcess(project.id, command, startingCwd) }
                     .getOrElse { error ->
@@ -865,7 +856,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun stopProjectTerminalCommand() {
         if (!_state.value.projectTerminalRunning) return
         projectTerminalStopRequested = true
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             projectTerminalProcess?.destroy()
             delay(400)
             if (projectTerminalProcess?.isAlive == true) projectTerminalProcess?.destroyForcibly()
@@ -892,7 +883,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastDiagnosticsRefreshAtElapsedMillis < DIAGNOSTICS_REFRESH_COOLDOWN_MS) return
         _state.update { it.copy(diagnostics = it.diagnostics.copy(loading = true)) }
-        diagnosticsJob = viewModelScope.launch {
+        diagnosticsJob = runtimeScope.launch {
             try {
                 val snapshot = withContext(Dispatchers.IO) { collectDeveloperDiagnostics() }
                 lastDiagnosticsRefreshAtElapsedMillis = SystemClock.elapsedRealtime()
@@ -904,7 +895,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopInactiveDeveloperProcesses() {
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             val current = _state.value
             if (!current.isRunning) {
                 runCatching { claudeRuntime.stopActiveSession() }
@@ -933,7 +924,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(toastMessage = str(R.string.diagnostics_cache_busy)) }
             return
         }
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             getApplication<Application>().cacheDir.listFiles().orEmpty()
                 .filter { it.isFile && it.name.startsWith("runtime-output-") }
                 .forEach { runCatching { it.delete() } }
@@ -1106,7 +1097,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun sendProcessInput(process: Process?, text: String) {
         if (process?.isAlive != true || text.isBlank()) return
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             runCatching {
                 process.outputStream.write((text + "\n").toByteArray())
                 process.outputStream.flush()
@@ -1118,7 +1109,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun interruptProcess(process: Process?) {
         if (process?.isAlive != true) return
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             (process as? NativeSpawnProcess)?.interrupt() ?: process.destroy()
         }
     }
@@ -1257,6 +1248,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning) return false
         val workspace = findAndroidProjectRoot(projectWorkspaceRoot(project)) ?: return false
         val apk = findReusableDebugApk(workspace) ?: return false
+        val reuseTask = UUID.randomUUID().toString()
+        com.jarves.mh.connect.HarneseEventBus.get(application).publish(
+            id = "build:$reuseTask", project = project.id, chat = current.activeChatId.orEmpty(), task = reuseTask,
+            kind = "build.reused", body = "${project.name} / $action\nاستخدام APK مطابق دون إعادة بناء: ${apk.name} (${apk.length()} bytes)",
+        )
         if (launch) {
             if (AndroidAppInstaller.openIfAlreadyInstalled(getApplication(), apk)) {
                 androidLaunchAtMillis = System.currentTimeMillis()
@@ -1377,7 +1373,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 androidBuildMessage = str(R.string.an_stopping_gradle),
             )
         }
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             androidBuildProcess?.destroy()
             delay(500)
             if (androidBuildProcess?.isAlive == true) androidBuildProcess?.destroyForcibly()
@@ -1386,7 +1382,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun startAndroidGradleTask(task: String, action: AndroidAction) {
         val project = _state.value.activeProject ?: return
-        if (_state.value.androidBuildRunning) return
+        if (_state.value.androidBuildRunning || _state.value.runtimeProbeRunning) return
         if (!installer.isStackInstalled(DevStack.ANDROID)) {
             _state.update {
                 it.copy(toastMessage = str(R.string.vm_android_tools_missing))
@@ -1419,9 +1415,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 toastMessage = null,
             )
         }
+        val buildTaskId = "build:${project.id}:$startedAt"
+        val buildJournal = com.jarves.mh.connect.HarneseEventBus.get(getApplication())
+        val buildChat = _state.value.activeChatId.orEmpty()
+        buildJournal.prepare(project.id, buildChat, _state.value.projectChats.firstOrNull { it.id == buildChat }?.title.orEmpty(), integrationSource)
+        fun buildEvent(kind: String, text: String) = buildJournal.publish(
+            id = "$buildTaskId:$kind", project = project.id, chat = buildChat, task = buildTaskId,
+            kind = "build.$kind", body = "${project.name} / $action / $task\n$text",
+        )
+        buildEvent("started", "بدأ البناء")
         saveAndroidBuildRecord(project.id)
         startAndroidBuildForegroundService(project, task)
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             var buildWorkspace: File? = null
             var finalOutput = ""
             var finalExitCode = -1
@@ -1445,6 +1450,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     projectGuestRoot(project),
                 )
                 androidBuildProcess = process
+                var publishedStage: AndroidBuildStage? = null
                 RuntimeTaskController.stopAction = ::cancelAndroidBuild
                 val native = process as? NativeSpawnProcess ?: error(str(R.string.an_unsupported_build_process))
                 var offset = 0L
@@ -1469,6 +1475,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 androidBuildStage = nextStage,
                                 androidBuildMessage = androidStageMessage(nextStage),
                             )
+                        }
+                        val stage = _state.value.androidBuildStage
+                        if (stage != publishedStage) {
+                            publishedStage = stage
+                            buildEvent("stage:$stage", androidStageMessage(stage))
                         }
                     }
                 }
@@ -1510,6 +1521,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     saveAndroidBuildRecord(project.id)
                     refreshAndroidApkInfo()
                 }
+                buildEvent("succeeded", "$message\nAPK: ${apk?.name ?: "—"}\n${apk?.length() ?: 0} bytes / ${buildCompletedAt - startedAt} ms")
                 finishAndroidBuildForegroundService(project, message, failed = false)
                 if (shouldInstallAndRun) beginAndroidInstall(apk!!, launch = true, action = action)
             }.onFailure { error ->
@@ -1532,6 +1544,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     saveAndroidBuildRecord(project.id)
                 }
+                buildEvent(if (cancelled) "cancelled" else "failed", message + "\n" + finalOutput.takeLast(6000))
                 finishAndroidBuildForegroundService(project, message, failed = !cancelled, cancelled = cancelled)
             }.also {
                 androidBuildProcess = null
@@ -1539,7 +1552,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 RuntimeTaskController.stopAction = null
                 steeringToFollowUp = false
                 if (pendingFollowUps.isNotEmpty()) {
-                    viewModelScope.launch {
+                    runtimeScope.launch {
                         delay(150)
                         if (!_state.value.isRunning && !_state.value.androidBuildRunning && !_state.value.projectTerminalRunning) {
                             startNextFollowUp()
@@ -1696,7 +1709,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshAndroidApkInfo() {
         val project = _state.value.activeProject ?: return
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             val info = runCatching {
                 val projectRoot = findAndroidProjectRoot(projectWorkspaceRoot(project)) ?: return@runCatching null
                 val apk = findDebugApk(projectRoot) ?: return@runCatching null
@@ -1741,7 +1754,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveAndroidApk(uri: Uri) {
         val info = _state.value.androidApkInfo ?: return
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             val result = runCatching {
                 val source = File(info.path).takeIf(File::isFile) ?: error(str(R.string.an_apk_unavailable))
                 getApplication<Application>().contentResolver.openOutputStream(uri)?.use { output ->
@@ -1785,7 +1798,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val project = _state.value.activeProject ?: return
         if (_state.value.androidHealthRunning) return
         _state.update { it.copy(androidHealthRunning = true, androidHealthChecks = emptyList()) }
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             val app = getApplication<Application>()
             val checks = mutableListOf<AndroidHealthCheck>()
             val toolsInstalled = installer.isStackInstalled(DevStack.ANDROID)
@@ -1941,7 +1954,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(androidLogcat = it.androidLogcat.copy(available = false, message = str(R.string.an_installed_app_not_found))) }
             return
         }
-        androidLogcatJob = viewModelScope.launch(Dispatchers.IO) {
+        androidLogcatJob = runtimeScope.launch(Dispatchers.IO) {
             runCatching {
                 val root = ContextCompat.checkSelfPermission(app, Manifest.permission.READ_LOGS) != PackageManager.PERMISSION_GRANTED
                 val since = androidLaunchAtMillis?.let {
@@ -2070,9 +2083,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
-        viewModelScope.launch { RuntimeSetupController.snapshot.collect(::onSetupSnapshot) }
-        viewModelScope.launch { claudeRuntime.events.collect(::onRuntimeEvent) }
-        viewModelScope.launch { bootstrap() }
+        runtimeScope.launch { RuntimeSetupController.snapshot.collect(::onSetupSnapshot) }
+        runtimeScope.launch { claudeRuntime.events.collect(::onRuntimeEvent) }
+        runtimeScope.launch { bootstrap() }
     }
 
     private suspend fun bootstrap() {
@@ -2137,7 +2150,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun retryStartup() {
-        if (installer.isInstalled()) viewModelScope.launch { initializeRuntime() } else {
+        if (installer.isInstalled()) runtimeScope.launch { initializeRuntime() } else {
             _state.update { it.copy(startupStage = StartupStage.SETUP_REQUIRED, startupError = null) }
             startRuntimeSetup()
         }
@@ -2172,7 +2185,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (setupCompletionHandled) return
                 setupCompletionHandled = true
                 preferences.runtimeSetupComplete = true
-                viewModelScope.launch {
+                runtimeScope.launch {
                     val (installedStacks, installedAgents) = withContext(Dispatchers.IO) {
                         installer.installedStacks() to installer.installedAgentVersions()
                     }
@@ -2270,7 +2283,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun checkForAppUpdate(force: Boolean = false) {
         if (!force && System.currentTimeMillis() - preferences.lastAppUpdateCheckMillis < 24L * 60L * 60L * 1000L) return
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             val update = runCatching { appUpdater().check() }.getOrNull()
             preferences.lastAppUpdateCheckMillis = System.currentTimeMillis()
             if (update != null) {
@@ -2310,7 +2323,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update {
             it.copy(appUpdateStatus = AppUpdateStatus.DOWNLOADING, appUpdateDownloadedBytes = 0L, appUpdateTotalBytes = info.sizeBytes, appUpdateError = null)
         }
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             runCatching {
                 appUpdater().download(info) { downloaded, total ->
                     _state.update { current -> current.copy(appUpdateDownloadedBytes = downloaded, appUpdateTotalBytes = total) }
@@ -2458,7 +2471,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 agentBytesPerSecond = null,
             )
         }
-        viewModelScope.launch {
+        runtimeScope.launch {
             var sampleBytes = 0L
             var sampleAt = SystemClock.elapsedRealtime()
             val result = runCatching {
@@ -2506,13 +2519,144 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var environmentProbeJob: kotlinx.coroutines.Job? = null
+    fun requestEnvironmentProbe(name: String) {
+        if (_state.value.runtimeProbeRunning || _state.value.isRunning || _state.value.androidBuildRunning || _state.value.projectTerminalRunning) return
+        _state.update { it.copy(runtimeProbeRunning = true) }
+        val project = _state.value.activeProject
+        val task = UUID.randomUUID().toString()
+        val journal = com.jarves.mh.connect.HarneseEventBus.get(application)
+        try {
+            androidx.core.content.ContextCompat.startForegroundService(application,Intent(application,RuntimeExecutionService::class.java)
+                .setAction(RuntimeExecutionService.ACTION_START).putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME,name)
+                .putExtra(RuntimeExecutionService.EXTRA_TITLE,"Harnese Nova — $name").putExtra(RuntimeExecutionService.EXTRA_CAN_STOP,true))
+        } catch (error: Exception) {
+            _state.update { it.copy(runtimeProbeRunning=false,agentMessage=error.message) }
+            return
+        }
+        journal.publish(id = "$task:start", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.started", body = name)
+        environmentProbeJob = runtimeScope.launch {
+            var output = "لم يكتمل الفحص"
+            var cancelled = false
+            try {
+                output = withContext(Dispatchers.IO) { installer.probeEnvironment(name) }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                cancelled = true; output = "أُلغي فحص $name"; throw error
+            } catch (error: Exception) { output = error.message ?: "Probe failed" }
+            finally {
+                _state.update { it.copy(runtimeProbeRunning=false,agentMessage=output) }
+                com.jarves.mh.runtime.RuntimeTaskController.stopAction=null
+                journal.publish(id="$task:end",project=project?.id.orEmpty(),chat="",task=task,kind=if(cancelled) "runtime.cancelled" else "runtime.result",body=output)
+                application.startService(Intent(application,RuntimeExecutionService::class.java)
+                    .setAction(if(cancelled) RuntimeExecutionService.ACTION_CANCELLED else if(name=="disk" || output.startsWith("[$name] exit=0\n")) RuntimeExecutionService.ACTION_COMPLETE else RuntimeExecutionService.ACTION_FAILED)
+                    .putExtra(RuntimeExecutionService.EXTRA_DETAIL,output.take(200)))
+            }
+        }
+        com.jarves.mh.runtime.RuntimeTaskController.stopAction={ environmentProbeJob?.cancel() }
+    }
+    fun repairDevelopmentEnvironment(name: String) {
+        _state.update { it.copy(pendingRuntimeInstall = "repair/$name") }
+        installRequestedRuntime()
+    }
+    fun installRequestedRuntime() {
+        val name = _state.value.pendingRuntimeInstall ?: return
+        if (_state.value.isRunning || _state.value.androidBuildRunning || _state.value.projectTerminalRunning || _state.value.runtimeProbeRunning) return
+        val repair = name.removePrefix("repair/").takeIf { name.startsWith("repair/") && it in setOf("python","node","typescript","androidsdk") }
+        val stack = when (name) { "php" -> DevStack.PHP; "cpp" -> DevStack.CPP; else -> null }
+        val agent = if (name == "antigravity") AgentKind.ANTIGRAVITY else null
+        if (stack == null && agent == null && repair == null) return
+        val project = _state.value.activeProject
+        val task = UUID.randomUUID().toString()
+        val journal = com.jarves.mh.connect.HarneseEventBus.get(application)
+        _state.update { it.copy(pendingRuntimeInstall = null, runtimeProbeRunning = true) }
+        androidx.core.content.ContextCompat.startForegroundService(application, Intent(application, RuntimeExecutionService::class.java)
+            .setAction(RuntimeExecutionService.ACTION_START).putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, name)
+            .putExtra(RuntimeExecutionService.EXTRA_TITLE, "Harnese Nova — $name").putExtra(RuntimeExecutionService.EXTRA_CAN_STOP, false))
+        journal.publish(id = "$task:start", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.install.started", body = name)
+        runtimeScope.launch {
+            var lastNotification = 0L
+            val result = withContext(Dispatchers.IO) { runCatching {
+                val progress: suspend (RuntimeInstallProgress) -> Unit = { update ->
+                    _state.update { it.copy(devStackMessage = update.message, devStackProgress = update.fraction) }
+                    val now = System.currentTimeMillis()
+                    if (now - lastNotification >= 5000) {
+                        lastNotification = now
+                        journal.publish(id = "$task:progress:$now", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.install.progress", body = "$name: ${update.message} ${update.downloadedBytes ?: 0}/${update.totalBytes ?: 0}")
+                    }
+                }
+                if (repair != null) installer.repairEnvironment(repair, progress)
+                else if (stack != null) installer.ensureStackInstalled(stack, progress) else installer.ensureAgentInstalled(agent!!, progress)
+            } }
+            val message = result.fold(onSuccess = { "$name: ready" }, onFailure = { "$name: ${it.message ?: "failed"}" })
+            _state.update { it.copy(runtimeProbeRunning = false, devStackMessage = message,
+                installedDevStacks = installer.installedStacks(), installedAgentVersions = installer.installedAgentVersions()) }
+            journal.publish(id = "$task:end", project = project?.id.orEmpty(), chat = "", task = task, kind = "runtime.install.result", body = message)
+            application.startService(Intent(application, RuntimeExecutionService::class.java)
+                .setAction(if (result.isSuccess) RuntimeExecutionService.ACTION_COMPLETE else RuntimeExecutionService.ACTION_FAILED)
+                .putExtra(RuntimeExecutionService.EXTRA_DETAIL, message))
+        }
+    }
+
+    private var modelCatalogJob: kotlinx.coroutines.Job? = null
+    private fun requestTelegramModels(selectedModel: String = ""): HarneseCommandResult {
+        val snapshot = _state.value
+        if(modelCatalogJob?.isActive==true) return HarneseCommandResult.error("يجري استرجاع قائمة النماذج.")
+        if(selectedModel.isNotBlank() && (snapshot.isRunning || snapshot.androidBuildRunning || snapshot.projectTerminalRunning || snapshot.runtimeProbeRunning)) return HarneseCommandResult.error("انتظر انتهاء المهمة قبل تغيير النموذج.")
+        val task=UUID.randomUUID().toString()
+        modelCatalogJob=runtimeScope.launch {
+            val text=runCatching {
+                if(snapshot.agentKind==AgentKind.ANTIGRAVITY) {
+                    if(!installer.isAgentInstalled(AgentKind.ANTIGRAVITY)) error("Antigravity CLI غير مثبت؛ ثبته من الهاتف.")
+                    if(snapshot.isRunning) error("أكمل المهمة النشطة قبل تحديث قائمة CLI.")
+                    refreshAntigravityModels()
+                    kotlinx.coroutines.withTimeout(60000) { while(_state.value.antigravityModelsLoading) delay(100) }
+                    _state.value.antigravityModelsError?.let { error(it) }
+                    val models=_state.value.antigravityModels
+                    require(models.isNotEmpty()) { "لم يُرجع CLI نماذج متاحة." }
+                    if(selectedModel.isNotBlank()) {
+                        require(selectedModel in models) { "النموذج غير موجود في قائمة CLI الحالية." }
+                        require(_state.value.agentKind==snapshot.agentKind && !_state.value.isRunning && !_state.value.androidBuildRunning) { "تغيرت حالة التشغيل؛ أعد المحاولة." }
+                        setAntigravityModel(selectedModel)
+                        "ضُبط النموذج من قائمة CLI: $selectedModel. سيؤكد الطلب الفعلي صلاحية الحساب لتشغيله."
+                    } else "قائمة Antigravity CLI الحالية:\n" + models.joinToString("\n")
+                } else {
+                    val secret=vault.get(snapshot.provider.kind.name).orEmpty()
+                    when(val result=providerApi.discoverModels(snapshot.provider.baseUrl,secret,providerProtocolForAgent(snapshot.provider,snapshot.agentKind))) {
+                        is ModelDiscoveryResult.Failure -> result.message
+                        is ModelDiscoveryResult.Success -> {
+                            if(selectedModel.isBlank()) "كتالوج المزوّد المسترجع؛ قد تختلف صلاحيات الحساب:\n" + result.models.joinToString("\n") { it.id }
+                            else {
+                                require(result.models.any { it.id==selectedModel }) { "النموذج غير موجود في كتالوج المزوّد." }
+                                val profile=snapshot.provider.copy(model=selectedModel)
+                                when(val validation=validateProvider(profile,secret,result.models)) {
+                                    is ConnectionValidation.Failure -> validation.message
+                                    is ConnectionValidation.Success -> {
+                                        require(_state.value.agentKind==snapshot.agentKind && !_state.value.isRunning && !_state.value.androidBuildRunning && !_state.value.runtimeProbeRunning) { "تغيرت حالة التشغيل؛ أعد المحاولة." }
+                                        preferences.saveProvider(profile,snapshot.agentKind)
+                                        _state.update { it.copy(provider=profile) }
+                                        "تم اختبار النموذج وضبطه: $selectedModel"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }.getOrElse { it.message ?: "تعذر استرجاع النماذج أو اختبار النموذج" }
+            com.jarves.mh.connect.HarneseEventBus.get(application).publish(id="$task:models",project=snapshot.activeProject?.id.orEmpty(),chat=snapshot.activeChatId.orEmpty(),task=task,kind="agent.models",body=text,source="telegram")
+        }
+        return HarneseCommandResult.success("استُلم طلب استرجاع النماذج${if(selectedModel.isBlank()) "" else " واختبار الاختيار"}؛ ستصلك النتيجة عند الانتهاء.")
+    }
+
     fun checkAgentUpdates() {
         if (_state.value.agentUpdatesChecking || _state.value.agentUpdating != null || _state.value.isRunning) return
         _state.update { it.copy(agentUpdatesChecking = true, agentUpdateMessage = str(R.string.vm_checking_agent_releases)) }
-        viewModelScope.launch {
+        val task = UUID.randomUUID().toString()
+        val project = _state.value.activeProject
+        runtimeScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { installer.checkAgentUpdates() } }
             _state.update {
                 it.copy(
+                    installedAgentVersions = installer.installedAgentVersions(),
                     agentUpdates = result.getOrDefault(emptyMap()),
                     agentUpdatesChecking = false,
                     agentUpdateMessage = result.fold(
@@ -2521,12 +2665,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ),
                 )
             }
+            com.jarves.mh.connect.HarneseEventBus.get(application).publish(
+                id = "$task:updates", project = project?.id.orEmpty(), chat = "", task = task, kind = "agent.updates",
+                body = result.fold(onSuccess = { updates -> if(updates.isEmpty()) "لا توجد تحديثات متاحة وفق المصدر الرسمي." else updates.entries.joinToString("\n") { "${it.key.name}: ${it.value.installedVersion} → ${it.value.latestVersion}" } },onFailure = { it.message ?: "تعذر فحص التحديثات" }),
+            )
         }
     }
 
     fun updateAgent(kind: AgentKind) {
         val update = _state.value.agentUpdates[kind] ?: return
-        if (_state.value.agentUpdating != null || _state.value.agentInstalling != null || _state.value.isRunning) return
+        if (_state.value.agentUpdating != null || _state.value.agentInstalling != null || _state.value.isRunning || _state.value.androidBuildRunning || _state.value.projectTerminalRunning) return
         _state.update {
             it.copy(
                 agentUpdating = kind,
@@ -2538,7 +2686,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 agentUpdateBytesPerSecond = null,
             )
         }
-        viewModelScope.launch {
+        runtimeScope.launch {
             var sampleBytes = 0L
             var sampleAt = SystemClock.elapsedRealtime()
             val result = withContext(Dispatchers.IO) {
@@ -2591,7 +2739,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun startAntigravityLogin() {
         if (_state.value.agentInstalling != null || _state.value.isRunning) return
         lastOpenedAntigravityAuthUrl = null
-        viewModelScope.launch { antigravityAuthController.beginLogin() }
+        runtimeScope.launch { antigravityAuthController.beginLogin() }
     }
 
     fun submitAntigravityCode(code: String) {
@@ -2600,7 +2748,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logoutAntigravity() {
-        viewModelScope.launch {
+        runtimeScope.launch {
             runCatching { antigravityAuthController.logout() }
                 .onFailure { error -> _state.update { it.copy(toastMessage = error.message ?: str(R.string.vm_sign_out_failed)) } }
         }
@@ -2652,7 +2800,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshAntigravityModels() {
         if (_state.value.antigravityModelsLoading || !installer.isAgentInstalled(AgentKind.ANTIGRAVITY)) return
         _state.update { it.copy(antigravityModelsLoading = true, antigravityModelsError = null) }
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             val result = runCatching {
                 val runtime = installer.installedRuntime()
                 val workspace = File(getApplication<Application>().filesDir, "workspaces/antigravity-models").apply { mkdirs() }
@@ -2730,7 +2878,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 devStackBytesPerSecond = null,
             )
         }
-        viewModelScope.launch {
+        runtimeScope.launch {
             var sampleBytes = 0L
             var sampleTime = android.os.SystemClock.elapsedRealtime()
             var latestSpeed: Long? = null
@@ -2805,7 +2953,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 devStackBytesPerSecond = null,
             )
         }
-        viewModelScope.launch {
+        runtimeScope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
                     installer.removeStack(stack) { progress ->
@@ -2887,7 +3035,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (profile.baseUrl.isBlank() || profile.model.isBlank()) return
         if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
         _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = str(R.string.vm_ping_sending)) }
-        viewModelScope.launch {
+        runtimeScope.launch {
             val key = vault.get(profile.kind.name).orEmpty()
             val result = providerApi.validate(
                 profile.baseUrl,
@@ -2913,7 +3061,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun testClaudeSubscription(profile: ProviderProfile) {
         if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
         _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = str(R.string.vm_claude_hello)) }
-        viewModelScope.launch {
+        runtimeScope.launch {
             runCatching { claudeRuntime.hello(profile) }
                 .onSuccess {
                     _state.update { it.copy(apiPingStatus = ApiPingStatus.OK, apiPingMessage = str(R.string.vm_claude_working)) }
@@ -2944,7 +3092,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = str(R.string.vm_antigravity_hello)) }
-        viewModelScope.launch {
+        runtimeScope.launch {
             val result = runCatching { antigravityRuntime.hello() }
             result.onSuccess {
                 _state.update {
@@ -3057,7 +3205,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         refreshProjectFiles()
-        viewModelScope.launch {
+        runtimeScope.launch {
             val pending = activeRuntime().loadPendingChanges(project.id)
             if (_state.value.activeProject?.id == project.id) _state.update { it.copy(changes = pending) }
         }
@@ -3094,7 +3242,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Unused empty project; delete immediately so it does not clutter the project list.
                 _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == active.id }) }
                 preferences.saveProjects(_state.value.projects)
-                viewModelScope.launch(Dispatchers.IO) {
+                runtimeScope.launch(Dispatchers.IO) {
                     workspaceDir.deleteRecursively()
                     terminalHistoryFile(active.id).delete()
                     preferences.deleteProjectChats(active.id)
@@ -3214,6 +3362,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshProjectFiles()
     }
 
+    fun createDevelopmentProject(name: String, typescript: Boolean) {
+        if (name.isBlank() || _state.value.isRunning || _state.value.androidBuildRunning || _state.value.projectTerminalRunning || _state.value.runtimeProbeRunning) return
+        createProject(name)
+        val project = _state.value.activeProject ?: return
+        runCatching { com.jarves.mh.runtime.DevelopmentProjectTemplateGenerator.generate(projectWorkspaceRoot(project), typescript) }
+            .onFailure { error -> _state.update { it.copy(toastMessage = error.message) } }
+        refreshProjectFiles()
+    }
+
     fun createAndroidProject(name: String, template: AndroidTemplate) {
         if (name.isBlank()) return
         if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
@@ -3274,7 +3431,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun importZipProject(uri: Uri) {
         if (_state.value.projectImporting || _state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         _state.update { it.copy(projectImporting = true, projectImportMessage = str(R.string.vm_reading_archive)) }
-        viewModelScope.launch {
+        runtimeScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { extractImportedProject(uri) } }
             result.onSuccess { imported ->
                 val project = imported.project
@@ -3441,7 +3598,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         _state.update { it.copy(gitCloneRunning = true, gitCloneMessage = str(R.string.vm_connecting_git)) }
-        viewModelScope.launch {
+        runtimeScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val identity = generateQuickChatIdentity(_state.value.projects.mapTo(mutableSetOf()) { it.slug })
@@ -3532,7 +3689,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.githubAuthStatus == GitHubAuthStatus.STARTING || _state.value.githubAuthStatus == GitHubAuthStatus.AWAITING_USER) return
         _state.update { it.copy(githubAuthStatus = GitHubAuthStatus.STARTING, githubMessage = str(R.string.vm_github_preparing_signin)) }
         startGitHubForegroundOperation()
-        githubAuthJob = viewModelScope.launch {
+        githubAuthJob = runtimeScope.launch {
             try {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -3650,7 +3807,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.githubAuthStatus != GitHubAuthStatus.CONNECTED) return
         if (_state.value.githubRepositoriesLoading) return
         _state.update { it.copy(githubRepositoriesLoading = true, githubMessage = str(R.string.vm_loading_repositories)) }
-        viewModelScope.launch {
+        runtimeScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { githubRepositoriesFromCli() } }
             result.onSuccess { repositories ->
                 _state.update {
@@ -3675,7 +3832,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.githubAuthStatus == GitHubAuthStatus.STARTING) return
         val login = _state.value.githubLogin
         _state.update { it.copy(githubAuthStatus = GitHubAuthStatus.STARTING, githubMessage = str(R.string.vm_github_signing_out)) }
-        viewModelScope.launch {
+        runtimeScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val command = buildList {
@@ -3836,7 +3993,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == projectId }) }
         preferences.saveProjects(_state.value.projects)
         folderMetadataCache.keys.removeAll { it.startsWith("$projectId:") }
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             val filesDir = getApplication<Application>().filesDir
             File(filesDir, "workspaces/${project.id}").deleteRecursively()
             terminalHistoryFile(project.id).delete()
@@ -3892,7 +4049,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         _state.update { it.copy(projectExportRunning = true) }
-        viewModelScope.launch {
+        runtimeScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val root = projectWorkspaceRoot(project)
@@ -3996,7 +4153,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshProjectFiles() {
         val project = _state.value.activeProject ?: return
         _state.update { it.copy(filesLoading = true) }
-        viewModelScope.launch {
+        runtimeScope.launch {
             val (entries, suggestedRoot, androidProjectDetected) = withContext(Dispatchers.IO) {
                 Triple(
                     readWorkspaceDirectory(project, ""),
@@ -4021,7 +4178,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadProjectDirectory(relativePath: String) {
         val project = _state.value.activeProject ?: return
         val existingEntries = _state.value.workspaceFiles
-        viewModelScope.launch {
+        runtimeScope.launch {
             val (children, updatedEntries) = withContext(Dispatchers.IO) {
                 val loadedChildren = readWorkspaceDirectory(project, relativePath)
                 val prefix = relativePath.trim('/').let { if (it.isBlank()) "" else "$it/" }
@@ -4048,7 +4205,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadOpenedFile(project: Project, path: String, targetLine: Int? = null, targetColumn: Int? = null) {
-        viewModelScope.launch {
+        runtimeScope.launch {
             val loaded = withContext(Dispatchers.IO) {
                 val file = safeWorkspaceFile(project, path)
                     ?: return@withContext OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.UNSAFE)
@@ -4132,7 +4289,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             current.projectTerminalRunning || current.androidBuildRunning
         ) return
         _state.update { it.copy(openedFile = opened.copy(saving = true, conflict = false)) }
-        viewModelScope.launch {
+        runtimeScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val file = safeWorkspaceFile(project, opened.path) ?: error("unsafe_path")
@@ -4225,7 +4382,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .forEach { entry ->
                 val key = folderMetadataKey(project.id, entry.path)
                 if (!folderCountsInFlight.add(key)) return@forEach
-                viewModelScope.launch {
+                runtimeScope.launch {
                     val metadata = withContext(Dispatchers.IO) {
                         val directory = safeWorkspaceDirectory(project, entry.path)
                         directory?.let {
@@ -4400,7 +4557,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         removedPath: String? = null,
         operation: () -> String,
     ) {
-        viewModelScope.launch {
+        runtimeScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching(operation) }
             if (_state.value.activeProject?.id != project.id) return@launch
             result
@@ -4537,7 +4694,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveWorkspaceFileCopy(path: String, destination: Uri) {
         val project = _state.value.activeProject ?: return
         val resolver = getApplication<Application>().contentResolver
-        viewModelScope.launch {
+        runtimeScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val file = safeWorkspaceFile(project, path) ?: error(str(R.string.fm_protected))
@@ -4568,7 +4725,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(toastMessage = str(R.string.vm_max_attachments, MAX_ATTACHMENTS_PER_MESSAGE)) }
             return
         }
-        viewModelScope.launch {
+        runtimeScope.launch {
             val result = withContext(Dispatchers.IO) {
                 val added = mutableListOf<ChatAttachment>()
                 val errors = mutableListOf<String>()
@@ -4595,7 +4752,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val project = current.activeProject ?: return
         val attachment = current.pendingAttachments.firstOrNull { it.id == attachmentId } ?: return
         _state.update { it.copy(pendingAttachments = it.pendingAttachments.filterNot { item -> item.id == attachmentId }) }
-        viewModelScope.launch(Dispatchers.IO) {
+        runtimeScope.launch(Dispatchers.IO) {
             val root = projectWorkspaceRoot(project)
             val file = File(root, attachment.relativePath).canonicalFile
             if (file.toPath().startsWith(root.canonicalFile.toPath())) file.delete()
@@ -4696,6 +4853,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val attachments = state.value.pendingAttachments
         if (prompt.isBlank() && attachments.isEmpty()) return
+        if (state.value.runtimeProbeRunning) return
         if (state.value.isRunning || state.value.androidBuildRunning) {
             queueFollowUp(project, prompt, attachments)
             return
@@ -4733,7 +4891,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         when {
             _state.value.isRunning -> {
                 steeringToFollowUp = true
-                viewModelScope.launch { activeRuntime().stopActiveSession() }
+                runtimeScope.launch { activeRuntime().stopActiveSession() }
             }
             _state.value.androidBuildRunning -> {
                 steeringToFollowUp = true
@@ -4749,7 +4907,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(queuedFollowUps = pendingFollowUps.toList()) }
     }
 
+    private var integrationSource = "android"
+
     private fun startPrompt(project: Project, prompt: String, attachments: List<ChatAttachment>) {
+        com.jarves.mh.connect.HarneseEventBus.get(getApplication()).prepare(
+            project.id, _state.value.activeChatId.orEmpty(),
+            _state.value.projectChats.firstOrNull { it.id == _state.value.activeChatId }?.title.orEmpty(),
+            integrationSource,
+        )
         // requestText is sent to the agent, so it stays English; the chat title is user-facing.
         val requestText = prompt.trim().ifBlank { "Please review the attached files." }
         updateActiveChatTitle(prompt.trim().ifBlank { str(R.string.md_chat_title_attachments) })
@@ -4790,7 +4955,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             history = history,
             provider = state.value.provider,
         )
-        viewModelScope.launch {
+        runtimeScope.launch {
             activeRuntimeRequest?.let { request ->
                 request.runtime.startSession(
                     request.project.id,
@@ -4806,7 +4971,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun answerApproval(approved: Boolean) {
         val request = state.value.pendingApproval ?: return
-        viewModelScope.launch { activeRuntime().respondToApproval(request, approved) }
+        runtimeScope.launch { activeRuntime().respondToApproval(request, approved) }
     }
 
     fun stopTask() {
@@ -4814,7 +4979,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         steeringToFollowUp = false
         pendingFollowUps.clear()
         _state.update { it.copy(queuedFollowUps = emptyList()) }
-        viewModelScope.launch { activeRuntime().stopActiveSession() }
+        runtimeScope.launch { activeRuntime().stopActiveSession() }
     }
 
     private fun startNextFollowUp() {
@@ -4835,7 +5000,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun undoLastChanges() {
         val project = _state.value.activeProject ?: return
-        viewModelScope.launch {
+        runtimeScope.launch {
             val restored = activeRuntime().undoLastChanges(project.id)
             _state.update { current ->
                 current.copy(
@@ -4854,7 +5019,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun keepLastChanges() {
         val project = _state.value.activeProject ?: return
-        viewModelScope.launch {
+        runtimeScope.launch {
             activeRuntime().acceptLastChanges(project.id)
             _state.update {
                 it.copy(
@@ -4867,7 +5032,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun undoFileChange(path: String) {
         val project = _state.value.activeProject ?: return
-        viewModelScope.launch {
+        runtimeScope.launch {
             if (activeRuntime().undoFileChange(project.id, path)) {
                 _state.update { current -> current.copy(changes = current.changes.filterNot { it.path == path }) }
                 refreshProjectFiles()
@@ -4877,7 +5042,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun keepFileChange(path: String) {
         val project = _state.value.activeProject ?: return
-        viewModelScope.launch {
+        runtimeScope.launch {
             if (activeRuntime().acceptFileChange(project.id, path)) {
                 _state.update { current -> current.copy(changes = current.changes.filterNot { it.path == path }) }
             }
@@ -5210,7 +5375,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             failedApiKeyIds.clear()
             steeringToFollowUp = false
             if (pendingFollowUps.isNotEmpty()) {
-                viewModelScope.launch {
+                runtimeScope.launch {
                     delay(150)
                     if (!_state.value.isRunning) startNextFollowUp()
                 }
@@ -5248,7 +5413,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 liveProcess = it.liveProcess + ActivityItem(str(R.string.vm_api_key_switched), str(R.string.vm_using_key, next.name), true),
             )
         }
-        viewModelScope.launch {
+        runtimeScope.launch {
             kotlinx.coroutines.delay(300)
             request.runtime.startSession(
                 request.project.id,
@@ -5391,10 +5556,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun executeIntegrationCommand(command: HarneseCommand): HarneseCommandResult {
         fun findProject(projectId: String): Project? =
             _state.value.projects.firstOrNull { it.id == projectId }
-        fun busy(): Boolean = _state.value.isRunning ||
+        fun busy(): Boolean = _state.value.runtimeProbeRunning || _state.value.isRunning ||
             _state.value.projectTerminalRunning || _state.value.androidBuildRunning
 
         return when (command) {
+            is HarneseCommand.HubOperation -> {
+                val s = _state.value
+                val project = command.projectId?.let(::findProject) ?: s.activeProject
+                val journal = com.jarves.mh.connect.HarneseEventBus.get(application)
+                val text = when (command.name) {
+                    "runtimes", "python", "node", "typescript", "androidsdk", "runtimehealth", "disk" -> {
+                        if (busy() || s.runtimeProbeRunning) return HarneseCommandResult.error("توجد مهمة متعارضة.")
+                        requestEnvironmentProbe(command.name)
+                        "استُلم طلب الفحص؛ ستصلك النتيجة الفعلية عند انتهائه."
+                    }
+                    "installruntime" -> {
+                        if (command.argument !in setOf("php", "cpp", "antigravity")) return HarneseCommandResult.error("/installruntime php | cpp | antigravity")
+                        _state.update { it.copy(pendingRuntimeInstall = command.argument) }
+                        "حُفظ طلب تثبيت ${command.argument}. اعتمده من بيئات البرمجة على الهاتف؛ لن يبدأ تنزيل تلقائي."
+                    }
+                    "file" -> {
+                        if (project == null) return HarneseCommandResult.error("اختر مشروعًا أولًا.")
+                        val file = com.jarves.mh.connect.ProjectFilePolicy.allowedTextFile(projectWorkspaceRoot(project), command.argument)
+                        file.readText()
+                    }
+                    "diff" -> com.jarves.mh.connect.SecureReviewApprovalService.get(File(application.filesDir, "secure-reviews")).pending().filter { it.project == project?.id }.joinToString("\n") { "${it.id}\n" + com.jarves.mh.connect.SecureReviewApprovalService.get(File(application.filesDir, "secure-reviews")).preview(it.id) }.ifBlank { s.changes.joinToString("\n\n") { "${it.path} +${it.additions} -${it.deletions}\n${it.diffLines.joinToString("\n")}" }.ifBlank { "لا توجد فروقات مسجلة" } }
+                    "dashboard" -> "المشاريع: ${s.projects.size}\nالوكيل: ${s.agentKind.name}\nمهمة: ${s.isRunning} / بناء: ${s.androidBuildRunning}\nرسائل معلقة: ${journal.pendingCount()}"
+                    "active" -> "${s.activeProject?.name ?: "—"}\n${s.activeChatId ?: "—"}"
+                    "tasks" -> "وكيل: ${s.isRunning}\nبناء: ${s.androidBuildRunning}\n${s.androidBuildMessage.orEmpty()}"
+                    "model" -> if(command.argument.isBlank()) "${s.agentKind.name}: ${if (s.agentKind == AgentKind.ANTIGRAVITY) s.antigravityModel else s.provider.model}" else return requestTelegramModels(command.argument)
+                    "models" -> return requestTelegramModels()
+                    "agent" -> {
+                        if (command.argument.isNotBlank()) {
+                            if (busy()) return HarneseCommandResult.error("أوقف المهمة قبل تغيير الوكيل.")
+                            val kind = AgentKind.entries.firstOrNull { it.name.equals(command.argument, true) || it.stableId.equals(command.argument, true) }
+                                ?: return HarneseCommandResult.error(AgentKind.entries.joinToString("\n") { it.stableId })
+                            selectAgent(kind)
+                        }
+                        "الوكيل: ${_state.value.agentKind.name}"
+                    }
+                    "build" -> {
+                        if (project == null) return HarneseCommandResult.error("اختر مشروعًا أولًا.")
+                        if (busy()) return HarneseCommandResult.error("توجد مهمة متعارضة؛ انتظر أو ألغها.")
+                        openProject(project)
+                        integrationSource = "telegram"
+                        try { performAndroidAction(AndroidAction.FORCE_BUILD) } finally { integrationSource = "android" }
+                        if (!_state.value.androidBuildRunning) return HarneseCommandResult.error(_state.value.toastMessage ?: "تعذر بدء البناء.")
+                        "استُلم طلب البناء. ستصلك النتيجة عبر سجل الإشعارات."
+                    }
+                    "buildlog" -> {
+                        if (project == null) return HarneseCommandResult.error("اختر مشروعًا أولًا.")
+                        val file = androidBuildRecordFile(project.id)
+                        if (!file.isFile) "لا يوجد سجل بناء" else JSONObject(file.readText()).optString("log").takeLast(14000)
+                    }
+                    "apk" -> {
+                        if (project == null) return HarneseCommandResult.error("اختر مشروعًا أولًا.")
+                        val record = loadAndroidBuildRecord(project.id)
+                        if (command.argument == "send") {
+                            val path = record.apkPath ?: return HarneseCommandResult.error("لا يوجد APK محفوظ.")
+                            val apk = com.jarves.mh.connect.ProjectFilePolicy.allowedApk(projectWorkspaceRoot(project), path)
+                            return HarneseCommandResult(true, "APK: ${apk.name} (${apk.length()} bytes)", apk.path)
+                        }
+                        "آخر بناء: ${record.phase}\n${record.message.orEmpty()}\n/apk send — إرسال الملف إن سمح حجمه."
+                    }
+                    "health" -> "Linux: ${runCatching { installer.installedRuntime(); true }.getOrDefault(false)}\n${s.androidHealthChecks.joinToString("\n") { it.toString() }}"
+                    "updates" -> {
+                        if (busy()) return HarneseCommandResult.error("لا تفحص أو تثبت تحديثًا أثناء مهمة نشطة.")
+                        checkAgentUpdates()
+                        "بدأ فحص تحديثات الوكلاء. راجع النتيجة من إعدادات الهاتف."
+                    }
+                    else -> return HarneseCommandResult.error("أمر غير مدعوم")
+                }
+                HarneseCommandResult.success(text)
+            }
             is HarneseCommand.CreateProject -> {
                 val name = command.name.trim()
                 if (busy()) return HarneseCommandResult.error("لا يمكن إنشاء مشروع أثناء مهمة أخرى.")
@@ -5488,7 +5722,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 switchChat(chat.id)
                 if (_state.value.activeProject?.id != project.id || _state.value.activeChatId != chat.id)
                     return HarneseCommandResult.error("تعذّر تأكيد وجهة الرسالة.")
-                sendPrompt(command.prompt)
+                integrationSource = "telegram"
+                try { sendPrompt(command.prompt) } finally { integrationSource = "android" }
                 HarneseCommandResult.success("تم إرسال التعليمات إلى الوكيل في مشروع ${project.name}، دردشة ${chat.title}.")
             }
             HarneseCommand.PendingApproval -> {
@@ -5500,6 +5735,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             is HarneseCommand.RejectPendingTool -> {
+                val reviews = com.jarves.mh.connect.SecureReviewApprovalService.get(File(application.filesDir, "secure-reviews"))
+                if (reviews.pending().any { it.id == command.approvalId }) {
+                    reviews.reject(command.approvalId)
+                    return HarneseCommandResult.success("رُفضت التعديلات المعزولة ولم تطبّق على المشروع.")
+                }
                 val pending = _state.value.pendingApproval
                 if (pending?.approvalId != command.approvalId)
                     HarneseCommandResult.error("طلب الموافقة غير صالح أو انتهى.")
@@ -5509,7 +5749,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             HarneseCommand.StopTask -> {
-                if (!_state.value.isRunning) HarneseCommandResult.error("لا توجد مهمة قيد التنفيذ.")
+                if (_state.value.runtimeProbeRunning) {
+                    if(environmentProbeJob?.isActive==true) {
+                        environmentProbeJob?.cancel()
+                        HarneseCommandResult.success("طُلب إلغاء الفحص الجاري.")
+                    } else HarneseCommandResult.error("يجري تطبيق حزمة أدوات؛ لا يمكن إيقافها بأمان في هذه المرحلة.")
+                } else if (_state.value.androidBuildRunning) {
+                    cancelAndroidBuild()
+                    HarneseCommandResult.success("طُلب إلغاء البناء.")
+                } else if (!_state.value.isRunning) HarneseCommandResult.error("لا توجد مهمة قيد التنفيذ.")
                 else {
                     stopTask()
                     HarneseCommandResult.success("طُلب إيقاف المهمة.")
@@ -5518,10 +5766,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    override fun onCleared() {
+    internal fun shutdown() {
         HarneseCommandBus.unregister(this)
         stopAndroidLogcat()
-        super.onCleared()
+        runtimeScope.cancel()
     }
 
     companion object {

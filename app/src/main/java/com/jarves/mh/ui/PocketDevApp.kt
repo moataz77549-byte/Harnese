@@ -362,6 +362,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
                 currentLanguageCode = state.languageCode,
                 onSetLanguage = viewModel::setLanguage,
                 onStartLogin = viewModel::startAntigravityLogin,
+                onInstallAgent = viewModel::installAgent,
                 onSubmitCode = viewModel::submitAntigravityCode,
                 onContinue = viewModel::finishAntigravityOnboarding,
                 onSelectAgent = viewModel::chooseOnboardingAgent,
@@ -472,6 +473,7 @@ private fun AntigravityOnboardingScreen(
     currentLanguageCode: String,
     onSetLanguage: (String) -> Unit,
     onStartLogin: () -> Unit,
+    onInstallAgent: (AgentKind) -> Unit,
     onSubmitCode: (String) -> Unit,
     onContinue: () -> Unit,
     onSelectAgent: (AgentKind) -> Unit,
@@ -510,7 +512,39 @@ private fun AntigravityOnboardingScreen(
                 stringResource(R.string.ws_agy_connect_desc),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            when (state.antigravityAuth.status) {
+            // Online/Light installs keep coding agents optional. When the user reaches
+            // Google sign-in before installing agy, offer a real one-tap installer
+            // here instead of sending them to a settings screen they cannot reach.
+            val agyReady = state.installedAgentVersions.containsKey(AgentKind.ANTIGRAVITY)
+            val agyInstalling = state.agentInstalling == AgentKind.ANTIGRAVITY
+            if (!agyReady) {
+                Text(
+                    stringResource(R.string.agent_not_installed, "Antigravity CLI"),
+                    color = MaterialTheme.colorScheme.error,
+                )
+                if (agyInstalling) {
+                    LinearProgressIndicator(
+                        progress = { state.agentProgress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    state.agentMessage?.let {
+                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    Button(
+                        onClick = { onInstallAgent(AgentKind.ANTIGRAVITY) },
+                        enabled = state.agentInstalling == null,
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.agent_install_action, "Antigravity CLI"))
+                    }
+                    state.agentMessage?.let {
+                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else when (state.antigravityAuth.status) {
                 AntigravityAuthStatus.SIGNED_OUT, AntigravityAuthStatus.ERROR -> {
                     state.antigravityAuth.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     Button(onClick = onStartLogin, modifier = Modifier.fillMaxWidth().height(52.dp)) {

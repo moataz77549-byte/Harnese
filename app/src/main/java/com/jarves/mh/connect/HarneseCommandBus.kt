@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 
 /** Typed command entry point shared by Android UI and external integrations. */
 sealed interface HarneseCommand {
+    data class HubOperation(val projectId: String?, val name: String, val argument: String = "") : HarneseCommand
     data object ListProjects : HarneseCommand
     data class CreateProject(val name: String) : HarneseCommand
     data class ListFiles(val projectId: String) : HarneseCommand
@@ -20,7 +21,7 @@ sealed interface HarneseCommand {
     data object StopTask : HarneseCommand
 }
 
-data class HarneseCommandResult(val ok: Boolean, val text: String) {
+data class HarneseCommandResult(val ok: Boolean, val text: String, val filePath: String? = null) {
     companion object {
         fun success(text: String) = HarneseCommandResult(true, text)
         fun error(text: String) = HarneseCommandResult(false, text)
@@ -31,8 +32,8 @@ fun interface HarneseCommandHandler {
 }
 
 /**
- * The ViewModel owns the actual execution. A background service never stores
- * or calls a ViewModel reference; unavailable UI is explicitly reported.
+ * The application runtime owns execution. Services dispatch typed commands without
+ * retaining an Activity or ViewModel. Handlers run on the main dispatcher.
  */
 object HarneseCommandBus {
     private val guard = Any()
@@ -52,6 +53,7 @@ object HarneseCommandBus {
         val target = synchronized(guard) { handler }
             ?: return@withContext HarneseCommandResult.error("افتح تطبيق Harnese لتفعيل التحكم بالمشاريع.")
         try { target.execute(command) }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (_: Exception) { HarneseCommandResult.error("تعذر تنفيذ الأمر. راجع حالة التطبيق وأعد المحاولة.") }
     }
 }

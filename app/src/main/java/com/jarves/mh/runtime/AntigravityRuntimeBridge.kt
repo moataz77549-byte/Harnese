@@ -185,6 +185,12 @@ class AntigravityRuntimeBridge(
     private val installer = RuntimeInstaller(context)
     private val checkpoints = WorkspaceCheckpoints(context.filesDir, context)
     private val eventBus = MutableSharedFlow<RuntimeEvent>(extraBufferCapacity = 64)
+    private val reviews = com.jarves.mh.connect.SecureReviewApprovalService.get(File(context.filesDir, "secure-reviews"))
+    private val journal = com.jarves.mh.connect.HarneseEventBus.get(context)
+    private suspend fun emitEvent(event: RuntimeEvent) {
+        journal.runtime(event)
+        eventBus.emit(event)
+    }
     override val events: Flow<RuntimeEvent> = eventBus
     private val finished = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var activeProcess: Process? = null
@@ -327,7 +333,8 @@ class AntigravityRuntimeBridge(
         taskStartedAtElapsedRealtime = android.os.SystemClock.elapsedRealtime()
         lastForegroundProgressAt = 0L
         finished.remove(sessionId)
-        eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
+        journal.begin(sessionId, projectId, "Antigravity")
+        emitEvent(RuntimeEvent.SessionStarted(sessionId))
         if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
             emitFailure(sessionId, "Antigravity CLI is not installed. Open Settings → Coding agent to install it.")
             return@withContext sessionId
@@ -341,8 +348,10 @@ class AntigravityRuntimeBridge(
             startForegroundRuntime(projectSlug)
             pushForegroundProgress(R.string.rt_bridge_starting, "Antigravity")
             val installed = installer.installedRuntime()
-            val workspace = checkpoints.ensureWorkspace(projectId)
-            checkpoints.createCheckpoint(projectId, workspace)
+            val originalWorkspace = checkpoints.ensureWorkspace(projectId)
+            val stagedRun = reviews.stage(projectId, originalWorkspace)
+            val workspace = stagedRun.workspace
+            checkpoints.createCheckpoint(projectId, originalWorkspace)
             val before = checkpoints.snapshot(workspace)
             val command = antigravityCommand(model(), effort(), conversationId(projectId))
             val process = installer.process(
@@ -379,7 +388,7 @@ class AntigravityRuntimeBridge(
                     is AntigravityParsedEvent.Text -> {
                         assistantTextSeen = true
                         pushForegroundProgress(R.string.rt_bridge_working, "Antigravity")
-                        eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, event.value))
+                        emitEvent(RuntimeEvent.AssistantDelta(sessionId, event.value))
                     }
                     is AntigravityParsedEvent.ToolStarted -> {
                         activeToolName = event.name
@@ -389,19 +398,19 @@ class AntigravityRuntimeBridge(
                         pushForegroundProgress(
                             AppStrings.get(context, R.string.rt_bridge_running_tool, event.name, event.detail),
                         )
-                        eventBus.emit(RuntimeEvent.ToolStarted(sessionId, event.name, event.detail))
+                        emitEvent(RuntimeEvent.ToolStarted(sessionId, event.name, event.detail))
                     }
                     is AntigravityParsedEvent.ToolCompleted -> {
                         if (activeToolName == event.name) activeToolName = null
                         pushForegroundProgress(R.string.rt_bridge_working, "Antigravity")
-                        eventBus.emit(RuntimeEvent.ToolCompleted(sessionId, event.name, event.detail))
+                        emitEvent(RuntimeEvent.ToolCompleted(sessionId, event.name, event.detail))
                     }
                     is AntigravityParsedEvent.Result -> {
                         event.conversationId?.let { saveConversationId(projectId, it) }
                         if (event.status.equals("SUCCESS", ignoreCase = true)) {
                             if (!assistantTextSeen && !event.response.isNullOrBlank()) {
                                 assistantTextSeen = true
-                                eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, event.response))
+                                emitEvent(RuntimeEvent.AssistantDelta(sessionId, event.response))
                             }
                             resultSeen = true
                         } else throw AntigravitySessionException(friendlyError(event.error ?: event.status))
@@ -422,7 +431,7 @@ class AntigravityRuntimeBridge(
                         now - activeToolStartedAtMillis >= 10_000L && now - lastToolProgressAtMillis >= 10_000L
                     ) {
                         lastToolProgressAtMillis = now
-                        eventBus.emit(
+                        emitEvent(
                             RuntimeEvent.ToolProgress(
                                 sessionId,
                                 "Bash",
@@ -459,10 +468,15 @@ class AntigravityRuntimeBridge(
                     friendlyError(pending.toString().takeLast(1_000).ifBlank { "Antigravity exited with code $exit" })
                 }
             }
-            val paths = checkpoints.changedFiles(workspace, before)
+            val stagedReview = reviews.finish(stagedRun.id)
+                if (stagedReview.entries.isNotEmpty()) journal.publish(
+                    id = "review:${stagedRun.id}", project = projectId, chat = "", task = sessionId,
+                    kind = "review.pending", body = "مشروع: ${com.jarves.mh.data.AppPreferences(context).loadProjects().firstOrNull { it.id == projectId }?.name ?: projectId}\nالمخاطر: مراجعة محلية مطلوبة قبل أي تطبيق\nمراجعة تعديلات معزولة: ${stagedRun.id}\n" + stagedReview.entries.joinToString("\n") { it.path } + "\nاعتماد محلي في Agent Hub فقط. الرفض: /reject ${stagedRun.id}",
+                )
+                val paths = checkpoints.changedFiles(workspace, before)
             checkpoints.saveChangedPaths(projectId, paths)
             if (paths.isNotEmpty()) {
-                eventBus.emit(RuntimeEvent.FilesChanged(sessionId, checkpoints.buildChangeDetails(projectId, workspace, paths)))
+                emitEvent(RuntimeEvent.FilesChanged(sessionId, stagedReview.entries.map { ChangeItem(it.path, 0, 0) }))
             }
             emitCompleted(sessionId)
             finishForegroundRuntime(true, projectSlug, AppStrings.get(context, R.string.rt_bridge_finished_in, "Antigravity", projectSlug))
@@ -553,11 +567,11 @@ class AntigravityRuntimeBridge(
     }
 
     private suspend fun emitCompleted(sessionId: String) {
-        if (finished.add(sessionId)) eventBus.emit(RuntimeEvent.SessionCompleted(sessionId))
+        if (finished.add(sessionId)) emitEvent(RuntimeEvent.SessionCompleted(sessionId))
     }
 
     private suspend fun emitFailure(sessionId: String, reason: String) {
-        if (finished.add(sessionId)) eventBus.emit(RuntimeEvent.SessionFailed(sessionId, reason))
+        if (finished.add(sessionId)) emitEvent(RuntimeEvent.SessionFailed(sessionId, reason))
     }
 
     private fun startForegroundRuntime(projectName: String) {
