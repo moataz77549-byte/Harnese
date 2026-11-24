@@ -38,11 +38,6 @@ val appUpdateManifestUrl =
 val runtimeBundleDir = rootProject.layout.projectDirectory.dir("dist/runtime-bundles")
 val generatedRuntimeAssets = layout.buildDirectory.dir("generated/runtime-assets")
 
-val prepareBundledAgentAssets = tasks.register<Sync>("prepareBundledAgentAssets") {
-    from(runtimeBundleDir.file("pocketdev-agy-arm64-2026.09.1.tar.zst"))
-    into(generatedRuntimeAssets.map { it.dir("shared/runtime") })
-}
-
 val prepareOfflineRuntimeAssets = tasks.register<Sync>("prepareOfflineRuntimeAssets") {
     from(
         runtimeBundleDir.file("pocketdev-core-arm64-2026.09.5.tar.zst"),
@@ -95,7 +90,7 @@ android {
         }
         manifestPlaceholders["harneseAppIcon"] = if (parallelTrialInstall || repairTestInstall) "@mipmap/ic_launcher_nova" else "@mipmap/ic_launcher"
         manifestPlaceholders["harneseAppRoundIcon"] = if (parallelTrialInstall || repairTestInstall) "@mipmap/ic_launcher_nova_round" else "@mipmap/ic_launcher_round"
-        minSdk = 29
+        minSdk = 28
         // The direct APK retains the proven target-28 PRoot execution path. The
         // Play build targets current Android while its runtime path is validated.
         targetSdk = if (playBuild) 36 else 28
@@ -145,7 +140,6 @@ android {
     }
 
     sourceSets.getByName("offline").assets.srcDir(generatedRuntimeAssets.map { it.dir("offline") })
-    sourceSets.getByName("online").assets.srcDir(generatedRuntimeAssets.map { it.dir("shared") })
 
     buildTypes {
         debug {
@@ -190,12 +184,6 @@ android {
 
 tasks.matching { it.name.startsWith("mergeOffline") && it.name.endsWith("Assets") }
     .configureEach { dependsOn(prepareOfflineRuntimeAssets) }
-
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
-    .configureEach { dependsOn(prepareBundledAgentAssets) }
-
-tasks.matching { it.name.contains("lint", ignoreCase = true) }
-    .configureEach { dependsOn(prepareBundledAgentAssets) }
 
 tasks.matching { it.name.contains("Offline") && it.name.contains("lint", ignoreCase = true) }
     .configureEach { dependsOn(prepareOfflineRuntimeAssets) }

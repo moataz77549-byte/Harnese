@@ -14,10 +14,11 @@ import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
-import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.coroutineContext
 import com.jarves.mh.model.DevStack
@@ -74,6 +75,7 @@ class RuntimeInstaller(private val context: Context) {
     private val devStacksFile = File(rootfs, ".pocket-dev-stacks.json")
     private val dshMarker = File(rootfs, ".pocket-dsh-version")
     private val agyMarker = File(rootfs, ".pocket-agy-version")
+    private val codexMarker = File(rootfs, ".pocket-codex-version")
     private val githubCliMarker = File(rootfs, ".pocket-github-cli-version")
     private val dshAndroidCompatibilityMarker = File(rootfs, ".pocket-dsh-android-compat-version")
     private val macosMetadataRepairMarker = File(rootfs, ".pocket-macos-metadata-repair")
@@ -370,17 +372,9 @@ class RuntimeInstaller(private val context: Context) {
     /** Checks each installed agent against its own authoritative release source. */
     suspend fun checkAgentUpdates(): Map<com.jarves.mh.model.AgentKind, AgentUpdateInfo> {
         if (isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-            val runtime = installedRuntime()
-            val probe = process(runtime.proot, rootfs, File(rootfs, "root"), emptyMap(), listOf(AGY_GUEST_PATH, "--version"))
-            try {
-                withTimeout(30_000L) { while (probe.isAlive) delay(50) }
-                check(probe.waitFor() == 0) { "Could not read installed Antigravity version" }
-                val output = (probe as? NativeSpawnProcess)?.outputFile?.let(::readProcessOutputSafely).orEmpty()
-                val version = Regex("[0-9]+\\.[0-9]+\\.[0-9]+").find(output)?.value
-                    ?: error("Antigravity did not report a valid version")
+            officialCliLock.withLock {
+                val version = probeCliVersion(installedRuntime(), AGY_GUEST_PATH)
                 agyMarker.writeText(version)
-            } finally {
-                if (probe.isAlive) probe.destroy()
             }
         }
         val installed = installedAgentVersions()
@@ -401,7 +395,7 @@ class RuntimeInstaller(private val context: Context) {
                 }
             }
             installed[com.jarves.mh.model.AgentKind.ANTIGRAVITY]?.let { current ->
-                runCatching { fetchAgyManifest().getString("version") }.getOrNull()
+                runCatching { latestCliRelease(OfficialCli.ANTIGRAVITY).version }.getOrNull()
                     ?.takeIf { isVersionNewer(it, current) }?.let { latest ->
                         put(com.jarves.mh.model.AgentKind.ANTIGRAVITY, AgentUpdateInfo(current, latest))
                     }
@@ -454,38 +448,82 @@ class RuntimeInstaller(private val context: Context) {
         runtime: InstalledRuntime,
         expectedVersion: String,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) = officialCliLock.withLock {
+        val release = latestCliRelease(OfficialCli.ANTIGRAVITY)
+        check(release.version == expectedVersion) { str(R.string.rt_install_newer_release, "Antigravity") }
+        installOfficialCli(runtime, OfficialCli.ANTIGRAVITY, release, agyMarker, 0f, onProgress)
+    }
+
+    internal fun installedCodexVersion(): String? =
+        if (File(rootfs, CODEX_GUEST_PATH.removePrefix("/")).canExecute()) codexMarker.readTextOrNull() else null
+
+    internal fun latestCodexVersion(): String = latestCliRelease(OfficialCli.CODEX).version
+
+    internal suspend fun installCodex(onProgress: suspend (RuntimeInstallProgress) -> Unit) = officialCliLock.withLock {
+        val runtime = installedRuntime()
+        val release = latestCliRelease(OfficialCli.CODEX)
+        installOfficialCli(runtime, OfficialCli.CODEX, release, codexMarker, 0f, onProgress)
+    }
+
+    internal suspend fun removeCodex() = officialCliLock.withLock {
+        val executable = File(rootfs, CODEX_GUEST_PATH.removePrefix("/"))
+        java.nio.file.Files.deleteIfExists(executable.toPath())
+        java.nio.file.Files.deleteIfExists(File(executable.parentFile, ".codex.previous").toPath())
+        java.nio.file.Files.deleteIfExists(codexMarker.toPath())
+        Unit
+    }
+
+    private suspend fun installOfficialCli(
+        runtime: InstalledRuntime,
+        cli: OfficialCli,
+        release: OfficialCliRelease,
+        marker: File,
+        from: Float,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
-        val manifest = fetchAgyManifest()
-        val latest = manifest.getString("version")
-        check(latest == expectedVersion) { str(R.string.rt_install_newer_release, "Antigravity") }
-        val downloaded = File(downloads, "antigravity-$latest-linux-arm64.tar.gz")
-        val agyDownloadLabel = str(R.string.rt_install_downloading_version, "Antigravity CLI", latest)
-        downloadVerified(manifest.getString("url"), downloaded, manifest.getString("sha256")) { bytes, total ->
-            val ratio = if (total > 0L) bytes.toFloat() / total else 0f
-            onProgress(RuntimeInstallProgress(agyDownloadLabel, ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
+        val displayName = if (cli == OfficialCli.CODEX) "Codex CLI" else "Antigravity CLI"
+        val archive = File(downloads, "${cli.executable}-${release.version}.tar.gz")
+        val label = str(R.string.rt_install_downloading_version, displayName, release.version)
+        VerifiedDownload().fetch(URL(release.url), archive, release.sha256, "SHA-256", release.size) { bytes, total ->
+            val ratio = (bytes.toFloat() / release.size).coerceIn(0f, 1f)
+            onProgress(RuntimeInstallProgress(label, from + ratio * (0.9f - from).coerceAtLeast(0f), bytes,
+                total.takeIf { it > 0 } ?: release.size, event = RuntimeInstallEvent.DOWNLOAD))
         }
-        val destination = File(rootfs, AGY_GUEST_PATH.removePrefix("/"))
-        destination.parentFile?.mkdirs()
-        var found = false
-        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(downloaded.inputStream()))).use { archive ->
-            var entry = archive.nextEntry
-            while (entry != null) {
-                val archiveName = entry.name.removePrefix("./").trim('/')
-                if (entry.isFile && (archiveName == "antigravity" || archiveName.endsWith("/antigravity") || archiveName == "agy" || archiveName.endsWith("/agy"))) {
-                    val staged = File(destination.parentFile, ".agy-$latest.installing")
-                    FileOutputStream(staged).use { archive.copyTo(it) }
-                    Os.chmod(staged.absolutePath, 0b111101101)
-                    Os.rename(staged.absolutePath, destination.absolutePath)
-                    found = true
-                    break
-                }
-                entry = archive.nextEntry
+        val directory = File(rootfs, "root/.local/bin")
+        check(directory.isDirectory || directory.mkdirs()) { "Could not create CLI installation directory" }
+        val destination = File(directory, cli.executable)
+        val staged = File(directory, ".${cli.executable}.installing")
+        val markerStage = File(marker.parentFile, "${marker.name}.installing")
+        val previous = File(directory, ".${cli.executable}.previous")
+        java.nio.file.Files.deleteIfExists(staged.toPath())
+        java.nio.file.Files.deleteIfExists(markerStage.toPath())
+        try {
+            onProgress(RuntimeInstallProgress(str(R.string.rt_install_installing_version, displayName, release.version),
+                maxOf(from, 0.92f), indeterminate = true))
+            extractCliExecutable(archive, staged, cli.executableNames)
+            Os.chmod(staged.absolutePath, 0b111101101)
+            val actualVersion = probeCliVersion(runtime, "/root/.local/bin/${staged.name}")
+            check(actualVersion == release.version) { "$displayName reported an unexpected version: $actualVersion" }
+            markerStage.writeText(actualVersion)
+            coroutineContext.ensureActive()
+            if (destination.isFile) destination.copyTo(previous, overwrite = true)
+            atomicReplace(staged, destination)
+            try {
+                atomicReplace(markerStage, marker)
+            } catch (error: Exception) {
+                if (previous.isFile) atomicReplace(previous, destination) else destination.delete()
+                throw error
             }
+            archive.delete()
+        } finally {
+            staged.delete()
+            markerStage.delete()
         }
-        downloaded.delete()
-        check(found) { "Antigravity update archive is incomplete" }
-        verifyGuest(runtime.proot, "$AGY_GUEST_PATH --version", str(R.string.rt_install_update_verify_failed, "Antigravity CLI"))
-        agyMarker.writeText(latest)
+    }
+
+    private suspend fun probeCliVersion(runtime: InstalledRuntime, path: String): String {
+        val output = verifyGuest(runtime.proot, "$path --version", "CLI version probe failed")
+        return cliVersion(output) ?: error("CLI did not report a valid version")
     }
 
     private suspend fun updateDsh(
@@ -546,34 +584,8 @@ class RuntimeInstaller(private val context: Context) {
         dshAndroidCompatibilityMarker.writeText(DSH_ANDROID_COMPATIBILITY_VERSION)
     }
 
-    /**
-     * Discover the current official Google Antigravity CLI release for Linux ARM64.
-     * GitHub's published SHA-256 asset digest is mandatory; never install an
-     * unverified archive, or trust a third-party update mirror.
-     */
-    private fun fetchAgyManifest(): JSONObject {
-        val release = JSONObject(fetchText("https://api.github.com/repos/google-antigravity/antigravity-cli/releases/latest"))
-        val version = release.getString("tag_name").removePrefix("v")
-        require(version.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+"))) { "Invalid Antigravity release version" }
-        val assets = release.getJSONArray("assets")
-        val asset = (0 until assets.length()).asSequence()
-            .map { assets.getJSONObject(it) }
-            .firstOrNull { it.optString("name") == "agy_cli_linux_arm64.tar.gz" }
-            ?: error("Official Antigravity Linux ARM64 asset was not found")
-        val digest = asset.optString("digest")
-        require(digest.startsWith("sha256:") &&
-            digest.substringAfter(':').matches(Regex("[0-9a-fA-F]{64}"))) {
-            "The official Antigravity release did not provide a valid SHA-256 digest"
-        }
-        val url = asset.getString("browser_download_url")
-        require(url.startsWith("https://github.com/google-antigravity/antigravity-cli/releases/download/")) {
-            "Unexpected Antigravity release URL"
-        }
-        return JSONObject()
-            .put("version", version)
-            .put("url", url)
-            .put("sha256", digest.substringAfter(':'))
-    }
+    private fun latestCliRelease(cli: OfficialCli): OfficialCliRelease =
+        cli.readRelease(JSONObject(fetchText(cli.latestUrl)))
 
     private fun isVersionNewer(candidate: String, current: String): Boolean {
         fun parts(value: String) = Regex("\\d+").findAll(value).map { it.value.toIntOrNull() ?: 0 }.toList()
@@ -632,10 +644,11 @@ class RuntimeInstaller(private val context: Context) {
         fraction: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
-        if (isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) return
-        val version = fetchAgyManifest().getString("version")
-        updateAgy(InstalledRuntime(proot, rootfs), version, onProgress)
-        require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) { "Official Antigravity CLI installation is incomplete" }
+        officialCliLock.withLock {
+            if (isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) return@withLock
+            val release = latestCliRelease(OfficialCli.ANTIGRAVITY)
+            installOfficialCli(InstalledRuntime(proot, rootfs), OfficialCli.ANTIGRAVITY, release, agyMarker, fraction, onProgress)
+        }
     }
 
     private suspend fun ensureDshInstalled(
@@ -1160,7 +1173,7 @@ class RuntimeInstaller(private val context: Context) {
                     }
                 }
             }
-            require(digest(temporary, "SHA-256").equals(bundle.sha256, ignoreCase = true)) {
+            require(checksum(temporary, "SHA-256").equals(bundle.sha256, ignoreCase = true)) {
                 "${bundle.label} bundle checksum mismatch"
             }
             if (destination.exists()) destination.delete()
@@ -1568,7 +1581,7 @@ class RuntimeInstaller(private val context: Context) {
         .filter { it == '\t' || it.code >= 32 }
         .take(MAX_TERMINAL_LINE)
 
-    private suspend fun verifyGuest(proot: File, command: String, failureMessage: String) {
+    private suspend fun verifyGuest(proot: File, command: String, failureMessage: String): String {
         val verify = process(
             proot = proot,
             rootfs = rootfs,
@@ -1576,15 +1589,17 @@ class RuntimeInstaller(private val context: Context) {
             environment = emptyMap(),
             guestCommand = listOf("/usr/bin/env", "bash", "-lc", command),
         )
-        withTimeout(60_000L) {
-            while (verify.isAlive) delay(50)
+        val outputFile = (verify as? NativeSpawnProcess)?.outputFile
+        try {
+            withTimeout(60_000L) { while (verify.isAlive) delay(50) }
+            val exit = verify.waitFor()
+            val output = outputFile?.let(::readProcessOutputSafely).orEmpty().trim()
+            check(exit == 0) { actionableProcessError(output, failureMessage) }
+            return output
+        } finally {
+            if (verify.isAlive) verify.destroy()
+            outputFile?.delete()
         }
-        val exit = verify.waitFor()
-        val output = (verify as? NativeSpawnProcess)?.outputFile
-            ?.let(::readProcessOutputSafely)
-            .orEmpty()
-            .trim()
-        check(exit == 0) { actionableProcessError(output, failureMessage) }
     }
 
     /**
@@ -1722,7 +1737,7 @@ class RuntimeInstaller(private val context: Context) {
             environment = buildMap {
                 put("HOME", "/root")
                 val androidReady = File(rootfs, "root/.pocket-android-tools-version").readTextOrNull() == ANDROID_TOOLS_VERSION
-                val basePath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                val basePath = "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
                 if (androidReady) {
                     put("ANDROID_HOME", "/root/android-sdk")
                     put("ANDROID_SDK_ROOT", "/root/android-sdk")
@@ -1975,46 +1990,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         algorithm: String = "SHA-256",
         onBytes: suspend (downloaded: Long, total: Long) -> Unit,
     ) {
-        destination.parentFile?.mkdirs()
-        if (destination.isFile && digest(destination, algorithm).equals(expectedChecksum, ignoreCase = true)) {
-            onBytes(destination.length(), destination.length())
-            return
-        }
-        val temporary = File(destination.parentFile, "${destination.name}.part")
-        var existing = temporary.takeIf(File::isFile)?.length() ?: 0L
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = 20_000
-        connection.readTimeout = 120_000
-        connection.instanceFollowRedirects = true
-        if (existing > 0L) connection.setRequestProperty("Range", "bytes=$existing-")
-        check(connection.responseCode in 200..299) { str(R.string.rt_install_download_failed_http, connection.responseCode) }
-        val resumed = connection.responseCode == HttpURLConnection.HTTP_PARTIAL && existing > 0L
-        if (!resumed) {
-            temporary.delete()
-            existing = 0L
-        }
-        val total = connection.contentLengthLong.takeIf { it >= 0L }?.plus(existing) ?: -1L
-        connection.inputStream.use { input ->
-            FileOutputStream(temporary, resumed).use { output ->
-                val buffer = ByteArray(128 * 1024)
-                var downloaded = existing
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    output.write(buffer, 0, count)
-                    downloaded += count
-                    onBytes(downloaded, total)
-                }
-            }
-        }
-        connection.disconnect()
-        val actual = digest(temporary, algorithm)
-        if (!actual.equals(expectedChecksum, ignoreCase = true)) {
-            temporary.delete()
-            error("Downloaded file checksum did not match")
-        }
-        destination.delete()
-        check(temporary.renameTo(destination)) { "Could not finish download" }
+        VerifiedDownload().fetch(URL(url), destination, expectedChecksum, algorithm, 2L * 1024 * 1024 * 1024, onBytes)
     }
 
     private fun fetchText(url: String): String {
@@ -2023,26 +1999,30 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         connection.readTimeout = 30_000
         connection.setRequestProperty("Accept", "application/json")
         connection.setRequestProperty("User-Agent", "Harnese-Android/1.1")
-        check(connection.responseCode in 200..299) { "Request failed with HTTP ${connection.responseCode}" }
-        return connection.inputStream.bufferedReader().use { it.readText() }.also { connection.disconnect() }
-    }
-
-    private fun digest(file: File, algorithm: String): String {
-        val digest = MessageDigest.getInstance(algorithm)
-        file.inputStream().use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
+        connection.instanceFollowRedirects = false
+        try {
+            check(connection.responseCode in 200..299) { "Request failed with HTTP ${connection.responseCode}" }
+            return connection.inputStream.use { input ->
+                val buffer = ByteArray(1024 * 1024 + 1)
+                var size = 0
+                while (size < buffer.size) {
+                    val count = input.read(buffer, size, buffer.size - size)
+                    if (count < 0) break
+                    size += count
+                }
+                check(size < buffer.size) { "Release metadata exceeds its size limit" }
+                buffer.decodeToString(0, size)
             }
+        } finally {
+            connection.disconnect()
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun File.readTextOrNull(): String? = runCatching { readText().trim() }.getOrNull()
 
     companion object {
+        private val officialCliLock = Mutex()
+        internal const val CODEX_GUEST_PATH = "/root/.local/bin/codex"
         const val AGY_GUEST_PATH = "/root/.local/bin/agy"
         const val GITHUB_CLI_GUEST_PATH = "/root/.local/bin/gh"
         private const val AGY_VERSION = "1.1.27"
