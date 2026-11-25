@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: nova-2-candidate
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -108,7 +108,14 @@ jobs:
           grep -F "native-code: 'arm64-v8a'" delivery/package.txt
           python3 scripts/release/check_zstd_jni.py "$APK" > delivery/zstd-jni-check.txt
           (cd delivery && sha256sum *.apk > SHA256SUMS.txt)
-          git archive --format=zip --prefix=Harnese-Nova-2.0/ --output=delivery/Harnese-Nova-2.0-Source.zip "$SOURCE"
+          mkdir -p source-package/Harnese-Nova-2.0
+          git archive "$SOURCE" | tar -xf - -C source-package/Harnese-Nova-2.0
+          for submodule in third_party/proot third_party/libandroid-shmem; do
+            mkdir -p "source-package/Harnese-Nova-2.0/$submodule"
+            git -C "$submodule" archive HEAD | tar -xf - -C "source-package/Harnese-Nova-2.0/$submodule"
+          done
+          (cd source-package && zip -qr ../delivery/Harnese-Nova-2.0-Source.zip Harnese-Nova-2.0)
+          (cd delivery && sha256sum *.apk *.zip > SHA256SUMS.txt)
       - name: Publish signed prerelease
         shell: bash
         run: |
