@@ -29,12 +29,13 @@ jobs:
           packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
       - name: Build standalone ARM64 and unit tests
-        run: ./gradlew :app:testOnlineDebugUnitTest :app:assembleOnlineRelease -PmhParallelInstall=true --no-daemon --stacktrace
+        run: ./gradlew :app:testOnlineDebugUnitTest :app:lintOnlineRelease :app:assembleOnlineRelease -PmhParallelInstall=true --no-daemon --stacktrace
       - name: Check APK structure and native binaries
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p delivery
+          cp app/build/reports/lint-results-onlineRelease.xml delivery/lint-results.xml
           mapfile -t apks < <(find app/build/outputs/apk/online/release -name '*.apk')
           test "${#apks[@]}" -eq 1
           BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
