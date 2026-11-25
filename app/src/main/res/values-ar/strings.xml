@@ -155,7 +155,7 @@
     <string name="runtime_setup_core_runtime">بيئة التشغيل الأساسية · 68.8 ميغابايت</string>
     <string name="runtime_setup_core_runtime_download">بيئة التشغيل الأساسية · تنزيل 68.8 ميغابايت</string>
     <string name="runtime_setup_coding_agent_badge">وكيل البرمجة</string>
-    <string name="runtime_setup_coding_agent_note">يتم تنزيل الوكيل الاختياري المحدد فقط. يمكنك تثبيت الوكلاء أو التبديل بينهم لاحقًا من الإعدادات.</string>
+    <string name="runtime_setup_coding_agent_note">اختر وكيلك الأساسي. يمكن تنزيل Codex تلقائيًا أيضًا، وتثبيت الوكلاء الآخرين لاحقًا من الإعدادات.</string>
     <string name="runtime_setup_optional_toolchains_badge">حزم أدوات اختيارية</string>
     <string name="runtime_setup_install_btn">تثبيت Mobile Harness</string>
 
@@ -262,7 +262,7 @@
     <string name="hub_stream">تحديث رسالة تقدم تيليجرام أثناء التوليد (كل 5 ثوانٍ كحد أقصى)</string>
     <string name="codex_settings_subtitle">محرك ARM64 الرسمي وتشخيص الحساب وعزل الأوامر</string>
     <string name="codex_installed_version">الإصدار المثبت %1$s</string>
-    <string name="codex_missing">يتوفر Codex عند الطلب بعد تجهيز لينكس.</string>
+    <string name="codex_missing">لم يتم تثبيت Codex CLI. يمكنك تثبيته من مصدره الرسمي.</string>
     <string name="codex_install">تثبيت Codex</string>
     <string name="codex_update">تحديث Codex أو إصلاحه</string>
     <string name="codex_check_updates">التحقق من أحدث إصدار</string>
@@ -293,13 +293,14 @@
     <string name="codex_review_running">اختبار العزل ومراجعة المشروع…</string>
     <string name="codex_review_complete">اكتملت المراجعة.</string>
     <string name="agent_title_codex">OpenAI Codex</string>
-    <string name="agent_subtitle_codex">محرك CLI رسمي مرفق بالتطبيق · حساب ChatGPT</string>
+    <string name="agent_subtitle_codex">محرك CLI رسمي · يُنزّل أثناء الإعداد · حساب ChatGPT</string>
     <string name="codex_chat_ready">وكيل Codex للمشاريع</string>
-    <string name="codex_chat_description">يتضمن هذا التطبيق محرك Codex. بعد تجهيز لينكس وتسجيل الدخول، اختر Codex وافتح محادثة المشروع. تتطلب تعديلات المشاريع نجاح اختبار العزل واعتمادها من مركز الوكلاء. إذا تعذر العزل تُستخدم المساعدة النصية فقط.</string>
+    <string name="codex_chat_description">يُنزّل Codex من مصدره الرسمي أثناء الإعداد، ويمكن تثبيته لاحقًا من شاشة الوكلاء. بعد تجهيز لينكس وتسجيل الدخول، اختر Codex وافتح محادثة المشروع. تتطلب تعديلات المشاريع نجاح اختبار العزل واعتمادها من مركز الوكلاء. إذا تعذر العزل تُستخدم المساعدة النصية فقط.</string>
     <string name="codex_continue_workspace">متابعة إلى مساحة العمل</string>
-    <string name="codex_restore_bundled">استعادة Codex المرفق دون تنزيل</string>
     <string name="codex_refresh_models">تحديث قائمة نماذج Codex</string>
     <string name="codex_default_model">النموذج الافتراضي للحساب</string>
     <string name="codex_model_catalog_hint">القائمة من CLI الرسمي، وتُختبر صلاحية الحساب عند استخدام النموذج.</string>
-    <string name="codex_extracting_bundled">جارٍ استخراج حزمة Codex المرفقة والمتحقق منها من التطبيق</string>
+    <string name="setup_download_codex">تنزيل Codex أثناء الإعداد</string>
+    <string name="setup_download_codex_note">نحو 127 ميغابايت للمحرك الرسمي ARM64. لا يُعاد تنزيل النسخة المثبتة.</string>
+    <string name="rt_install_preparing_agent">جارٍ تجهيز %1$s</string>
 </resources>

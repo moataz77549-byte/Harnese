@@ -30,6 +30,10 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getBoolean("runtime_setup_complete", false)
         set(value) { preferences.edit().putBoolean("runtime_setup_complete", value).apply() }
 
+    var installCodexDuringSetup: Boolean
+        get() = preferences.getBoolean("install_codex_during_setup", true)
+        set(value) { preferences.edit().putBoolean("install_codex_during_setup", value).apply() }
+
     var backgroundSetupComplete: Boolean
         get() = preferences.getBoolean("background_setup_complete", false)
         set(value) { preferences.edit().putBoolean("background_setup_complete", value).apply() }

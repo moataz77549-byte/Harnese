@@ -76,7 +76,7 @@ enum class AgentKind(
         "codex",
         "OpenAI Codex",
         "Official Codex CLI · ChatGPT account",
-        "Included in APK",
+        "About 127 MB during setup",
     ),
     ;
 

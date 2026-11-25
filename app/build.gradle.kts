@@ -54,20 +54,6 @@ val prepareOfflineRuntimeAssets = tasks.register<Sync>("prepareOfflineRuntimeAss
     into(generatedRuntimeAssets.map { it.dir("offline/runtime") })
 }
 
-val prepareOfficialCodexSource = tasks.register<Exec>("prepareOfficialCodexSource") {
-    workingDir(rootProject.projectDir)
-    commandLine("bash", "scripts/runtime-bundles/prepare-codex.sh")
-}
-val prepareBundledCodexAssets = tasks.register<Sync>("prepareBundledCodexAssets") {
-    dependsOn(prepareOfficialCodexSource)
-    val source = runtimeBundleDir.file("sources/codex-aarch64-unknown-linux-musl.tar.gz")
-    from(source) { into("engine"); rename { "codex-arm64.bundle" } }
-    into(generatedRuntimeAssets.map { it.dir("codex") })
-    doFirst {
-        check(source.asFile.isFile) { "Run scripts/runtime-bundles/prepare-codex.sh before packaging" }
-    }
-}
-
 fun buildConfigString(value: String): String =
     "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
@@ -110,8 +96,8 @@ android {
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 21
-        versionName = "2.0.0-rc.2"
+        versionCode = 22
+        versionName = "2.0.0-rc.3"
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
         providers.gradleProperty("appVersionName").orNull?.let { versionName = it }
 
@@ -153,7 +139,6 @@ android {
         }
     }
 
-    sourceSets.getByName("main").assets.srcDir(prepareBundledCodexAssets.map { it.destinationDir })
     sourceSets.getByName("offline").assets.srcDir(generatedRuntimeAssets.map { it.dir("offline") })
 
     buildTypes {
@@ -194,7 +179,7 @@ android {
     }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     packaging.jniLibs.useLegacyPackaging = true
-    androidResources.noCompress += listOf("zst", "bundle")
+    androidResources.noCompress += "zst"
 }
 
 tasks.matching { it.name.startsWith("mergeOffline") && it.name.endsWith("Assets") }
@@ -238,7 +223,3 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
-
-tasks.matching {
-    (it.name.startsWith("merge") && it.name.endsWith("Assets")) || it.name.contains("lint", ignoreCase = true)
-}.configureEach { dependsOn(prepareBundledCodexAssets) }

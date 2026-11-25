@@ -210,6 +210,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setAntigravityModel(model: String) = runtime.setAntigravityModel(model)
     fun setAntigravityEffort(effort: String) = runtime.setAntigravityEffort(effort)
     fun refreshAntigravityModels() = runtime.refreshAntigravityModels()
+    fun setInstallCodexDuringSetup(enabled: Boolean) = runtime.setInstallCodexDuringSetup(enabled)
     fun toggleDevStack(stack: DevStack) = runtime.toggleDevStack(stack)
     fun installDevStack(stack: DevStack, refreshAndroidHealthAfter: Boolean = false) = runtime.installDevStack(stack, refreshAndroidHealthAfter)
     fun removeDevStack(stack: DevStack) = runtime.removeDevStack(stack)

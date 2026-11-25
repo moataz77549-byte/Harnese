@@ -58,7 +58,7 @@ class CodexRuntimeBridge(context: Context) : RuntimeBridge {
         var staged: SecureReviewApprovalService.StagedRun? = null
         var output: File? = null
         try {
-            check(installer.installedCodexVersion() != null) { "Install bundled Codex from the agent screen." }
+            check(installer.installedCodexVersion() != null) { "Install Codex from the agent screen." }
             check(controller.signedIn()) { "Sign in with your ChatGPT account in the Codex agent screen." }
             val sandboxAvailable = projectKind == ProjectKind.PROJECT && controller.sandboxAvailable()
             val workspace = if (sandboxAvailable) {

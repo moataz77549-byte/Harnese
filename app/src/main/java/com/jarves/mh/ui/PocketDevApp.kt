@@ -329,6 +329,8 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
         state.startupStage == StartupStage.SETUP_REQUIRED -> RuntimeSetupPromptScreen(
             selectedStacks = state.selectedDevStacks,
             selectedAgent = state.agentKind,
+            installCodexDuringSetup = state.installCodexDuringSetup,
+            onInstallCodexChange = viewModel::setInstallCodexDuringSetup,
             themeMode = state.themeMode,
             currentLanguageCode = state.languageCode,
             onSetLanguage = viewModel::setLanguage,
@@ -1178,6 +1180,8 @@ private fun getDevStackVisuals(stack: DevStack): DevStackVisuals = when (stack) 
 private fun RuntimeSetupPromptScreen(
     selectedStacks: Set<DevStack>,
     selectedAgent: AgentKind = AgentKind.CLAUDE_CODE,
+    installCodexDuringSetup: Boolean = true,
+    onInstallCodexChange: (Boolean) -> Unit = {},
     themeMode: AppThemeMode = AppThemeMode.DARK,
     currentLanguageCode: String = "system",
     onSetLanguage: (String) -> Unit = {},
@@ -1485,6 +1489,18 @@ private fun RuntimeSetupPromptScreen(
                     modifier = Modifier.padding(top = 8.dp, start = 2.dp, end = 2.dp),
                 )
 
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = selectedAgent == AgentKind.CODEX || installCodexDuringSetup,
+                        enabled = selectedAgent != AgentKind.CODEX,
+                        onCheckedChange = onInstallCodexChange,
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(stringResource(R.string.setup_download_codex), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text(stringResource(R.string.setup_download_codex_note), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    }
+                }
+
                 Spacer(Modifier.height(18.dp))
                 Text(stringResource(R.string.runtime_setup_optional_toolchains_badge), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.9.sp)
                 Spacer(Modifier.height(8.dp))
@@ -1515,7 +1531,7 @@ private fun RuntimeSetupPromptScreen(
                     Icon(Icons.Default.Storage, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(7.dp))
                     Text(
-                        toolchainDownloadSummary(selectedStacks, selectedAgent),
+                        toolchainDownloadSummary(selectedStacks, selectedAgent, installCodexDuringSetup),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,
                     )
@@ -1568,6 +1584,7 @@ private const val CORE_RUNTIME_DOWNLOAD_MB = 69
 private const val CLAUDE_RUNTIME_DOWNLOAD_MB = 72
 private const val DSH_RUNTIME_DOWNLOAD_MB = 27
 private const val AGY_RUNTIME_DOWNLOAD_MB = 90
+private const val CODEX_RUNTIME_DOWNLOAD_MB = 127
 private const val PYTHON_RUNTIME_DOWNLOAD_MB = 55
 private const val ANDROID_RUNTIME_DOWNLOAD_MB = 570
 
@@ -1604,15 +1621,18 @@ private fun stackDownloadLabel(stack: DevStack): String = when {
 }
 
 @Composable
-private fun toolchainDownloadSummary(selected: Set<DevStack>, agent: AgentKind): String {
-    if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) return stringResource(R.string.ws_bundles_included_offline)
+private fun toolchainDownloadSummary(selected: Set<DevStack>, agent: AgentKind, includeCodex: Boolean): String {
+    val codexSelected = includeCodex || agent == AgentKind.CODEX
+    if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) return stringResource(R.string.ws_bundles_included_offline) +
+        if (codexSelected) " · " + stringResource(R.string.ws_download_total_mb, CODEX_RUNTIME_DOWNLOAD_MB) else ""
     val total = CORE_RUNTIME_DOWNLOAD_MB +
         when (agent) {
             AgentKind.CLAUDE_CODE -> CLAUDE_RUNTIME_DOWNLOAD_MB
             AgentKind.DEEPSEEK_HARNESS -> DSH_RUNTIME_DOWNLOAD_MB
             AgentKind.ANTIGRAVITY -> AGY_RUNTIME_DOWNLOAD_MB
-            AgentKind.CODEX -> 0
+            AgentKind.CODEX -> CODEX_RUNTIME_DOWNLOAD_MB
         } +
+        (if (includeCodex && agent != AgentKind.CODEX) CODEX_RUNTIME_DOWNLOAD_MB else 0) +
         (if (DevStack.PYTHON in selected) PYTHON_RUNTIME_DOWNLOAD_MB else 0) +
         (if (DevStack.ANDROID in selected) ANDROID_RUNTIME_DOWNLOAD_MB else 0)
     val laterPackages = selected.intersect(setOf(DevStack.CPP, DevStack.PHP))

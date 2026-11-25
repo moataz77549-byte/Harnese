@@ -1,4 +1,1 @@
-OpenAI Codex CLI, version 0.172.0, distributed without modification.
-Upstream source: https://github.com/openai/codex/tree/rust-v0.172.0
-Official Linux ARM64 musl artifact: https://github.com/openai/codex/releases/tag/rust-v0.172.0
-Licensed under Apache License 2.0. The upstream license text accompanies this notice.
+OpenAI Codex CLI is downloaded without modification from https://github.com/openai/codex/releases. See the selected upstream release for its license and notices. The Apache 2.0 license from the previously bundled version accompanies this notice.

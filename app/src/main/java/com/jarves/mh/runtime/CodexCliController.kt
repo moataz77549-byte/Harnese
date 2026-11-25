@@ -47,7 +47,7 @@ internal class CodexCliController(context: Context, private val installer: Runti
             fun send(message: JSONObject) { input.write(message.toString()); input.newLine(); input.flush() }
             send(JSONObject().put("id", 1).put("method", "initialize")
                 .put("params", JSONObject().put("clientInfo", JSONObject()
-                    .put("name", "harnese-nova").put("title", "Harnese Nova").put("version", "2.0.0-rc.2"))))
+                    .put("name", "harnese-nova").put("title", "Harnese Nova").put("version", "2.0.0-rc.3"))))
             var offset = 0L
             val pending = StringBuilder()
             var models: List<CodexModelOption>? = null

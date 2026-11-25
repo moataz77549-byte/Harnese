@@ -368,6 +368,7 @@ data class AppUiState(
     val pendingTerminalCommand: String? = null,
     val suggestedProjectRoot: String? = null,
     val selectedDevStacks: Set<DevStack> = emptySet(),
+    val installCodexDuringSetup: Boolean = true,
     val installedDevStacks: Set<DevStack> = emptySet(),
     val devStackInstalling: DevStack? = null,
     val devStackRemoving: Boolean = false,
@@ -527,6 +528,7 @@ class HarneseRuntimeController(private val application: Application) {
             projects = preferences.loadProjects(),
             githubAuthStatus = GitHubAuthStatus.DISCONNECTED,
             githubLogin = preferences.githubLogin.takeIf(String::isNotBlank),
+            installCodexDuringSetup = preferences.installCodexDuringSetup,
             selectedDevStacks = preferences.selectedDevStacks.mapNotNull { name ->
                 runCatching { DevStack.valueOf(name) }.getOrNull()
             }.toSet() + DevStack.WEB,
@@ -2123,9 +2125,10 @@ class HarneseRuntimeController(private val application: Application) {
                 installedAgentVersions = if (installed) installer.installedAgentVersions() else emptyMap(),
             )
         }
+        val setupPending = com.jarves.mh.runtime.setupNeedsCompletion(installed, preferences.onboardingComplete, preferences.runtimeSetupComplete, setupSnapshot.status)
         when {
-            !installed && setupSnapshot.status == RuntimeSetupStatus.ERROR -> onSetupSnapshot(setupSnapshot)
-            !installed -> _state.update { it.copy(startupStage = StartupStage.SETUP_REQUIRED, startupProgress = 0f) }
+            setupPending && setupSnapshot.status == RuntimeSetupStatus.ERROR -> onSetupSnapshot(setupSnapshot)
+            setupPending -> _state.update { it.copy(startupStage = StartupStage.SETUP_REQUIRED, startupProgress = 0f) }
             !preferences.onboardingComplete -> {
                 preferences.runtimeSetupComplete = true
                 _state.update { it.copy(startupStage = StartupStage.MODEL_SETUP, startupProgress = 1f) }
@@ -2154,7 +2157,10 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     fun retryStartup() {
-        if (installer.isInstalled()) runtimeScope.launch { initializeRuntime() } else {
+        val setupPending = com.jarves.mh.runtime.setupNeedsCompletion(
+            installer.isInstalled(), preferences.onboardingComplete, preferences.runtimeSetupComplete, RuntimeSetupController.snapshot.value.status,
+        )
+        if (!setupPending) runtimeScope.launch { initializeRuntime() } else {
             _state.update { it.copy(startupStage = StartupStage.SETUP_REQUIRED, startupError = null) }
             startRuntimeSetup()
         }
@@ -2167,7 +2173,8 @@ class HarneseRuntimeController(private val application: Application) {
             Intent(getApplication(), RuntimeSetupService::class.java)
                 .setAction(RuntimeSetupService.ACTION_START)
                 .putExtra(RuntimeSetupService.EXTRA_STACKS, stacks)
-                .putExtra(RuntimeSetupService.EXTRA_AGENT, _state.value.agentKind.name),
+                .putExtra(RuntimeSetupService.EXTRA_AGENT, _state.value.agentKind.name)
+                .putExtra(RuntimeSetupService.EXTRA_INSTALL_CODEX, _state.value.installCodexDuringSetup),
         )
     }
 
@@ -2867,6 +2874,11 @@ class HarneseRuntimeController(private val application: Application) {
                 }
             }
         }
+    }
+
+    fun setInstallCodexDuringSetup(enabled: Boolean) {
+        preferences.installCodexDuringSetup = enabled
+        _state.update { it.copy(installCodexDuringSetup = enabled) }
     }
 
     /** Called from the first-launch tool picker; persists the choice for setup and Settings. */

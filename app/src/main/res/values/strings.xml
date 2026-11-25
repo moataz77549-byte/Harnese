@@ -155,7 +155,7 @@
     <string name="runtime_setup_core_runtime">Core runtime · 68.8 MB</string>
     <string name="runtime_setup_core_runtime_download">Core runtime · 68.8 MB download</string>
     <string name="runtime_setup_coding_agent_badge">CODING AGENT</string>
-    <string name="runtime_setup_coding_agent_note">Only the selected optional agent is downloaded. You can install or switch agents later from Settings.</string>
+    <string name="runtime_setup_coding_agent_note">Choose your primary agent. Codex can also be downloaded automatically; other agents remain available from Settings.</string>
     <string name="runtime_setup_optional_toolchains_badge">OPTIONAL TOOLCHAINS</string>
     <string name="runtime_setup_install_btn">Install Mobile Harness</string>
 
@@ -429,7 +429,7 @@
     <string name="hub_stream">Edit a Telegram progress message while generating (at most every 5 seconds)</string>
     <string name="codex_settings_subtitle">Official ARM64 engine, account and sandbox diagnostics</string>
     <string name="codex_installed_version">Installed version %1$s</string>
-    <string name="codex_missing">Codex CLI is available on demand after Linux setup.</string>
+    <string name="codex_missing">Codex CLI is not installed. Install it from the official source.</string>
     <string name="codex_install">Install Codex</string>
     <string name="codex_update">Update or repair Codex</string>
     <string name="codex_check_updates">Check latest version</string>
@@ -460,13 +460,14 @@
     <string name="codex_review_running">Testing sandbox and reviewing project…</string>
     <string name="codex_review_complete">Review complete.</string>
     <string name="agent_title_codex">OpenAI Codex</string>
-    <string name="agent_subtitle_codex">Official CLI bundled with this APK · ChatGPT account</string>
+    <string name="agent_subtitle_codex">Official CLI · downloaded during setup · ChatGPT account</string>
     <string name="codex_chat_ready">Codex project agent</string>
-    <string name="codex_chat_description">Codex is bundled in this APK. After Linux setup and account sign-in, select Codex and open the project chat. Project edits require the local sandbox and approval through Agent Hub. If the sandbox is unavailable, only text-based assistance is attempted.</string>
+    <string name="codex_chat_description">Codex is downloaded from the official source during setup or installed later from the agent screen. After Linux setup and account sign-in, select Codex and open project chat. Project edits require the local sandbox and approval through Agent Hub. If the sandbox is unavailable, only text-based assistance is attempted.</string>
     <string name="codex_continue_workspace">Continue to workspace</string>
-    <string name="codex_restore_bundled">Restore bundled Codex offline</string>
     <string name="codex_refresh_models">Refresh Codex model catalog</string>
     <string name="codex_default_model">Account default model</string>
     <string name="codex_model_catalog_hint">The list is reported by the official CLI. Account access is confirmed when a model is used.</string>
-    <string name="codex_extracting_bundled">Extracting the verified Codex archive from this APK</string>
+    <string name="setup_download_codex">Download Codex during setup</string>
+    <string name="setup_download_codex_note">About 127 MB for the official ARM64 CLI. An installed copy is reused.</string>
+    <string name="rt_install_preparing_agent">Preparing %1$s</string>
 </resources>

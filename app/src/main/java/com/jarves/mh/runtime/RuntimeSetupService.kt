@@ -269,10 +269,12 @@ class RuntimeSetupService : Service() {
             val agent = runCatching {
                 com.jarves.mh.model.AgentKind.valueOf(intent?.getStringExtra(EXTRA_AGENT).orEmpty())
             }.getOrDefault(com.jarves.mh.model.AgentKind.CLAUDE_CODE)
+            val installCodex = intent?.getBooleanExtra(EXTRA_INSTALL_CODEX, true) ?: AppPreferences(this).installCodexDuringSetup
+            AppPreferences(this).runtimeSetupComplete = false
             RuntimeSetupController.begin(this)
             installJob = scope.launch {
                 try {
-                    RuntimeInstaller(this@RuntimeSetupService).ensureInstalled(stacks, agent) { progress ->
+                    RuntimeInstaller(this@RuntimeSetupService).ensureInstalled(stacks, agent, installCodex) { progress ->
                         RuntimeSetupController.update(this@RuntimeSetupService, progress)
                         updateNotification(progress.event == RuntimeInstallEvent.COMMAND_COMPLETED)
                     }
@@ -376,6 +378,7 @@ class RuntimeSetupService : Service() {
         const val ACTION_STOP = "com.jarves.mh.STOP_SETUP"
         const val EXTRA_STACKS = "selected_stacks"
         const val EXTRA_AGENT = "selected_agent"
+        const val EXTRA_INSTALL_CODEX = "install_codex"
         private const val CHANNEL_ID = "runtime-setup"
         private const val NOTIFICATION_ID = 51
         private const val RESULT_NOTIFICATION_ID = 52

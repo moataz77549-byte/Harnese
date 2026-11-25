@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.coroutineContext
 import com.jarves.mh.model.DevStack
+import com.jarves.mh.model.AgentKind
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
@@ -152,8 +153,14 @@ class RuntimeInstaller(private val context: Context) {
     suspend fun ensureInstalled(
         selectedStacks: Set<DevStack> = emptySet(),
         agent: com.jarves.mh.model.AgentKind = com.jarves.mh.model.AgentKind.CLAUDE_CODE,
-        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+        installCodexDuringSetup: Boolean = true,
+        reportProgress: suspend (RuntimeInstallProgress) -> Unit,
     ): InstalledRuntime {
+        val agents = setupAgentPlan(agent, installCodexDuringSetup, BuildConfig.OFFLINE_RUNTIME_BUNDLES)
+        val coreEnd = if (agents.isEmpty()) 0.99f else 0.76f
+        val onProgress: suspend (RuntimeInstallProgress) -> Unit = { progress ->
+            reportProgress(progress.copy(fraction = progress.fraction.coerceIn(0f, 1f) * coreEnd))
+        }
         require(
             supportsArm64Runtime(
                 android.os.Build.SUPPORTED_ABIS,
@@ -237,15 +244,23 @@ class RuntimeInstaller(private val context: Context) {
         }
 
         if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) ensureEmbeddedTypeScript(proot, onProgress)
-        if (agent == com.jarves.mh.model.AgentKind.CODEX) {
-            ensureBundledCodex(InstalledRuntime(proot, rootfs), onProgress)
-        } else if (!BuildConfig.OFFLINE_RUNTIME_BUNDLES) when (agent) {
-            com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(proot, 0.985f, onProgress)
-            com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.985f, onProgress)
-            com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.985f, onProgress)
-            com.jarves.mh.model.AgentKind.CODEX -> Unit
+        val runtime = InstalledRuntime(proot, rootfs)
+        agents.forEachIndexed { index, selected ->
+            val width = (0.99f - coreEnd) / agents.size
+            val start = coreEnd + index * width
+            val agentProgress: suspend (RuntimeInstallProgress) -> Unit = { progress ->
+                reportProgress(progress.copy(fraction = start + progress.fraction.coerceIn(0f, 1f) * width))
+            }
+            reportProgress(RuntimeInstallProgress(str(R.string.rt_install_preparing_agent, selected.localizedTitle(context)), start))
+            when (selected) {
+                AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(proot, 0.03f, agentProgress)
+                AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.03f, agentProgress)
+                AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.03f, agentProgress)
+                AgentKind.CODEX -> ensureDownloadedCodex(runtime, agentProgress)
+            }
+            reportProgress(RuntimeInstallProgress(str(R.string.rt_install_ready, selected.localizedTitle(context)), start + width))
         }
-        onProgress(RuntimeInstallProgress(str(R.string.rt_install_setup_complete), 1f))
+        reportProgress(RuntimeInstallProgress(str(R.string.rt_install_setup_complete), 1f))
         return InstalledRuntime(proot, rootfs)
     }
 
@@ -263,7 +278,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(runtime.proot, 0.05f, onProgress)
-            com.jarves.mh.model.AgentKind.CODEX -> ensureBundledCodex(runtime, onProgress)
+            com.jarves.mh.model.AgentKind.CODEX -> ensureDownloadedCodex(runtime, onProgress)
         }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_ready, agent.localizedTitle(context)), 1f))
     }
@@ -471,28 +486,22 @@ class RuntimeInstaller(private val context: Context) {
     }
 
     internal fun installedCodexVersion(): String? =
-        if (File(rootfs, CODEX_GUEST_PATH.removePrefix("/")).canExecute()) codexMarker.readTextOrNull() else null
+        if (File(rootfs, CODEX_GUEST_PATH.removePrefix("/")).canExecute()) codexMarker.readTextOrNull()?.takeIf(String::isNotBlank) else null
 
     internal fun latestCodexVersion(): String = latestCliRelease(OfficialCli.CODEX).version
 
-    internal suspend fun installCodex(onProgress: suspend (RuntimeInstallProgress) -> Unit) {
-        val runtime = installedRuntime()
-        if (installedCodexVersion() == null) ensureBundledCodex(runtime, onProgress)
-        else officialCliLock.withLock {
+    internal suspend fun installCodex(onProgress: suspend (RuntimeInstallProgress) -> Unit) =
+        officialCliLock.withLock {
+            val runtime = installedRuntime()
             val release = latestCliRelease(OfficialCli.CODEX)
             installOfficialCli(runtime, OfficialCli.CODEX, release, codexMarker, 0f, onProgress)
         }
-    }
 
-    internal suspend fun restoreBundledCodex(onProgress: suspend (RuntimeInstallProgress) -> Unit) =
-        officialCliLock.withLock {
-            installOfficialCli(installedRuntime(), OfficialCli.CODEX, BUNDLED_CODEX, codexMarker, 0f, onProgress, CODEX_ASSET)
-        }
-
-    private suspend fun ensureBundledCodex(runtime: InstalledRuntime, onProgress: suspend (RuntimeInstallProgress) -> Unit) =
+    private suspend fun ensureDownloadedCodex(runtime: InstalledRuntime, onProgress: suspend (RuntimeInstallProgress) -> Unit) =
         officialCliLock.withLock {
             if (installedCodexVersion() == null) {
-                installOfficialCli(runtime, OfficialCli.CODEX, BUNDLED_CODEX, codexMarker, 0f, onProgress, CODEX_ASSET)
+                val release = latestCliRelease(OfficialCli.CODEX)
+                installOfficialCli(runtime, OfficialCli.CODEX, release, codexMarker, 0f, onProgress)
             }
         }
 
@@ -511,45 +520,16 @@ class RuntimeInstaller(private val context: Context) {
         marker: File,
         from: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
-        bundledAsset: String? = null,
     ) {
         val displayName = if (cli == OfficialCli.CODEX) "Codex CLI" else "Antigravity CLI"
         val archive = File(downloads, "${cli.executable}-${release.version}.tar.gz")
-        val label = if (bundledAsset != null) str(R.string.codex_extracting_bundled)
-            else str(R.string.rt_install_downloading_version, displayName, release.version)
+        val label = str(R.string.rt_install_downloading_version, displayName, release.version)
         val reportBytes: suspend (Long, Long) -> Unit = { bytes, total ->
             val ratio = (bytes.toFloat() / release.size).coerceIn(0f, 1f)
             onProgress(RuntimeInstallProgress(label, from + ratio * (0.9f - from).coerceAtLeast(0f), bytes,
                 total.takeIf { it > 0 } ?: release.size, event = RuntimeInstallEvent.DOWNLOAD))
         }
-        if (bundledAsset != null) {
-            archive.parentFile?.mkdirs()
-            val temporary = File(archive.parentFile, archive.name + ".bundled.part")
-            check(archive.parentFile!!.usableSpace > release.size + 320L * 1024 * 1024) { "Insufficient space for Codex installation" }
-            try {
-                context.assets.open(bundledAsset).use { input ->
-                    temporary.outputStream().use { output ->
-                        val buffer = ByteArray(128 * 1024)
-                        var copied = 0L
-                        while (true) {
-                            coroutineContext.ensureActive()
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            copied += count
-                            check(copied <= release.size) { "Bundled Codex archive size mismatch" }
-                            output.write(buffer, 0, count)
-                            reportBytes(copied, release.size)
-                        }
-                    }
-                }
-                check(temporary.length() == release.size && checksum(temporary, "SHA-256") == release.sha256) {
-                    "Bundled Codex integrity check failed"
-                }
-                atomicReplace(temporary, archive)
-            } finally { temporary.delete() }
-        } else {
-            VerifiedDownload().fetch(URL(release.url), archive, release.sha256, "SHA-256", release.size, reportBytes)
-        }
+        VerifiedDownload().fetch(URL(release.url), archive, release.sha256, "SHA-256", release.size, reportBytes)
         val directory = File(rootfs, "root/.local/bin")
         check(directory.isDirectory || directory.mkdirs()) { "Could not create CLI installation directory" }
         val destination = File(directory, cli.executable)
@@ -2028,13 +2008,6 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val MAX_ARCHIVE_EXPANDED_BYTES = 8L * 1024 * 1024 * 1024
         private const val MAX_ARCHIVE_ENTRIES = 400_000
         private val officialCliLock = Mutex()
-        private const val CODEX_ASSET = "engine/codex-arm64.bundle"
-        private val BUNDLED_CODEX = OfficialCliRelease(
-            "0.172.0",
-            "https://github.com/openai/codex/releases/download/rust-v0.172.0/codex-aarch64-unknown-linux-musl.tar.gz",
-            "0b99526c185a4425fe96a2214fb7b6a6a7f7c1471883b7afbebe97e15e83e79e",
-            127043934L,
-        )
         internal const val CODEX_GUEST_PATH = "/root/.local/bin/codex"
         const val AGY_GUEST_PATH = "/root/.local/bin/agy"
         const val GITHUB_CLI_GUEST_PATH = "/root/.local/bin/gh"
