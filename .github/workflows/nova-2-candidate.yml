@@ -55,7 +55,7 @@ jobs:
           import sys,zipfile,hashlib
           with zipfile.ZipFile(sys.argv[1]) as z:
               assert all(not v.startswith('assets/runtime/') for v in z.namelist()), 'Unexpected bundled runtime in online APK'
-              name='assets/engine/codex-aarch64-unknown-linux-musl.tar.gz'
+              name='assets/engine/codex-arm64.bundle'
               assert z.getinfo(name).file_size == 127043934
               assert hashlib.file_digest(z.open(name),'sha256').hexdigest() == '0b99526c185a4425fe96a2214fb7b6a6a7f7c1471883b7afbebe97e15e83e79e'
               assert 'assets/licenses/Codex-LICENSE.txt' in z.namelist()

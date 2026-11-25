@@ -61,7 +61,7 @@ val prepareOfficialCodexSource = tasks.register<Exec>("prepareOfficialCodexSourc
 val prepareBundledCodexAssets = tasks.register<Sync>("prepareBundledCodexAssets") {
     dependsOn(prepareOfficialCodexSource)
     val source = runtimeBundleDir.file("sources/codex-aarch64-unknown-linux-musl.tar.gz")
-    from(source) { into("engine") }
+    from(source) { into("engine"); rename { "codex-arm64.bundle" } }
     into(generatedRuntimeAssets.map { it.dir("codex") })
     doFirst {
         check(source.asFile.isFile) { "Run scripts/runtime-bundles/prepare-codex.sh before packaging" }
@@ -194,7 +194,7 @@ android {
     }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     packaging.jniLibs.useLegacyPackaging = true
-    androidResources.noCompress += listOf("zst", "gz")
+    androidResources.noCompress += listOf("zst", "bundle")
 }
 
 tasks.matching { it.name.startsWith("mergeOffline") && it.name.endsWith("Assets") }

@@ -2028,7 +2028,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val MAX_ARCHIVE_EXPANDED_BYTES = 8L * 1024 * 1024 * 1024
         private const val MAX_ARCHIVE_ENTRIES = 400_000
         private val officialCliLock = Mutex()
-        private const val CODEX_ASSET = "engine/codex-aarch64-unknown-linux-musl.tar.gz"
+        private const val CODEX_ASSET = "engine/codex-arm64.bundle"
         private val BUNDLED_CODEX = OfficialCliRelease(
             "0.172.0",
             "https://github.com/openai/codex/releases/download/rust-v0.172.0/codex-aarch64-unknown-linux-musl.tar.gz",
