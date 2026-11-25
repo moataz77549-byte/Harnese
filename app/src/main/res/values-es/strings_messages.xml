@@ -105,6 +105,11 @@
     <string name="vm_github_new_code">Generando un nuevo código de GitHub…</string>
     <string name="vm_loading_repositories">Cargando repositorios…</string>
     <string name="vm_github_repos_failed">No se pudieron cargar los repositorios de GitHub</string>
+    <string name="vm_github_auth_required">Tu sesión de GitHub ha caducado o no está autorizada. Vuelve a conectar GitHub.</string>
+    <string name="vm_github_access_denied">GitHub denegó el acceso a estos repositorios. Comprueba los permisos de tu cuenta.</string>
+    <string name="vm_github_rate_limit">Se alcanzó el límite de solicitudes de GitHub. Espera un momento e inténtalo de nuevo.</string>
+    <string name="vm_github_network_retry">GitHub no respondió. Comprueba tu conexión a Internet e inténtalo de nuevo.</string>
+    <string name="vm_github_invalid_response">GitHub devolvió una respuesta incompleta o no válida. Intenta actualizar los repositorios.</string>
     <string name="vm_github_signing_out">Cerrando sesión en GitHub…</string>
     <string name="vm_github_logout_failed">Falló el cierre de sesión en GitHub</string>
     <string name="vm_signed_out">Sesión cerrada</string>

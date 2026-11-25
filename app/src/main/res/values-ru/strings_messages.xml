@@ -105,6 +105,11 @@
     <string name="vm_github_new_code">Создание нового кода GitHub…</string>
     <string name="vm_loading_repositories">Загрузка репозиториев…</string>
     <string name="vm_github_repos_failed">Не удалось загрузить репозитории GitHub</string>
+    <string name="vm_github_auth_required">Срок действия сеанса GitHub истёк или сеанс не авторизован. Подключите GitHub снова.</string>
+    <string name="vm_github_access_denied">GitHub отказал в доступе к этим репозиториям. Проверьте разрешения учётной записи.</string>
+    <string name="vm_github_rate_limit">Достигнут лимит запросов GitHub. Подождите немного и повторите попытку.</string>
+    <string name="vm_github_network_retry">GitHub не ответил. Проверьте подключение к Интернету и повторите попытку.</string>
+    <string name="vm_github_invalid_response">GitHub вернул неполный или недопустимый ответ. Попробуйте обновить репозитории.</string>
     <string name="vm_github_signing_out">Выход из GitHub…</string>
     <string name="vm_github_logout_failed">Не удалось выйти из GitHub</string>
     <string name="vm_signed_out">Вы вышли</string>

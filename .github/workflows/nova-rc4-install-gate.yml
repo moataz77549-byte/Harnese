@@ -28,14 +28,29 @@ jobs:
         with:
           packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
+      - name: Check original owner signing availability
+        env:
+          HARN_NOVA_JKS_B64: ${{ secrets.HARN_NOVA_JKS_B64 }}
+          HARN_NOVA_KEYSTORE_PASS: ${{ secrets.HARN_NOVA_KEYSTORE_PASS }}
+          HARN_NOVA_KEY_ALIAS: ${{ secrets.HARN_NOVA_KEY_ALIAS }}
+          HARN_NOVA_KEY_PASS: ${{ secrets.HARN_NOVA_KEY_PASS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in HARN_NOVA_JKS_B64 HARN_NOVA_KEYSTORE_PASS HARN_NOVA_KEY_ALIAS HARN_NOVA_KEY_PASS; do
+            if [[ -z "${!name}" ]]; then
+              echo "Owner signing configuration unavailable; APK must not be published."
+              exit 0
+            fi
+          done
+          echo "Owner signing configuration present; certificate still requires verification."
       - name: Build standalone ARM64 and unit tests
-        run: ./gradlew :app:testOnlineDebugUnitTest :app:lintOnlineRelease :app:assembleOnlineRelease -PmhParallelInstall=true --no-daemon --stacktrace
+        run: ./gradlew :app:testOnlineDebugUnitTest :app:assembleOnlineRelease -PmhParallelInstall=true --no-daemon --stacktrace
       - name: Check APK structure and native binaries
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p delivery
-          cp app/build/reports/lint-results-onlineRelease.xml delivery/lint-results.xml
           mapfile -t apks < <(find app/build/outputs/apk/online/release -name '*.apk')
           test "${#apks[@]}" -eq 1
           BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
@@ -66,6 +81,21 @@ jobs:
                   report.write(n+' AArch64 ELF; ZIP compression='+str(z.getinfo(n).compress_type)+'\n')
               assert 'assets/engine/codex-arm64.bundle' not in z.namelist()
           PY
+      - name: Lint release gate (required before signing)
+        run: ./gradlew :app:lintOnlineRelease -PmhParallelInstall=true --no-daemon --stacktrace
+      - name: Preserve build and lint evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-rc4-verification-evidence
+          path: |
+            app/build/test-results/testOnlineDebugUnitTest/
+            app/build/reports/lint-results-onlineRelease.xml
+            delivery/package.txt
+            delivery/native-audit.txt
+            delivery/apk-integrity.txt
+            delivery/zstd-jni-check.txt
+          if-no-files-found: warn
       - name: Sign using original owner certificate only
         id: sign
         env:

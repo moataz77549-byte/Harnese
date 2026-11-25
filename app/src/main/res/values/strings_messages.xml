@@ -105,6 +105,11 @@
     <string name="vm_github_new_code">Generating a new GitHub code…</string>
     <string name="vm_loading_repositories">Loading repositories…</string>
     <string name="vm_github_repos_failed">Could not load GitHub repositories</string>
+    <string name="vm_github_auth_required">Your GitHub session has expired or is not authorized. Connect GitHub again.</string>
+    <string name="vm_github_access_denied">GitHub denied access to these repositories. Check your account permissions.</string>
+    <string name="vm_github_rate_limit">GitHub request limit reached. Wait a moment and try again.</string>
+    <string name="vm_github_network_retry">GitHub did not respond. Check your internet connection and try again.</string>
+    <string name="vm_github_invalid_response">GitHub returned an incomplete or invalid response. Try refreshing the repositories.</string>
     <string name="vm_github_signing_out">Signing out of GitHub…</string>
     <string name="vm_github_logout_failed">GitHub logout failed</string>
     <string name="vm_signed_out">Signed out</string>

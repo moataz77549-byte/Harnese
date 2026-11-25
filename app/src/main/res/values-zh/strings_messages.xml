@@ -105,6 +105,11 @@
     <string name="vm_github_new_code">正在生成新的 GitHub 验证码…</string>
     <string name="vm_loading_repositories">正在加载仓库…</string>
     <string name="vm_github_repos_failed">无法加载 GitHub 仓库</string>
+    <string name="vm_github_auth_required">GitHub 会话已过期或未授权。请重新连接 GitHub。</string>
+    <string name="vm_github_access_denied">GitHub 拒绝访问这些仓库。请检查账户权限。</string>
+    <string name="vm_github_rate_limit">已达到 GitHub 请求限制。请稍候再试。</string>
+    <string name="vm_github_network_retry">GitHub 未响应。请检查网络连接并重试。</string>
+    <string name="vm_github_invalid_response">GitHub 返回了不完整或无效的响应。请尝试刷新仓库。</string>
     <string name="vm_github_signing_out">正在退出 GitHub…</string>
     <string name="vm_github_logout_failed">GitHub 退出失败</string>
     <string name="vm_signed_out">已退出登录</string>

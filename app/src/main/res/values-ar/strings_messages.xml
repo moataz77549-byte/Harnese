@@ -105,6 +105,11 @@
     <string name="vm_github_new_code">جارٍ إنشاء رمز GitHub جديد…</string>
     <string name="vm_loading_repositories">جارٍ تحميل المستودعات…</string>
     <string name="vm_github_repos_failed">تعذّر تحميل مستودعات GitHub</string>
+    <string name="vm_github_auth_required">انتهت صلاحية جلسة GitHub أو لم تعد مخوّلة. أعد الاتصال بـ GitHub.</string>
+    <string name="vm_github_access_denied">رفض GitHub الوصول إلى المستودعات. تحقّق من صلاحيات حسابك.</string>
+    <string name="vm_github_rate_limit">بلغت الحد المسموح لطلبات GitHub. انتظر قليلًا ثم أعد المحاولة.</string>
+    <string name="vm_github_network_retry">لم يستجب GitHub. تحقّق من اتصال الإنترنت ثم حاول مرة أخرى.</string>
+    <string name="vm_github_invalid_response">قدّم GitHub استجابة غير مكتملة أو غير صالحة. حاول تحديث قائمة المستودعات.</string>
     <string name="vm_github_signing_out">جارٍ تسجيل الخروج من GitHub…</string>
     <string name="vm_github_logout_failed">فشل تسجيل الخروج من GitHub</string>
     <string name="vm_signed_out">تم تسجيل الخروج</string>

@@ -105,6 +105,11 @@
     <string name="vm_github_new_code">नया GitHub कोड बनाया जा रहा है…</string>
     <string name="vm_loading_repositories">रिपॉज़िटरी लोड हो रही हैं…</string>
     <string name="vm_github_repos_failed">GitHub रिपॉज़िटरी लोड नहीं हो सकीं</string>
+    <string name="vm_github_auth_required">आपका GitHub सत्र समाप्त हो गया है या अधिकृत नहीं है। GitHub को फिर से कनेक्ट करें।</string>
+    <string name="vm_github_access_denied">GitHub ने इन रिपॉज़िटरी का एक्सेस अस्वीकार किया। अपने खाते की अनुमतियाँ जाँचें।</string>
+    <string name="vm_github_rate_limit">GitHub अनुरोध सीमा पूरी हो गई है। थोड़ी देर बाद फिर कोशिश करें।</string>
+    <string name="vm_github_network_retry">GitHub ने जवाब नहीं दिया। इंटरनेट कनेक्शन जाँचें और फिर कोशिश करें।</string>
+    <string name="vm_github_invalid_response">GitHub का जवाब अधूरा या अमान्य था। रिपॉज़िटरी रीफ़्रेश करें।</string>
     <string name="vm_github_signing_out">GitHub से साइन आउट हो रहा है…</string>
     <string name="vm_github_logout_failed">GitHub लॉगआउट विफल रहा</string>
     <string name="vm_signed_out">साइन आउट हो गया</string>

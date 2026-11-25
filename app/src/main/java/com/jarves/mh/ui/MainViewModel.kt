@@ -53,6 +53,10 @@ import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.ModelDiscoveryResult
 import com.jarves.mh.network.ProviderApiClient
 import com.jarves.mh.network.GitHubRepository
+import com.jarves.mh.network.GitHubCliResponse
+import com.jarves.mh.network.GitHubRepositoryLoadException
+import com.jarves.mh.network.GitHubRepositoryLoadFailure
+import com.jarves.mh.network.GitHubRepositoryPages
 import com.jarves.mh.runtime.ClaudeRuntimeBridge
 import com.jarves.mh.runtime.DshRuntimeBridge
 import com.jarves.mh.runtime.AgentRegistry
@@ -3878,7 +3882,7 @@ class HarneseRuntimeController(private val application: Application) {
                         login?.takeIf(String::isNotBlank)?.let { addAll(listOf("--user", it)) }
                     }
                     val output = runGitHubCli(command)
-                    check(output.first == 0) { output.second.lineSequence().lastOrNull { it.isNotBlank() } ?: str(R.string.vm_github_logout_failed) }
+                    check(output.exitCode == 0) { str(R.string.vm_github_logout_failed) }
                 }
             }
             result.onSuccess {
@@ -3901,7 +3905,21 @@ class HarneseRuntimeController(private val application: Application) {
 
     private suspend fun refreshGitHubConnection() = withContext(Dispatchers.IO) {
         if (!installer.isGitHubCliInstalled()) return@withContext
-        val login = runCatching { githubAccountLogin() }.getOrNull()
+        val result = runCatching { githubAccountLogin() }
+        if (result.isFailure) {
+            // A temporary network/CLI failure must not erase the last known
+            // account or require re-authentication.
+            val previousLogin = preferences.githubLogin.takeIf(String::isNotBlank)
+            _state.update {
+                it.copy(
+                    githubAuthStatus = if (previousLogin != null) GitHubAuthStatus.CONNECTED else GitHubAuthStatus.ERROR,
+                    githubLogin = previousLogin,
+                    githubMessage = result.exceptionOrNull()?.message ?: str(R.string.vm_github_repos_failed),
+                )
+            }
+            return@withContext
+        }
+        val login = result.getOrNull()
         if (login.isNullOrBlank()) {
             preferences.githubLogin = ""
             _state.update { it.copy(githubAuthStatus = GitHubAuthStatus.DISCONNECTED, githubLogin = null) }
@@ -3925,55 +3943,87 @@ class HarneseRuntimeController(private val application: Application) {
         "BROWSER" to "/bin/false",
     )
 
-    private fun runGitHubCli(arguments: List<String>): Pair<Int, String> {
+    private fun runGitHubCli(arguments: List<String>): GitHubCliResponse {
         check(installer.isGitHubCliInstalled()) { str(R.string.vm_github_cli_missing) }
         val runtime = installer.installedRuntime()
-        val outputFile = File(getApplication<Application>().cacheDir, "github-cli-${System.nanoTime()}.log")
-        val workspace = File(getApplication<Application>().filesDir, "workspaces/github-auth").apply { mkdirs() }
+        val app = getApplication<Application>()
+        val workspace = File(app.filesDir, "workspaces/github-auth").apply { mkdirs() }
+        // NativeSpawn normally merges both streams for interactive terminals. Redirect
+        // only this non-interactive command's stdout inside the guest; PRoot and gh
+        // diagnostics remain in the native output file. Never tail or sanitize JSON.
+        val stdoutFile = File.createTempFile(".github-cli-", ".stdout", workspace)
+        val stderrFile = File(app.cacheDir, "github-cli-${System.nanoTime()}.log")
+        var process: Process? = null
         return try {
-            val process = installer.process(
+            val child = installer.process(
                 runtime.proot,
                 runtime.rootfs,
                 workspace,
                 githubCliEnvironment(),
-                listOf(RuntimeInstaller.GITHUB_CLI_GUEST_PATH) + arguments,
+                listOf(
+                    "/bin/sh", "-c", "output=\$1; shift; exec \"\$@\" > \"\$output\"",
+                    "github-cli", "/workspace/github-auth/${stdoutFile.name}",
+                    RuntimeInstaller.GITHUB_CLI_GUEST_PATH,
+                ) + arguments,
                 guestWorkspacePath = "/workspace/github-auth",
-                outputFile = outputFile,
+                outputFile = stderrFile,
             )
-            val exit = process.waitFor()
-            exit to sanitizeTerminalOutput(outputFile.readTailText(MAX_PROCESS_OUTPUT_BYTES)).trim()
+            process = child
+            child.outputStream.close()
+            if (!child.waitFor(35, TimeUnit.SECONDS)) {
+                GitHubCliResponse(-1, "", "", timedOut = true)
+            } else {
+                GitHubCliResponse(
+                    child.exitValue(),
+                    stdoutFile.readText(Charsets.UTF_8),
+                    sanitizeTerminalOutput(stderrFile.readTailText(16 * 1024)).trim(),
+                )
+            }
         } finally {
-            outputFile.delete()
+            process?.let { child ->
+                if (child.isAlive) {
+                    child.destroyForcibly()
+                    child.waitFor(2, TimeUnit.SECONDS)
+                }
+                runCatching { child.outputStream.close() }
+            }
+            stdoutFile.delete()
+            stderrFile.delete()
         }
     }
 
     private fun githubAccountLogin(): String? {
-        val (exit, output) = runGitHubCli(listOf("api", "user", "--jq", ".login"))
-        return output.lineSequence().lastOrNull { it.isNotBlank() }?.trim().takeIf { exit == 0 && !it.isNullOrBlank() }
+        val response = runGitHubCli(listOf("api", "user", "--jq", ".login"))
+        if (response.exitCode != 0) {
+            val failure = response.failure()
+            if (failure == GitHubRepositoryLoadFailure.AUTH) return null
+            error(githubLoadError(failure))
+        }
+        return response.stdout.trim().takeIf { it.isNotBlank() }
+            ?: error(str(R.string.vm_github_invalid_response))
     }
 
-    private fun githubRepositoriesFromCli(): List<GitHubRepository> {
-        val endpoint = "user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=updated&per_page=100"
-        val (exit, output) = runGitHubCli(listOf("api", "--paginate", "--slurp", endpoint))
-        check(exit == 0) { output.lineSequence().lastOrNull { it.isNotBlank() } ?: str(R.string.vm_github_repos_failed) }
-        val pages = JSONArray(output)
-        val repositories = LinkedHashMap<String, GitHubRepository>()
-        for (pageIndex in 0 until pages.length()) {
-            val page = pages.optJSONArray(pageIndex) ?: continue
-            for (index in 0 until page.length()) {
-                val item = page.optJSONObject(index) ?: continue
-                val fullName = item.optString("full_name").takeIf(String::isNotBlank) ?: continue
-                repositories[fullName] = GitHubRepository(
-                    fullName = fullName,
-                    cloneUrl = item.optString("clone_url", "https://github.com/$fullName.git"),
-                    private = item.optBoolean("private"),
-                    defaultBranch = item.optString("default_branch", "main"),
-                    description = item.optString("description"),
-                    updatedAt = item.optString("updated_at"),
+    private fun githubLoadError(failure: GitHubRepositoryLoadFailure): String = when (failure) {
+        GitHubRepositoryLoadFailure.AUTH -> str(R.string.vm_github_auth_required)
+        GitHubRepositoryLoadFailure.FORBIDDEN -> str(R.string.vm_github_access_denied)
+        GitHubRepositoryLoadFailure.RATE_LIMIT -> str(R.string.vm_github_rate_limit)
+        GitHubRepositoryLoadFailure.TEMPORARY -> str(R.string.vm_github_network_retry)
+        GitHubRepositoryLoadFailure.INVALID_RESPONSE -> str(R.string.vm_github_invalid_response)
+        GitHubRepositoryLoadFailure.OTHER -> str(R.string.vm_github_repos_failed)
+    }
+
+    private fun githubRepositoriesFromCli(): List<GitHubRepository> = try {
+        GitHubRepositoryPages.load(
+            fetchPage = { page ->
+                runGitHubCli(
+                    listOf("api", "--method", "GET", "--jq", GitHubRepositoryPages.PROJECTION,
+                        GitHubRepositoryPages.endpoint(page)),
                 )
-            }
-        }
-        return repositories.values.toList()
+            },
+            onRetry = { attempt -> Thread.sleep(attempt * 500L) },
+        )
+    } catch (failure: GitHubRepositoryLoadException) {
+        error(githubLoadError(failure.kind))
     }
 
     private fun openExternalUrl(url: String) {
