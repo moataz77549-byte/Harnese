@@ -110,7 +110,7 @@ import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
 
-private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, DIAGNOSTICS, TELEGRAM, UPDATE_CHANNEL }
+private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, DIAGNOSTICS, TELEGRAM, CODEX, UPDATE_CHANNEL }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -247,6 +247,24 @@ fun SettingsScreen(
                     expanded = expanded == SettingsSection.TELEGRAM,
                     onClick = { toggle(SettingsSection.TELEGRAM) },
                 ) { TelegramConnectSettings() }
+            }
+
+            item {
+                SettingsAccordion(
+                    title = "Codex CLI",
+                    subtitle = stringResource(R.string.codex_settings_subtitle),
+                    icon = Icons.Default.Code,
+                    expanded = expanded == SettingsSection.CODEX,
+                    onClick = { toggle(SettingsSection.CODEX) },
+                ) { CodexToolsPanel() }
+            }
+
+            item {
+                Text(
+                    stringResource(R.string.harnese_developer_credit),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             item {
