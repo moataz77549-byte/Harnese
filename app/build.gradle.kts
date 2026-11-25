@@ -73,6 +73,9 @@ android {
                 storePassword = checkNotNull(uploadStorePassword)
                 keyAlias = checkNotNull(uploadKeyAlias)
                 keyPassword = checkNotNull(uploadKeyPassword)
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }
@@ -90,14 +93,14 @@ android {
         }
         manifestPlaceholders["harneseAppIcon"] = if (parallelTrialInstall || repairTestInstall) "@mipmap/ic_launcher_nova" else "@mipmap/ic_launcher"
         manifestPlaceholders["harneseAppRoundIcon"] = if (parallelTrialInstall || repairTestInstall) "@mipmap/ic_launcher_nova_round" else "@mipmap/ic_launcher_round"
-        minSdk = 28
+        minSdk = 26
         // The direct APK retains the proven target-28 PRoot execution path. The
         // Play build targets current Android while its runtime path is validated.
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 22
-        versionName = "2.0.0-rc.3"
+        versionCode = 23
+        versionName = "2.0.0-rc.4"
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
         providers.gradleProperty("appVersionName").orNull?.let { versionName = it }
 
