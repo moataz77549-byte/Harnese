@@ -126,10 +126,11 @@ class AntigravityBridgeTest {
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--print-timeout", "60m",
-            "--dangerously-skip-permissions",
+            "--mode=accept-edits",
             "--model", "gemini-model",
             "--conversation", "conversation-1",
         )))
+        assertTrue("--dangerously-skip-permissions" !in command)
         assertTrue("--effort" !in command)
         assertTrue("--new-project" !in command)
     }

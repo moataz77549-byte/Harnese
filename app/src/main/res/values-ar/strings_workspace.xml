@@ -11,7 +11,7 @@
     <string name="ws_agy_complete_signin">إكمال تسجيل الدخول</string>
     <string name="ws_agy_connected_as">متصل باسم %1$s</string>
     <string name="ws_agy_google_connected">تم ربط حساب Google</string>
-    <string name="ws_agy_auto_approval_warning">الموافقة التلقائية على الأدوات مفعّلة لـ Antigravity. يمكنه تعديل ملفات المشروع وتشغيل الأوامر دون تأكيد. تظل التغييرات قابلة للمراجعة في PocketDev.</string>
+    <string name="ws_agy_auto_approval_warning">يحافظ Antigravity على ضوابط صلاحيات الأوامر، وتُجهّز تعديلات المشروع للمراجعة قبل تطبيقها. قد تتطلب بعض العمليات تنفيذًا تفاعليًا منفصلًا.</string>
     <string name="ws_selected">محدد</string>
     <string name="ws_stack_included">مُضمَّن</string>
     <string name="ws_bundles_included_offline">جميع الحزم المحددة مضمّنة في هذا التطبيق غير المتصل</string>

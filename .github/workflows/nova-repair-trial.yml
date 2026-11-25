@@ -1,0 +1,97 @@
+name: Build separately installable Nova Antigravity repair test
+
+on:
+  push:
+    branches: [feat/nova-antigravity-onboarding-repair]
+    paths:
+      - '.github/workflows/nova-repair-trial.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare pinned offline runtime
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y zstd
+          python3 scripts/offline/prepare-bundles.py
+
+      - name: Test and create a separate QA-signed release (NOT an update of the original)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          export MH_UPLOAD_STORE_FILE="$RUNNER_TEMP/nova-repair-test.jks"
+          export MH_UPLOAD_STORE_PASSWORD="$(openssl rand -hex 24)"
+          export MH_UPLOAD_KEY_PASSWORD="$MH_UPLOAD_STORE_PASSWORD"
+          export MH_UPLOAD_KEY_ALIAS="nova-repair-test"
+          keytool -genkeypair -noprompt -keystore "$MH_UPLOAD_STORE_FILE" \
+            -storepass "$MH_UPLOAD_STORE_PASSWORD" -keypass "$MH_UPLOAD_KEY_PASSWORD" \
+            -alias "$MH_UPLOAD_KEY_ALIAS" -keyalg RSA -keysize 3072 -validity 365 \
+            -dname "CN=Harnese Nova Repair Trial, O=Android QA"
+          ./gradlew :app:testOfflineDebugUnitTest :app:assembleOfflineRelease \
+            -PmhParallelInstall=true -PmhRepairTestInstall=true --no-daemon --stacktrace
+          rm -f "$MH_UPLOAD_STORE_FILE"
+
+      - name: Verify signature, package isolation, version, ARM64, JNI, and archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p delivery
+          source_apk=$(find app/build/outputs/apk/offline/release -name '*.apk' -print -quit)
+          test -n "$source_apk" && test -s "$source_apk"
+          apk=delivery/Harnese-Nova-v1.3.5-Repair-Test-ARM64.apk
+          cp "$source_apk" "$apk"
+          bt=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$bt/aapt" dump badging "$apk" | tee delivery/package.txt
+          grep -F "package: name='com.moataz.harnese.nova.repair' versionCode='18' versionName='1.3.5'" delivery/package.txt
+          grep -F "sdkVersion:'29'" delivery/package.txt
+          grep -F "native-code: 'arm64-v8a'" delivery/package.txt
+          "$bt/apksigner" verify --verbose --print-certs "$apk" > delivery/certificate.txt
+          grep -E 'Verified using v(2|3) scheme .*: true' delivery/certificate.txt
+          "$bt/zipalign" -c -P 16 4 "$apk"
+          python3 scripts/release/check_zstd_jni.py "$apk"
+          unzip -t "$apk" | tail -1
+          cd delivery
+          zip -0 Harnese-Nova-v1.3.5-Repair-Test-ARM64.zip Harnese-Nova-v1.3.5-Repair-Test-ARM64.apk
+          unzip -t Harnese-Nova-v1.3.5-Repair-Test-ARM64.zip
+          sha256sum Harnese-Nova-v1.3.5-Repair-Test-ARM64.apk Harnese-Nova-v1.3.5-Repair-Test-ARM64.zip > SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harnese-nova-1.3.5-repair-test-installable
+          path: delivery/
+          compression-level: 0
+          retention-days: 14
+
+      - name: Publish direct APK and ZIP in a clearly marked test release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create harnese-nova-v1.3.5-repair-test \
+            delivery/Harnese-Nova-v1.3.5-Repair-Test-ARM64.apk \
+            delivery/Harnese-Nova-v1.3.5-Repair-Test-ARM64.zip \
+            delivery/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --prerelease --title "Harnese Nova 1.3.5 — Antigravity Repair TEST (side-by-side)" \
+            --notes "TEST BUILD ONLY. Package com.moataz.harnese.nova.repair installs beside the original com.moataz.harnese.nova and does not modify, migrate or delete its data. Signed with a temporary QA certificate, so this test cannot update the owner-signed 1.3.4 installation. Android 10+ ARM64. One-tap verified download of the current official Antigravity CLI in the Google sign-in onboarding. Do not uninstall the original app to install this test build. The owner production signing key is needed to create an in-place update."

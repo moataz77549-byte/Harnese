@@ -54,6 +54,19 @@ class TelegramSecretStore(context: Context) {
         String(cipher.doFinal(Base64.decode(body, Base64.NO_WRAP)), Charsets.UTF_8)
     }.getOrNull()
 
+    fun sealContent(text: String): String {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey())
+        return Base64.encodeToString(cipher.iv + cipher.doFinal(text.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
+    }
+    fun openContent(blob: String): String {
+        if (blob.isEmpty()) return ""
+        val bytes = Base64.decode(blob, Base64.NO_WRAP)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
+        return String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8)
+    }
+
     fun hasToken(): Boolean = prefs.contains("token_blob")
     fun remoteTasksEnabled(): Boolean = prefs.getBoolean("remote_tasks_enabled", false)
     fun setRemoteTasksEnabled(enabled: Boolean) {

@@ -22,6 +22,9 @@ val uploadKeyPassword = providers.environmentVariable("MH_UPLOAD_KEY_PASSWORD").
 // Harnese Connect is a distinct application, deliberately isolated from earlier Harnese installs.
 // The owner must keep the NEW signing key for all future updates of this package.
 val parallelTrialInstall = providers.gradleProperty("mhParallelInstall").orNull == "true"
+// Only for a separately installable QA build when the original Nova key is unavailable.
+// Never use this package ID for owner-signed production updates.
+val repairTestInstall = providers.gradleProperty("mhRepairTestInstall").orNull == "true"
 val hasUploadSigning = listOf(
     uploadStorePath,
     uploadStorePassword,
@@ -35,19 +38,19 @@ val appUpdateManifestUrl =
 val runtimeBundleDir = rootProject.layout.projectDirectory.dir("dist/runtime-bundles")
 val generatedRuntimeAssets = layout.buildDirectory.dir("generated/runtime-assets")
 
-val prepareBundledAgentAssets = tasks.register<Sync>("prepareBundledAgentAssets") {
-    from(runtimeBundleDir.file("pocketdev-agy-arm64-2026.09.1.tar.zst"))
-    into(generatedRuntimeAssets.map { it.dir("shared/runtime") })
-}
-
 val prepareOfflineRuntimeAssets = tasks.register<Sync>("prepareOfflineRuntimeAssets") {
     from(
         runtimeBundleDir.file("pocketdev-core-arm64-2026.09.5.tar.zst"),
-        runtimeBundleDir.file("pocketdev-claude-arm64-2026.09.1.tar.zst"),
-        runtimeBundleDir.file("pocketdev-python-arm64-2026.09.2.tar.zst"),
-        runtimeBundleDir.file("pocketdev-android-arm64-2026.09.1.tar.zst"),
-        runtimeBundleDir.file("pocketdev-dsh-arm64-2026.09.1.tar.zst"),
+        runtimeBundleDir.file("nova-python-arm64-2026.09.2.tar.zst"),
+        runtimeBundleDir.file("nova-typescript-arm64-5.9.3.tar.zst"),
     )
+    from(runtimeBundleDir.file("offline-measured-manifest.json")) { rename { "offline-manifest.json" } }
+    doFirst {
+        listOf("pocketdev-core-arm64-2026.09.5.tar.zst", "nova-python-arm64-2026.09.2.tar.zst",
+            "nova-typescript-arm64-5.9.3.tar.zst", "offline-measured-manifest.json").forEach {
+            check(runtimeBundleDir.file(it).asFile.isFile) { "Missing verified offline asset: $it. Run scripts/offline/prepare-bundles.py first." }
+        }
+    }
     into(generatedRuntimeAssets.map { it.dir("offline/runtime") })
 }
 
@@ -75,18 +78,26 @@ android {
     }
 
     defaultConfig {
-        applicationId = if (parallelTrialInstall) "com.moataz.harnese.nova" else "com.jarves.harnese"
-        manifestPlaceholders["harneseAppLabel"] = if (parallelTrialInstall) "Harnese Nova" else "Harnese"
-        manifestPlaceholders["harneseAppIcon"] = if (parallelTrialInstall) "@mipmap/ic_launcher_nova" else "@mipmap/ic_launcher"
-        manifestPlaceholders["harneseAppRoundIcon"] = if (parallelTrialInstall) "@mipmap/ic_launcher_nova_round" else "@mipmap/ic_launcher_round"
+        applicationId = when {
+            repairTestInstall -> "com.moataz.harnese.nova.repair"
+            parallelTrialInstall -> "com.moataz.harnese.nova"
+            else -> "com.jarves.harnese"
+        }
+        manifestPlaceholders["harneseAppLabel"] = when {
+            repairTestInstall -> "Harnese Nova Repair"
+            parallelTrialInstall -> "Harnese Nova"
+            else -> "Harnese"
+        }
+        manifestPlaceholders["harneseAppIcon"] = if (parallelTrialInstall || repairTestInstall) "@mipmap/ic_launcher_nova" else "@mipmap/ic_launcher"
+        manifestPlaceholders["harneseAppRoundIcon"] = if (parallelTrialInstall || repairTestInstall) "@mipmap/ic_launcher_nova_round" else "@mipmap/ic_launcher_round"
         minSdk = 28
         // The direct APK retains the proven target-28 PRoot execution path. The
         // Play build targets current Android while its runtime path is validated.
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 14
-        versionName = "1.3.1-harnese.nova.1"
+        versionCode = 22
+        versionName = "2.0.0-rc.3"
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
         providers.gradleProperty("appVersionName").orNull?.let { versionName = it }
 
@@ -121,13 +132,14 @@ android {
             dimension = "runtimeDelivery"
             buildConfigField("boolean", "OFFLINE_RUNTIME_BUNDLES", "true")
             buildConfigField("String", "RUNTIME_RELEASE_BASE_URL", buildConfigString(runtimeReleaseBaseUrl))
-            buildConfigField("String", "APP_UPDATE_MANIFEST_URL", buildConfigString(appUpdateManifestUrl))
+            buildConfigField("String", "APP_UPDATE_MANIFEST_URL", buildConfigString(
+                if (parallelTrialInstall) "https://github.com/moataz77549-byte/Harnese/releases/latest/download/harnese-nova-update.json" else appUpdateManifestUrl
+            ))
             buildConfigField("String", "APP_VARIANT", "\"offline\"")
         }
     }
 
     sourceSets.getByName("offline").assets.srcDir(generatedRuntimeAssets.map { it.dir("offline") })
-    sourceSets.getByName("main").assets.srcDir(generatedRuntimeAssets.map { it.dir("shared") })
 
     buildTypes {
         debug {
@@ -138,7 +150,8 @@ android {
             )
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             if (hasUploadSigning) {
                 signingConfig = signingConfigs.getByName("upload")
             }
@@ -171,12 +184,6 @@ android {
 
 tasks.matching { it.name.startsWith("mergeOffline") && it.name.endsWith("Assets") }
     .configureEach { dependsOn(prepareOfflineRuntimeAssets) }
-
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
-    .configureEach { dependsOn(prepareBundledAgentAssets) }
-
-tasks.matching { it.name.contains("lint", ignoreCase = true) }
-    .configureEach { dependsOn(prepareBundledAgentAssets) }
 
 tasks.matching { it.name.contains("Offline") && it.name.contains("lint", ignoreCase = true) }
     .configureEach { dependsOn(prepareOfflineRuntimeAssets) }

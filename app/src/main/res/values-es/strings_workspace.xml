@@ -11,7 +11,7 @@
     <string name="ws_agy_complete_signin">Completar inicio de sesión</string>
     <string name="ws_agy_connected_as">Conectado como %1$s</string>
     <string name="ws_agy_google_connected">Cuenta de Google conectada</string>
-    <string name="ws_agy_auto_approval_warning">La aprobación automática de herramientas está activada para Antigravity. Puede editar archivos del proyecto y ejecutar comandos sin confirmación. Los cambios se pueden revisar en PocketDev.</string>
+    <string name="ws_agy_auto_approval_warning">Antigravity conserva las comprobaciones de permisos. Las ediciones se preparan para su revisión. Las acciones con aprobación interactiva pueden requerir ejecución separada.</string>
     <string name="ws_selected">Seleccionado</string>
     <string name="ws_stack_included">incluido</string>
     <string name="ws_bundles_included_offline">Todos los paquetes seleccionados están incluidos en esta app sin conexión</string>

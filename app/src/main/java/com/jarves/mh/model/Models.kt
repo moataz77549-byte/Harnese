@@ -70,7 +70,13 @@ enum class AgentKind(
         "antigravity",
         "Antigravity CLI",
         "Google's official coding agent · Google account",
-        "39.9 MB",
+        "About 90 MB",
+    ),
+    CODEX(
+        "codex",
+        "OpenAI Codex",
+        "Official Codex CLI · ChatGPT account",
+        "About 127 MB during setup",
     ),
     ;
 
@@ -136,7 +142,7 @@ fun providerProtocolForAgent(profile: ProviderProfile, agent: AgentKind): Provid
 fun providersForAgent(agent: AgentKind): List<ProviderKind> = when (agent) {
     AgentKind.DEEPSEEK_HARNESS -> ProviderKind.entries.filter { it in DEEPSEEK_HARNESS_PROVIDERS }
     AgentKind.CLAUDE_CODE -> ProviderKind.entries.filterNot { it == ProviderKind.OPENCODE_ZEN }
-    AgentKind.ANTIGRAVITY -> emptyList()
+    AgentKind.ANTIGRAVITY, AgentKind.CODEX -> emptyList()
 }
 
 data class ProviderProfile(

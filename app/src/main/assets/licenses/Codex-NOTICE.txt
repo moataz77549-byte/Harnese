@@ -1,0 +1,1 @@
+OpenAI Codex CLI is downloaded without modification from https://github.com/openai/codex/releases. See the selected upstream release for its license and notices. The Apache 2.0 license from the previously bundled version accompanies this notice.

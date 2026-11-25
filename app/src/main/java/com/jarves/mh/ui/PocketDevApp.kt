@@ -56,6 +56,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.ime
@@ -328,6 +329,8 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
         state.startupStage == StartupStage.SETUP_REQUIRED -> RuntimeSetupPromptScreen(
             selectedStacks = state.selectedDevStacks,
             selectedAgent = state.agentKind,
+            installCodexDuringSetup = state.installCodexDuringSetup,
+            onInstallCodexChange = viewModel::setInstallCodexDuringSetup,
             themeMode = state.themeMode,
             currentLanguageCode = state.languageCode,
             onSetLanguage = viewModel::setLanguage,
@@ -362,11 +365,25 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
                 currentLanguageCode = state.languageCode,
                 onSetLanguage = viewModel::setLanguage,
                 onStartLogin = viewModel::startAntigravityLogin,
+                onInstallAgent = viewModel::installAgent,
                 onSubmitCode = viewModel::submitAntigravityCode,
                 onContinue = viewModel::finishAntigravityOnboarding,
                 onSelectAgent = viewModel::chooseOnboardingAgent,
                 onToggleTheme = viewModel::toggleTheme,
             )
+        state.startupStage == StartupStage.MODEL_SETUP && state.agentKind == AgentKind.CODEX ->
+            Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.agent_title_codex), style = MaterialTheme.typography.headlineMedium)
+                Text(stringResource(R.string.codex_chat_description))
+                CodexToolsPanel(emptyList(), false)
+                Button(onClick = viewModel::finishCodexOnboarding, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.codex_continue_workspace))
+                }
+                OutlinedButton(onClick = { viewModel.chooseOnboardingAgent(AgentKind.ANTIGRAVITY) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.agent_title_antigravity))
+                }
+            }
         state.startupStage == StartupStage.MODEL_SETUP -> ProviderSetupScreen(
             initial = state.provider,
             onboarding = true,
@@ -472,6 +489,7 @@ private fun AntigravityOnboardingScreen(
     currentLanguageCode: String,
     onSetLanguage: (String) -> Unit,
     onStartLogin: () -> Unit,
+    onInstallAgent: (AgentKind) -> Unit,
     onSubmitCode: (String) -> Unit,
     onContinue: () -> Unit,
     onSelectAgent: (AgentKind) -> Unit,
@@ -510,7 +528,39 @@ private fun AntigravityOnboardingScreen(
                 stringResource(R.string.ws_agy_connect_desc),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            when (state.antigravityAuth.status) {
+            // Online/Light installs keep coding agents optional. When the user reaches
+            // Google sign-in before installing agy, offer a real one-tap installer
+            // here instead of sending them to a settings screen they cannot reach.
+            val agyReady = state.installedAgentVersions.containsKey(AgentKind.ANTIGRAVITY)
+            val agyInstalling = state.agentInstalling == AgentKind.ANTIGRAVITY
+            if (!agyReady) {
+                Text(
+                    stringResource(R.string.agent_not_installed, "Antigravity CLI"),
+                    color = MaterialTheme.colorScheme.error,
+                )
+                if (agyInstalling) {
+                    LinearProgressIndicator(
+                        progress = { state.agentProgress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    state.agentMessage?.let {
+                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    Button(
+                        onClick = { onInstallAgent(AgentKind.ANTIGRAVITY) },
+                        enabled = state.agentInstalling == null,
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.agent_install_action, "Antigravity CLI"))
+                    }
+                    state.agentMessage?.let {
+                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else when (state.antigravityAuth.status) {
                 AntigravityAuthStatus.SIGNED_OUT, AntigravityAuthStatus.ERROR -> {
                     state.antigravityAuth.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     Button(onClick = onStartLogin, modifier = Modifier.fillMaxWidth().height(52.dp)) {
@@ -1130,6 +1180,8 @@ private fun getDevStackVisuals(stack: DevStack): DevStackVisuals = when (stack) 
 private fun RuntimeSetupPromptScreen(
     selectedStacks: Set<DevStack>,
     selectedAgent: AgentKind = AgentKind.CLAUDE_CODE,
+    installCodexDuringSetup: Boolean = true,
+    onInstallCodexChange: (Boolean) -> Unit = {},
     themeMode: AppThemeMode = AppThemeMode.DARK,
     currentLanguageCode: String = "system",
     onSetLanguage: (String) -> Unit = {},
@@ -1437,6 +1489,18 @@ private fun RuntimeSetupPromptScreen(
                     modifier = Modifier.padding(top = 8.dp, start = 2.dp, end = 2.dp),
                 )
 
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = selectedAgent == AgentKind.CODEX || installCodexDuringSetup,
+                        enabled = selectedAgent != AgentKind.CODEX,
+                        onCheckedChange = onInstallCodexChange,
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(stringResource(R.string.setup_download_codex), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text(stringResource(R.string.setup_download_codex_note), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    }
+                }
+
                 Spacer(Modifier.height(18.dp))
                 Text(stringResource(R.string.runtime_setup_optional_toolchains_badge), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.9.sp)
                 Spacer(Modifier.height(8.dp))
@@ -1467,7 +1531,7 @@ private fun RuntimeSetupPromptScreen(
                     Icon(Icons.Default.Storage, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(7.dp))
                     Text(
-                        toolchainDownloadSummary(selectedStacks, selectedAgent),
+                        toolchainDownloadSummary(selectedStacks, selectedAgent, installCodexDuringSetup),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,
                     )
@@ -1519,7 +1583,8 @@ private fun RuntimeSetupPromptScreen(
 private const val CORE_RUNTIME_DOWNLOAD_MB = 69
 private const val CLAUDE_RUNTIME_DOWNLOAD_MB = 72
 private const val DSH_RUNTIME_DOWNLOAD_MB = 27
-private const val AGY_RUNTIME_DOWNLOAD_MB = 40
+private const val AGY_RUNTIME_DOWNLOAD_MB = 90
+private const val CODEX_RUNTIME_DOWNLOAD_MB = 127
 private const val PYTHON_RUNTIME_DOWNLOAD_MB = 55
 private const val ANDROID_RUNTIME_DOWNLOAD_MB = 570
 
@@ -1556,14 +1621,18 @@ private fun stackDownloadLabel(stack: DevStack): String = when {
 }
 
 @Composable
-private fun toolchainDownloadSummary(selected: Set<DevStack>, agent: AgentKind): String {
-    if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) return stringResource(R.string.ws_bundles_included_offline)
+private fun toolchainDownloadSummary(selected: Set<DevStack>, agent: AgentKind, includeCodex: Boolean): String {
+    val codexSelected = includeCodex || agent == AgentKind.CODEX
+    if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) return stringResource(R.string.ws_bundles_included_offline) +
+        if (codexSelected) " · " + stringResource(R.string.ws_download_total_mb, CODEX_RUNTIME_DOWNLOAD_MB) else ""
     val total = CORE_RUNTIME_DOWNLOAD_MB +
         when (agent) {
             AgentKind.CLAUDE_CODE -> CLAUDE_RUNTIME_DOWNLOAD_MB
             AgentKind.DEEPSEEK_HARNESS -> DSH_RUNTIME_DOWNLOAD_MB
             AgentKind.ANTIGRAVITY -> AGY_RUNTIME_DOWNLOAD_MB
+            AgentKind.CODEX -> CODEX_RUNTIME_DOWNLOAD_MB
         } +
+        (if (includeCodex && agent != AgentKind.CODEX) CODEX_RUNTIME_DOWNLOAD_MB else 0) +
         (if (DevStack.PYTHON in selected) PYTHON_RUNTIME_DOWNLOAD_MB else 0) +
         (if (DevStack.ANDROID in selected) ANDROID_RUNTIME_DOWNLOAD_MB else 0)
     val laterPackages = selected.intersect(setOf(DevStack.CPP, DevStack.PHP))
@@ -1652,11 +1721,13 @@ private fun AgentChoiceRow(
         AgentKind.CLAUDE_CODE -> Color(0xFFD97757)
         AgentKind.DEEPSEEK_HARNESS -> Color(0xFF4D6BFE)
         AgentKind.ANTIGRAVITY -> Color(0xFF4285F4)
+        AgentKind.CODEX -> Color(0xFF10A37F)
     }
     val mark = when (agent) {
         AgentKind.CLAUDE_CODE -> "CC"
         AgentKind.DEEPSEEK_HARNESS -> "DS"
         AgentKind.ANTIGRAVITY -> "AG"
+        AgentKind.CODEX -> "CX"
     }
     Row(
         modifier = Modifier
@@ -4094,6 +4165,7 @@ private fun ApiStatusChip(state: AppUiState, onSettings: () -> Unit, onPing: () 
     val providerLabel = when {
         state.agentKind == AgentKind.ANTIGRAVITY ->
             state.antigravityModel.ifBlank { agentTitle }
+        state.agentKind == AgentKind.CODEX -> agentTitle
         state.provider.model.isNotBlank() -> state.provider.model
         state.provider.baseUrl.isNotBlank() -> {
             runCatching { java.net.URI(state.provider.baseUrl).host ?: providerTitle }
@@ -4617,7 +4689,7 @@ private fun WorkspaceScreen(
                         )
                         // Agent first so it always stays visible; a long chat title is cut with "…".
                         Text(
-                            "${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
+                            "${if (state.agentKind in setOf(AgentKind.ANTIGRAVITY, AgentKind.CODEX)) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,

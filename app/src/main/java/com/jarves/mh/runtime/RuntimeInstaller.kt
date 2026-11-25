@@ -14,13 +14,15 @@ import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
-import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.coroutineContext
 import com.jarves.mh.model.DevStack
+import com.jarves.mh.model.AgentKind
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
@@ -74,6 +76,7 @@ class RuntimeInstaller(private val context: Context) {
     private val devStacksFile = File(rootfs, ".pocket-dev-stacks.json")
     private val dshMarker = File(rootfs, ".pocket-dsh-version")
     private val agyMarker = File(rootfs, ".pocket-agy-version")
+    private val codexMarker = File(rootfs, ".pocket-codex-version")
     private val githubCliMarker = File(rootfs, ".pocket-github-cli-version")
     private val dshAndroidCompatibilityMarker = File(rootfs, ".pocket-dsh-android-compat-version")
     private val macosMetadataRepairMarker = File(rootfs, ".pocket-macos-metadata-repair")
@@ -150,8 +153,14 @@ class RuntimeInstaller(private val context: Context) {
     suspend fun ensureInstalled(
         selectedStacks: Set<DevStack> = emptySet(),
         agent: com.jarves.mh.model.AgentKind = com.jarves.mh.model.AgentKind.CLAUDE_CODE,
-        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+        installCodexDuringSetup: Boolean = true,
+        reportProgress: suspend (RuntimeInstallProgress) -> Unit,
     ): InstalledRuntime {
+        val agents = setupAgentPlan(agent, installCodexDuringSetup, BuildConfig.OFFLINE_RUNTIME_BUNDLES)
+        val coreEnd = if (agents.isEmpty()) 0.99f else 0.76f
+        val onProgress: suspend (RuntimeInstallProgress) -> Unit = { progress ->
+            reportProgress(progress.copy(fraction = progress.fraction.coerceIn(0f, 1f) * coreEnd))
+        }
         require(
             supportsArm64Runtime(
                 android.os.Build.SUPPORTED_ABIS,
@@ -205,10 +214,11 @@ class RuntimeInstaller(private val context: Context) {
         // Node.js and Git are always available in the Core runtime. Python,
         // C/C++, PHP, and Android remain opt-in stacks during onboarding.
         val coreNeeded = !File(rootfs, "usr/bin/git").exists() || !isSupportedCoreToolsVersion()
+        if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) check(!coreNeeded) { "Embedded Core failed validation; repair from the APK is required" }
         if (coreNeeded) {
             installNodeIfNeeded(proot, 0.58f, 0.66f, onProgress)
         }
-        if (systemUpgradeMarker.readTextOrNull() != SYSTEM_UPGRADE_VERSION) {
+        if (!BuildConfig.OFFLINE_RUNTIME_BUNDLES && systemUpgradeMarker.readTextOrNull() != SYSTEM_UPGRADE_VERSION) {
             runSystemMaintenance(proot, onProgress)
             systemUpgradeMarker.writeText(SYSTEM_UPGRADE_VERSION)
         }
@@ -225,19 +235,32 @@ class RuntimeInstaller(private val context: Context) {
             coreToolsMarker.writeText(CORE_TOOLS_VERSION)
         }
 
-        val missingStacks = selectedStacks.filterNot(::isStackInstalled)
+        val requiredStacks = if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) selectedStacks + setOf(DevStack.WEB, DevStack.PYTHON) else selectedStacks
+        val missingStacks = requiredStacks.filterNot(::isStackInstalled)
         missingStacks.forEachIndexed { index, stack ->
             val slice = 0.26f / maxOf(1, missingStacks.size)
             val from = 0.72f + index * slice
             applyStack(proot, stack, from, from + slice, onProgress)
         }
 
-        when (agent) {
-            com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(proot, 0.985f, onProgress)
-            com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.985f, onProgress)
-            com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.985f, onProgress)
+        if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) ensureEmbeddedTypeScript(proot, onProgress)
+        val runtime = InstalledRuntime(proot, rootfs)
+        agents.forEachIndexed { index, selected ->
+            val width = (0.99f - coreEnd) / agents.size
+            val start = coreEnd + index * width
+            val agentProgress: suspend (RuntimeInstallProgress) -> Unit = { progress ->
+                reportProgress(progress.copy(fraction = start + progress.fraction.coerceIn(0f, 1f) * width))
+            }
+            reportProgress(RuntimeInstallProgress(str(R.string.rt_install_preparing_agent, selected.localizedTitle(context)), start))
+            when (selected) {
+                AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(proot, 0.03f, agentProgress)
+                AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.03f, agentProgress)
+                AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.03f, agentProgress)
+                AgentKind.CODEX -> ensureDownloadedCodex(runtime, agentProgress)
+            }
+            reportProgress(RuntimeInstallProgress(str(R.string.rt_install_ready, selected.localizedTitle(context)), start + width))
         }
-        onProgress(RuntimeInstallProgress(str(R.string.rt_install_setup_complete), 1f))
+        reportProgress(RuntimeInstallProgress(str(R.string.rt_install_setup_complete), 1f))
         return InstalledRuntime(proot, rootfs)
     }
 
@@ -255,6 +278,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(runtime.proot, 0.05f, onProgress)
+            com.jarves.mh.model.AgentKind.CODEX -> ensureDownloadedCodex(runtime, onProgress)
         }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_ready, agent.localizedTitle(context)), 1f))
     }
@@ -274,6 +298,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> isInstalled() &&
                 File(rootfs, AGY_GUEST_PATH.removePrefix("/")).canExecute() &&
                 !agyMarker.readTextOrNull().isNullOrBlank()
+            com.jarves.mh.model.AgentKind.CODEX -> isInstalled() && installedCodexVersion() != null
         }
     }
 
@@ -362,10 +387,17 @@ class RuntimeInstaller(private val context: Context) {
             ?.trim()
             ?.takeIf { it.isNotEmpty() && File(rootfs, AGY_GUEST_PATH.removePrefix("/")).canExecute() }
             ?.let { put(com.jarves.mh.model.AgentKind.ANTIGRAVITY, it) }
+        installedCodexVersion()?.let { put(com.jarves.mh.model.AgentKind.CODEX, it) }
     }
 
     /** Checks each installed agent against its own authoritative release source. */
     suspend fun checkAgentUpdates(): Map<com.jarves.mh.model.AgentKind, AgentUpdateInfo> {
+        if (isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
+            officialCliLock.withLock {
+                val version = probeCliVersion(installedRuntime(), AGY_GUEST_PATH)
+                agyMarker.writeText(version)
+            }
+        }
         val installed = installedAgentVersions()
         return buildMap {
             installed[com.jarves.mh.model.AgentKind.CLAUDE_CODE]?.let { current ->
@@ -384,10 +416,15 @@ class RuntimeInstaller(private val context: Context) {
                 }
             }
             installed[com.jarves.mh.model.AgentKind.ANTIGRAVITY]?.let { current ->
-                runCatching { fetchAgyManifest().getString("version") }.getOrNull()
+                runCatching { latestCliRelease(OfficialCli.ANTIGRAVITY).version }.getOrNull()
                     ?.takeIf { isVersionNewer(it, current) }?.let { latest ->
                         put(com.jarves.mh.model.AgentKind.ANTIGRAVITY, AgentUpdateInfo(current, latest))
                     }
+            }
+            installed[com.jarves.mh.model.AgentKind.CODEX]?.let { current ->
+                runCatching { latestCodexVersion() }.getOrNull()
+                    ?.takeIf { isVersionNewer(it, current) }
+                    ?.let { put(com.jarves.mh.model.AgentKind.CODEX, AgentUpdateInfo(current, it)) }
             }
         }
     }
@@ -402,6 +439,11 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> updateClaude(runtime, expectedVersion, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> updateDsh(runtime, expectedVersion, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> updateAgy(runtime, expectedVersion, onProgress)
+            com.jarves.mh.model.AgentKind.CODEX -> officialCliLock.withLock {
+                val release = latestCliRelease(OfficialCli.CODEX)
+                check(release.version == expectedVersion) { "Codex release changed; refresh updates" }
+                installOfficialCli(runtime, OfficialCli.CODEX, release, codexMarker, 0f, onProgress)
+            }
         }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_version_ready, agent.localizedTitle(context), expectedVersion), 1f, event = RuntimeInstallEvent.COMPLETED))
     }
@@ -437,38 +479,95 @@ class RuntimeInstaller(private val context: Context) {
         runtime: InstalledRuntime,
         expectedVersion: String,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
-    ) {
-        val manifest = fetchAgyManifest()
-        val latest = manifest.getString("version")
-        check(latest == expectedVersion) { str(R.string.rt_install_newer_release, "Antigravity") }
-        val downloaded = File(downloads, "antigravity-$latest-linux-arm64.tar.gz")
-        val agyDownloadLabel = str(R.string.rt_install_downloading_version, "Antigravity CLI", latest)
-        downloadVerified(manifest.getString("url"), downloaded, manifest.getString("sha256")) { bytes, total ->
-            val ratio = if (total > 0L) bytes.toFloat() / total else 0f
-            onProgress(RuntimeInstallProgress(agyDownloadLabel, ratio * 0.9f, bytes, total.takeIf { it > 0L }, event = RuntimeInstallEvent.DOWNLOAD))
+    ) = officialCliLock.withLock {
+        val release = latestCliRelease(OfficialCli.ANTIGRAVITY)
+        check(release.version == expectedVersion) { str(R.string.rt_install_newer_release, "Antigravity") }
+        installOfficialCli(runtime, OfficialCli.ANTIGRAVITY, release, agyMarker, 0f, onProgress)
+    }
+
+    internal fun installedCodexVersion(): String? =
+        if (File(rootfs, CODEX_GUEST_PATH.removePrefix("/")).canExecute()) codexMarker.readTextOrNull()?.takeIf(String::isNotBlank) else null
+
+    internal fun latestCodexVersion(): String = latestCliRelease(OfficialCli.CODEX).version
+
+    internal suspend fun installCodex(onProgress: suspend (RuntimeInstallProgress) -> Unit) =
+        officialCliLock.withLock {
+            val runtime = installedRuntime()
+            val release = latestCliRelease(OfficialCli.CODEX)
+            installOfficialCli(runtime, OfficialCli.CODEX, release, codexMarker, 0f, onProgress)
         }
-        val destination = File(rootfs, AGY_GUEST_PATH.removePrefix("/"))
-        destination.parentFile?.mkdirs()
-        var found = false
-        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(downloaded.inputStream()))).use { archive ->
-            var entry = archive.nextEntry
-            while (entry != null) {
-                val archiveName = entry.name.removePrefix("./").trim('/')
-                if (entry.isFile && (archiveName == "antigravity" || archiveName.endsWith("/antigravity") || archiveName == "agy" || archiveName.endsWith("/agy"))) {
-                    val staged = File(destination.parentFile, ".agy-$latest.installing")
-                    FileOutputStream(staged).use { archive.copyTo(it) }
-                    Os.chmod(staged.absolutePath, 0b111101101)
-                    Os.rename(staged.absolutePath, destination.absolutePath)
-                    found = true
-                    break
-                }
-                entry = archive.nextEntry
+
+    private suspend fun ensureDownloadedCodex(runtime: InstalledRuntime, onProgress: suspend (RuntimeInstallProgress) -> Unit) =
+        officialCliLock.withLock {
+            if (installedCodexVersion() == null) {
+                val release = latestCliRelease(OfficialCli.CODEX)
+                installOfficialCli(runtime, OfficialCli.CODEX, release, codexMarker, 0f, onProgress)
             }
         }
-        downloaded.delete()
-        check(found) { "Antigravity update archive is incomplete" }
-        verifyGuest(runtime.proot, "$AGY_GUEST_PATH --version", str(R.string.rt_install_update_verify_failed, "Antigravity CLI"))
-        agyMarker.writeText(latest)
+
+    internal suspend fun removeCodex() = officialCliLock.withLock {
+        val executable = File(rootfs, CODEX_GUEST_PATH.removePrefix("/"))
+        java.nio.file.Files.deleteIfExists(executable.toPath())
+        java.nio.file.Files.deleteIfExists(File(executable.parentFile, ".codex.previous").toPath())
+        java.nio.file.Files.deleteIfExists(codexMarker.toPath())
+        Unit
+    }
+
+    private suspend fun installOfficialCli(
+        runtime: InstalledRuntime,
+        cli: OfficialCli,
+        release: OfficialCliRelease,
+        marker: File,
+        from: Float,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
+        val displayName = if (cli == OfficialCli.CODEX) "Codex CLI" else "Antigravity CLI"
+        val archive = File(downloads, "${cli.executable}-${release.version}.tar.gz")
+        val label = str(R.string.rt_install_downloading_version, displayName, release.version)
+        val reportBytes: suspend (Long, Long) -> Unit = { bytes, total ->
+            val ratio = (bytes.toFloat() / release.size).coerceIn(0f, 1f)
+            onProgress(RuntimeInstallProgress(label, from + ratio * (0.9f - from).coerceAtLeast(0f), bytes,
+                total.takeIf { it > 0 } ?: release.size, event = RuntimeInstallEvent.DOWNLOAD))
+        }
+        VerifiedDownload().fetch(URL(release.url), archive, release.sha256, "SHA-256", release.size, reportBytes)
+        val directory = File(rootfs, "root/.local/bin")
+        check(directory.isDirectory || directory.mkdirs()) { "Could not create CLI installation directory" }
+        val destination = File(directory, cli.executable)
+        val staged = File(directory, ".${cli.executable}.installing")
+        val markerStage = File(marker.parentFile, "${marker.name}.installing")
+        val previous = File(directory, ".${cli.executable}.previous")
+        java.nio.file.Files.deleteIfExists(staged.toPath())
+        java.nio.file.Files.deleteIfExists(markerStage.toPath())
+        try {
+            onProgress(RuntimeInstallProgress(str(R.string.rt_install_installing_version, displayName, release.version),
+                maxOf(from, 0.92f), indeterminate = true))
+            extractCliExecutable(archive, staged, cli.executableNames)
+            Os.chmod(staged.absolutePath, 0b111101101)
+            val actualVersion = probeCliVersion(runtime, "/root/.local/bin/${staged.name}")
+            check(actualVersion == release.version) { "$displayName reported an unexpected version: $actualVersion" }
+            markerStage.writeText(actualVersion)
+            coroutineContext.ensureActive()
+            if (destination.isFile) {
+                destination.copyTo(previous, overwrite = true)
+                Os.chmod(previous.absolutePath, 0b111101101)
+            }
+            atomicReplace(staged, destination)
+            try {
+                atomicReplace(markerStage, marker)
+            } catch (error: Exception) {
+                if (previous.isFile) atomicReplace(previous, destination) else destination.delete()
+                throw error
+            }
+            archive.delete()
+        } finally {
+            staged.delete()
+            markerStage.delete()
+        }
+    }
+
+    private suspend fun probeCliVersion(runtime: InstalledRuntime, path: String): String {
+        val output = verifyGuest(runtime.proot, "$path --version", "CLI version probe failed")
+        return cliVersion(output) ?: error("CLI did not report a valid version")
     }
 
     private suspend fun updateDsh(
@@ -529,34 +628,8 @@ class RuntimeInstaller(private val context: Context) {
         dshAndroidCompatibilityMarker.writeText(DSH_ANDROID_COMPATIBILITY_VERSION)
     }
 
-    /**
-     * Discover the current official Google Antigravity CLI release for Linux ARM64.
-     * GitHub's published SHA-256 asset digest is mandatory; never install an
-     * unverified archive, or trust a third-party update mirror.
-     */
-    private fun fetchAgyManifest(): JSONObject {
-        val release = JSONObject(fetchText("https://api.github.com/repos/google-antigravity/antigravity-cli/releases/latest"))
-        val version = release.getString("tag_name").removePrefix("v")
-        require(version.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+"))) { "Invalid Antigravity release version" }
-        val assets = release.getJSONArray("assets")
-        val asset = (0 until assets.length()).asSequence()
-            .map { assets.getJSONObject(it) }
-            .firstOrNull { it.optString("name") == "agy_cli_linux_arm64.tar.gz" }
-            ?: error("Official Antigravity Linux ARM64 asset was not found")
-        val digest = asset.optString("digest")
-        require(digest.startsWith("sha256:") &&
-            digest.substringAfter(':').matches(Regex("[0-9a-fA-F]{64}"))) {
-            "The official Antigravity release did not provide a valid SHA-256 digest"
-        }
-        val url = asset.getString("browser_download_url")
-        require(url.startsWith("https://github.com/google-antigravity/antigravity-cli/releases/download/")) {
-            "Unexpected Antigravity release URL"
-        }
-        return JSONObject()
-            .put("version", version)
-            .put("url", url)
-            .put("sha256", digest.substringAfter(':'))
-    }
+    private fun latestCliRelease(cli: OfficialCli): OfficialCliRelease =
+        cli.readRelease(JSONObject(fetchText(cli.latestUrl)))
 
     private fun isVersionNewer(candidate: String, current: String): Boolean {
         fun parts(value: String) = Regex("\\d+").findAll(value).map { it.value.toIntOrNull() ?: 0 }.toList()
@@ -615,29 +688,10 @@ class RuntimeInstaller(private val context: Context) {
         fraction: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
-        if (isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) return
-        if (!BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
-            // A fresh online installation must use Google's latest verified release,
-            // not require the obsolete 2026.09 prebundled Antigravity archive.
-            val version = fetchAgyManifest().getString("version")
-            updateAgy(InstalledRuntime(proot, rootfs), version, onProgress)
-            require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-                "Official Antigravity CLI installation is incomplete"
-            }
-            return
-        }
-        installRuntimeOverlay(
-            bundle = AGY_BUNDLE,
-            message = str(R.string.rt_install_installing_version, "Antigravity CLI", AGY_VERSION),
-            from = fraction,
-            to = 0.995f,
-            onProgress = onProgress,
-            forceEmbedded = true,
-        )
-        verifyGuest(proot, "$AGY_GUEST_PATH --version", str(R.string.rt_install_verify_failed, "Antigravity CLI"))
-        agyMarker.writeText(AGY_VERSION)
-        require(isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-            "Antigravity CLI installation is incomplete"
+        officialCliLock.withLock {
+            if (isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) return@withLock
+            val release = latestCliRelease(OfficialCli.ANTIGRAVITY)
+            installOfficialCli(InstalledRuntime(proot, rootfs), OfficialCli.ANTIGRAVITY, release, agyMarker, fraction, onProgress)
         }
     }
 
@@ -866,9 +920,10 @@ class RuntimeInstaller(private val context: Context) {
             DevStack.PYTHON -> {
                 installRuntimeOverlay(PYTHON_BUNDLE, str(R.string.rt_install_python), from, to, onProgress)
                 runCatching {
-                    verifyGuest(proot, "python3 --version && pip3 --version", str(R.string.rt_install_verify_failed, "Python"))
+                    verifyGuest(proot, "python3 --version && pip3 --version && python3 -c 'import unittest,venv; assert sum([1,2,3]) == 6'", str(R.string.rt_install_verify_failed, "Python"))
                 }.onFailure { error ->
                     verified = false
+                    if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) throw error
                     onProgress(
                         RuntimeInstallProgress(
                             str(R.string.rt_install_python_verify_failed, error.message?.take(120).orEmpty()),
@@ -984,6 +1039,94 @@ class RuntimeInstaller(private val context: Context) {
         )
     }
 
+    /** Reapply only managed tool files; never replace the user's rootfs or project data. */
+    suspend fun repairEnvironment(name: String, onProgress: suspend (RuntimeInstallProgress) -> Unit) {
+        val runtime = installedRuntime()
+        when (name) {
+            "python" -> applyStack(runtime.proot, DevStack.PYTHON, 0.05f, 0.95f, onProgress)
+            "androidsdk" -> {
+                File(rootfs, "root/.pocket-android-tools-version").delete()
+                installAndroidToolchain(runtime.proot, 0.05f, 0.95f, onProgress)
+            }
+            "typescript" -> {
+                require(BuildConfig.OFFLINE_RUNTIME_BUNDLES) { "TypeScript repair requires the Offline APK" }
+                File(rootfs, ".nova-typescript-version").delete()
+                ensureEmbeddedTypeScript(runtime.proot, onProgress)
+            }
+            "node" -> {
+                require(BuildConfig.OFFLINE_RUNTIME_BUNDLES) { "Node repair requires the Offline APK" }
+                val archive = obtainRuntimeBundle(CORE_BUNDLE, true, 0.05f, 0.5f, onProgress)
+                // Core contains shell/home files too: copy ONLY Node-owned paths.
+                TarArchiveInputStream(ZstdCompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
+                    var entry = tar.nextEntry
+                    while (entry != null) {
+                        val path = entry.name.removePrefix("./")
+                        if (path.startsWith("usr/local/lib/nodejs/") && !path.split('/').any { it.startsWith("._") }) {
+                            val dest = safeChild(rootfs, path)
+                            when {
+                                entry.isDirectory -> createArchiveDirectory(dest)
+                                entry.isSymbolicLink -> { dest.parentFile.mkdirs(); if (dest.exists() || java.nio.file.Files.isSymbolicLink(dest.toPath())) dest.delete(); Os.symlink(entry.linkName,dest.path) }
+                                entry.isFile -> { dest.parentFile.mkdirs(); openArchiveFile(dest).use { copyArchiveBytes(tar, it, MAX_ARCHIVE_EXPANDED_BYTES) }; Os.chmod(dest.path,entry.mode and 511) }
+                            }
+                        }
+                        entry = tar.nextEntry
+                    }
+                }
+                for (tool in listOf("node","npm","npx")) {
+                    val link=File(rootfs,"usr/local/bin/$tool")
+                    if(link.exists() || java.nio.file.Files.isSymbolicLink(link.toPath())) link.delete()
+                    Os.symlink("../lib/nodejs/bin/$tool",link.path)
+                }
+                verifyGuest(runtime.proot,"node --version && npm --version && node -e 'if(6*7!==42) process.exit(1)'","Node repair failed")
+                archive.delete()
+            }
+            else -> error("Unsupported environment repair")
+        }
+        onProgress(RuntimeInstallProgress("$name: verified",1f))
+    }
+
+    suspend fun probeEnvironment(name: String): String {
+        if (name == "disk") return "Available: ${context.filesDir.usableSpace} bytes\nTotal: ${context.filesDir.totalSpace} bytes"
+        val runtime = installedRuntime()
+        val probeRoot = File(context.cacheDir, "nova-probe-${java.util.UUID.randomUUID()}")
+        probeRoot.mkdirs()
+        val command = when (name) {
+            "python" -> "python3 --version && python3 -m pip --version && python3 -c 'import unittest,venv; assert sum([1,2,3])==6; print(42)'"
+            "node" -> "node --version && npm --version && node -e 'if (6*7 !== 42) process.exit(1); console.log(42)'"
+            "typescript" -> "printf 'const n: number = 42; console.log(n);' > smoke.ts && tsc --version && tsc --target ES2020 --module commonjs smoke.ts && node smoke.js | grep -qx 42"
+            "androidsdk" -> "java -version && gradle --version && aapt2 version"
+            "runtimes" -> """for tool in python3 node npm tsc java gradle agy php gcc clang; do echo --- "${'$'}tool"; command -v "${'$'}tool" || true; done"""
+            "runtimehealth" -> {
+                AndroidProjectTemplateGenerator.generate(File(probeRoot, "android"), "NovaOfflineProbe", com.jarves.mh.model.AndroidTemplate.XML)
+                "python3 -c 'import unittest,venv; assert 6*7==42' && printf 'const n: number = 42; console.log(n);' > smoke.ts && tsc smoke.ts && node smoke.js | grep -qx 42 && cd android && gradle --offline --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx512m --init-script /root/.gradle/init.d/pocketdev-android.gradle -Pandroid.aapt2FromMavenOverride=/root/android-sdk/build-tools/35.0.0/aapt2 assembleDebug && test -s app/build/outputs/apk/debug/app-debug.apk && aapt2 dump badging app/build/outputs/apk/debug/app-debug.apk"
+            }
+            else -> error("Unsupported environment probe")
+        }
+        var running: Process? = null
+        try {
+            val probe = process(runtime.proot, runtime.rootfs, probeRoot, emptyMap(), listOf("/usr/bin/bash", "-lc", command))
+            running = probe
+            withTimeout(if (name == "runtimehealth") 15 * 60_000L else 90_000L) { while (probe.isAlive) delay(100) }
+            val result = probe.waitFor()
+            val output = (probe as? NativeSpawnProcess)?.outputFile?.readTailText(14000).orEmpty()
+            return "[$name] exit=$result\n$output"
+        } finally {
+            running?.let { if (it.isAlive) it.destroyForcibly() }
+            probeRoot.deleteRecursively()
+        }
+    }
+
+    private suspend fun ensureEmbeddedTypeScript(proot: File, onProgress: suspend (RuntimeInstallProgress) -> Unit) {
+        val manifest = JSONObject(context.assets.open("runtime/offline-manifest.json").bufferedReader().use { it.readText() }).getJSONObject("bundles").getJSONObject("typescript")
+        val marker = File(rootfs, ".nova-typescript-version")
+        if (marker.readTextOrNull() != manifest.getString("version") || !File(rootfs, "opt/nova/typescript/lib/tsc.js").isFile) {
+            val bundle = RuntimeBundle("TypeScript", manifest.getString("file"), manifest.getString("sha256"), manifest.getLong("compressedBytes"))
+            installRuntimeOverlay(bundle, "TypeScript", 0.94f, 0.98f, onProgress, forceEmbedded = true)
+            verifyGuest(proot, """mkdir -p /tmp/nova-ts-probe && printf 'const value: number = 42; console.log(value);' > /tmp/nova-ts-probe/smoke.ts && tsc --target ES2020 --module commonjs /tmp/nova-ts-probe/smoke.ts && node /tmp/nova-ts-probe/smoke.js | grep -qx 42""", "TypeScript offline compile/run failed")
+            marker.writeText(manifest.getString("version"))
+        }
+    }
+
     private suspend fun installRuntimeOverlay(
         bundle: RuntimeBundle,
         message: String,
@@ -1033,15 +1176,28 @@ class RuntimeInstaller(private val context: Context) {
     }
 
     private suspend fun obtainRuntimeBundle(
-        bundle: RuntimeBundle,
+        requestedBundle: RuntimeBundle,
         preferEmbedded: Boolean,
         from: Float,
         to: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ): File {
+        val embeddedFiles = context.assets.list("runtime").orEmpty().toSet()
+        val manifest = if ("offline-manifest.json" in embeddedFiles) {
+            JSONObject(context.assets.open("runtime/offline-manifest.json").bufferedReader().use { it.readText() }).getJSONObject("bundles")
+        } else JSONObject()
+        val info = manifest.keys().asSequence().map { manifest.getJSONObject(it) }
+            .firstOrNull { (it.getString("file") == requestedBundle.fileName || it.optString("sourceFile") == requestedBundle.fileName) && it.getString("file") in embeddedFiles }
+        val bundle = info?.let {
+            requestedBundle.copy(fileName = it.getString("file"), sha256 = it.getString("sha256"), compressedBytes = it.getLong("compressedBytes"))
+        } ?: requestedBundle
         downloads.mkdirs()
+        if (info != null) {
+            val required = bundle.compressedBytes + info.getLong("uncompressedBytes") * 2 + 64L * 1024 * 1024
+            check(context.filesDir.usableSpace >= required) { "Insufficient storage: need $required bytes for ${bundle.label}" }
+        }
         val destination = File(downloads, bundle.fileName)
-        val useEmbedded = preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES
+        val useEmbedded = bundle.fileName in embeddedFiles && (preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES)
         if (useEmbedded) {
             val loadingLabel = str(R.string.rt_install_loading_bundle, bundle.label)
             onProgress(RuntimeInstallProgress(loadingLabel, from, 0, bundle.compressedBytes))
@@ -1061,7 +1217,7 @@ class RuntimeInstaller(private val context: Context) {
                     }
                 }
             }
-            require(digest(temporary, "SHA-256").equals(bundle.sha256, ignoreCase = true)) {
+            require(checksum(temporary, "SHA-256").equals(bundle.sha256, ignoreCase = true)) {
                 "${bundle.label} bundle checksum mismatch"
             }
             if (destination.exists()) destination.delete()
@@ -1105,17 +1261,20 @@ class RuntimeInstaller(private val context: Context) {
     }
 
     private fun extractZipArchive(archive: File, destination: File) {
+        var remaining = minOf(MAX_ARCHIVE_EXPANDED_BYTES, destination.usableSpace)
+        var entries = 0
         ZipInputStream(BufferedInputStream(archive.inputStream())).use { zip ->
             var entry = zip.nextEntry
             while (entry != null) {
-                val name = entry.name.removePrefix("./").trimStart('/')
+                check(++entries <= MAX_ARCHIVE_ENTRIES) { "Archive has too many entries" }
+                val name = entry.name.removePrefix("./")
                 if (name.isNotBlank()) {
                     val target = safeChild(destination, name)
                     if (entry.isDirectory) {
-                        target.mkdirs()
+                        createArchiveDirectory(target)
                     } else {
                         target.parentFile?.mkdirs()
-                        FileOutputStream(target).use { output -> zip.copyTo(output) }
+                        openArchiveFile(target).use { output -> remaining -= copyArchiveBytes(zip, output, remaining) }
                     }
                 }
                 zip.closeEntry()
@@ -1469,7 +1628,7 @@ class RuntimeInstaller(private val context: Context) {
         .filter { it == '\t' || it.code >= 32 }
         .take(MAX_TERMINAL_LINE)
 
-    private suspend fun verifyGuest(proot: File, command: String, failureMessage: String) {
+    private suspend fun verifyGuest(proot: File, command: String, failureMessage: String): String {
         val verify = process(
             proot = proot,
             rootfs = rootfs,
@@ -1477,15 +1636,17 @@ class RuntimeInstaller(private val context: Context) {
             environment = emptyMap(),
             guestCommand = listOf("/usr/bin/env", "bash", "-lc", command),
         )
-        withTimeout(60_000L) {
-            while (verify.isAlive) delay(50)
+        val outputFile = (verify as? NativeSpawnProcess)?.outputFile
+        try {
+            withTimeout(60_000L) { while (verify.isAlive) delay(50) }
+            val exit = verify.waitFor()
+            val output = outputFile?.let(::readProcessOutputSafely).orEmpty().trim()
+            check(exit == 0) { actionableProcessError(output, failureMessage) }
+            return output
+        } finally {
+            if (verify.isAlive) verify.destroy()
+            outputFile?.delete()
         }
-        val exit = verify.waitFor()
-        val output = (verify as? NativeSpawnProcess)?.outputFile
-            ?.let(::readProcessOutputSafely)
-            .orEmpty()
-            .trim()
-        check(exit == 0) { actionableProcessError(output, failureMessage) }
     }
 
     /**
@@ -1623,7 +1784,7 @@ class RuntimeInstaller(private val context: Context) {
             environment = buildMap {
                 put("HOME", "/root")
                 val androidReady = File(rootfs, "root/.pocket-android-tools-version").readTextOrNull() == ANDROID_TOOLS_VERSION
-                val basePath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                val basePath = "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
                 if (androidReady) {
                     put("ANDROID_HOME", "/root/android-sdk")
                     put("ANDROID_SDK_ROOT", "/root/android-sdk")
@@ -1733,141 +1894,78 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         File(rootfs, "etc/resolv.conf").writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
     }
 
-    private fun extractRootfs(archive: File, destination: File) {
-        val deferredLinks = mutableListOf<Pair<File, File>>()
-        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
-            var entry: TarArchiveEntry? = tar.nextEntry
-            while (entry != null) {
-                val cleanName = entry.name.removePrefix("./")
-                val target = safeChild(destination, cleanName)
-                when {
-                    entry.isDirectory -> target.mkdirs()
-                    entry.isSymbolicLink -> {
-                        target.parentFile?.mkdirs()
-                        if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
-                        Os.symlink(entry.linkName, target.absolutePath)
-                    }
-                    entry.isLink -> {
-                        target.parentFile?.mkdirs()
-                        val linkTarget = safeChild(destination, entry.linkName.removePrefix("./"))
-                        if (linkTarget.exists()) {
-                            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-                        } else {
-                            deferredLinks += target to linkTarget
-                        }
-                    }
-                    entry.isFile -> {
-                        target.parentFile?.mkdirs()
-                        FileOutputStream(target).use { output -> tar.copyTo(output) }
-                        runCatching { Os.chmod(target.absolutePath, entry.mode and 0b111111111) }
-                    }
-                }
-                entry = tar.nextEntry
-            }
-        }
-        deferredLinks.forEach { (target, linkTarget) ->
-            require(linkTarget.isFile) { "Archive hard-link target is missing" }
-            target.parentFile?.mkdirs()
-            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-            runCatching { Os.chmod(target.absolutePath, android.system.Os.stat(linkTarget.absolutePath).st_mode) }
-        }
-    }
+    private fun extractRootfs(archive: File, destination: File) =
+        GzipCompressorInputStream(BufferedInputStream(archive.inputStream())).use { extractTar(it, destination, false) }
 
-    private fun extractZstdTar(archive: File, destination: File) {
+    private fun extractZstdTar(archive: File, destination: File) =
+        ZstdCompressorInputStream(BufferedInputStream(archive.inputStream())).use { extractTar(it, destination, false) }
+
+    private fun extractNodeArchive(archive: File, destination: File) =
+        GzipCompressorInputStream(BufferedInputStream(archive.inputStream())).use { extractTar(it, destination, true) }
+
+    private fun extractTar(input: java.io.InputStream, destination: File, stripPrefix: Boolean) {
         val deferredLinks = mutableListOf<Pair<File, File>>()
-        TarArchiveInputStream(
-            ZstdCompressorInputStream(BufferedInputStream(archive.inputStream())),
-        ).use { tar ->
+        var remaining = minOf(MAX_ARCHIVE_EXPANDED_BYTES, destination.usableSpace)
+        var entries = 0
+        fun relativePath(name: String): String {
+            val clean = name.removePrefix("./")
+            require(!clean.startsWith('/') && clean.split('/').none { it == ".." }) { "Unsafe archive path" }
+            return if (stripPrefix) clean.substringAfter('/', "") else clean
+        }
+        fun copyHardLink(target: File, source: File) {
+            require(archiveRegularFile(source)) { "Archive hard-link target is not a regular file" }
+            target.parentFile?.mkdirs()
+            source.inputStream().use { data ->
+                openArchiveFile(target).use { output -> remaining -= copyArchiveBytes(data, output, remaining) }
+            }
+            Os.chmod(target.absolutePath, Os.stat(source.absolutePath).st_mode and 511)
+        }
+        TarArchiveInputStream(input).use { tar ->
             var entry: TarArchiveEntry? = tar.nextEntry
             while (entry != null) {
-                val cleanName = entry.name.removePrefix("./")
-                if (cleanName.isNotBlank()) {
-                    val target = safeChild(destination, cleanName)
+                check(++entries <= MAX_ARCHIVE_ENTRIES) { "Archive has too many entries" }
+                val name = relativePath(entry.name)
+                if (name.isNotBlank() && name != ".") {
+                    val target = safeChild(destination, name)
                     when {
-                        entry.isDirectory -> target.mkdirs()
+                        entry.isDirectory -> createArchiveDirectory(target)
                         entry.isSymbolicLink -> {
                             target.parentFile?.mkdirs()
-                            if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
+                            if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) {
+                                check(target.delete()) { "Could not replace archive link" }
+                            }
+                            // Absolute names are guest Linux links. Host-side archive writes check
+                            // the canonical parent and never follow an existing leaf link.
                             Os.symlink(entry.linkName, target.absolutePath)
                         }
                         entry.isLink -> {
-                            target.parentFile?.mkdirs()
-                            val linkTarget = safeChild(destination, entry.linkName.removePrefix("./"))
-                            if (linkTarget.exists()) {
-                                linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-                            } else {
-                                deferredLinks += target to linkTarget
-                            }
+                            val source = safeChild(destination, relativePath(entry.linkName))
+                            if (archiveRegularFile(source)) copyHardLink(target, source)
+                            else deferredLinks += target to source
                         }
                         entry.isFile -> {
+                            check(!entry.isSparse && entry.size in 0..remaining) { "Archive entry exceeds remaining space" }
                             target.parentFile?.mkdirs()
-                            FileOutputStream(target).use { output -> tar.copyTo(output) }
-                            runCatching { Os.chmod(target.absolutePath, entry.mode and 0b111111111) }
+                            openArchiveFile(target).use { output ->
+                                val written = copyArchiveBytes(tar, output, remaining)
+                                check(written == entry.size) { "Incomplete archive entry" }
+                                remaining -= written
+                            }
+                            Os.chmod(target.absolutePath, entry.mode and 511)
                         }
                     }
                 }
                 entry = tar.nextEntry
             }
         }
-        deferredLinks.forEach { (target, linkTarget) ->
-            require(linkTarget.isFile) { "Archive hard-link target is missing" }
-            target.parentFile?.mkdirs()
-            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-            runCatching { Os.chmod(target.absolutePath, android.system.Os.stat(linkTarget.absolutePath).st_mode) }
+        deferredLinks.forEach { (target, source) ->
+            // Recheck parents after processing later entries.
+            copyHardLink(safeChild(destination, target.relativeTo(destination).path),
+                safeChild(destination, source.relativeTo(destination).path))
         }
     }
 
-    private fun extractNodeArchive(archive: File, destination: File) {
-        val deferredLinks = mutableListOf<Pair<File, File>>()
-        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
-            var entry: TarArchiveEntry? = tar.nextEntry
-            while (entry != null) {
-                val relative = entry.name.removePrefix("./").substringAfter('/', "")
-                if (relative.isNotBlank()) {
-                    val target = safeChild(destination, relative)
-                    when {
-                        entry.isDirectory -> target.mkdirs()
-                        entry.isSymbolicLink -> {
-                            target.parentFile?.mkdirs()
-                            if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
-                            Os.symlink(entry.linkName, target.absolutePath)
-                        }
-                        entry.isLink -> {
-                            val relativeLink = entry.linkName.removePrefix("./").substringAfter('/', "")
-                            val linkTarget = safeChild(destination, relativeLink)
-                            target.parentFile?.mkdirs()
-                            if (linkTarget.exists()) {
-                                linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-                            } else {
-                                deferredLinks += target to linkTarget
-                            }
-                        }
-                        entry.isFile -> {
-                            target.parentFile?.mkdirs()
-                            FileOutputStream(target).use { output -> tar.copyTo(output) }
-                            runCatching { Os.chmod(target.absolutePath, entry.mode and 0b111111111) }
-                        }
-                    }
-                }
-                entry = tar.nextEntry
-            }
-        }
-        deferredLinks.forEach { (target, linkTarget) ->
-            require(linkTarget.isFile) { "Node.js archive hard-link target is missing" }
-            target.parentFile?.mkdirs()
-            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-            runCatching { Os.chmod(target.absolutePath, android.system.Os.stat(linkTarget.absolutePath).st_mode) }
-        }
-    }
-
-    private fun safeChild(root: File, relative: String): File {
-        require(relative.isNotBlank() && !relative.startsWith('/')) { "Unsafe archive path" }
-        val file = File(root, relative)
-        val rootPath = root.canonicalFile.toPath()
-        val parentPath = (file.parentFile ?: root).canonicalFile.toPath()
-        require(parentPath.startsWith(rootPath)) { "Archive path escapes runtime" }
-        return file
-    }
+    private fun safeChild(root: File, relative: String): File = checkedArchiveChild(root, relative)
 
     private suspend fun downloadVerified(
         url: String,
@@ -1876,46 +1974,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         algorithm: String = "SHA-256",
         onBytes: suspend (downloaded: Long, total: Long) -> Unit,
     ) {
-        destination.parentFile?.mkdirs()
-        if (destination.isFile && digest(destination, algorithm).equals(expectedChecksum, ignoreCase = true)) {
-            onBytes(destination.length(), destination.length())
-            return
-        }
-        val temporary = File(destination.parentFile, "${destination.name}.part")
-        var existing = temporary.takeIf(File::isFile)?.length() ?: 0L
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = 20_000
-        connection.readTimeout = 120_000
-        connection.instanceFollowRedirects = true
-        if (existing > 0L) connection.setRequestProperty("Range", "bytes=$existing-")
-        check(connection.responseCode in 200..299) { str(R.string.rt_install_download_failed_http, connection.responseCode) }
-        val resumed = connection.responseCode == HttpURLConnection.HTTP_PARTIAL && existing > 0L
-        if (!resumed) {
-            temporary.delete()
-            existing = 0L
-        }
-        val total = connection.contentLengthLong.takeIf { it >= 0L }?.plus(existing) ?: -1L
-        connection.inputStream.use { input ->
-            FileOutputStream(temporary, resumed).use { output ->
-                val buffer = ByteArray(128 * 1024)
-                var downloaded = existing
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    output.write(buffer, 0, count)
-                    downloaded += count
-                    onBytes(downloaded, total)
-                }
-            }
-        }
-        connection.disconnect()
-        val actual = digest(temporary, algorithm)
-        if (!actual.equals(expectedChecksum, ignoreCase = true)) {
-            temporary.delete()
-            error("Downloaded file checksum did not match")
-        }
-        destination.delete()
-        check(temporary.renameTo(destination)) { "Could not finish download" }
+        VerifiedDownload().fetch(URL(url), destination, expectedChecksum, algorithm, 2L * 1024 * 1024 * 1024, onBytes)
     }
 
     private fun fetchText(url: String): String {
@@ -1924,26 +1983,32 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         connection.readTimeout = 30_000
         connection.setRequestProperty("Accept", "application/json")
         connection.setRequestProperty("User-Agent", "Harnese-Android/1.1")
-        check(connection.responseCode in 200..299) { "Request failed with HTTP ${connection.responseCode}" }
-        return connection.inputStream.bufferedReader().use { it.readText() }.also { connection.disconnect() }
-    }
-
-    private fun digest(file: File, algorithm: String): String {
-        val digest = MessageDigest.getInstance(algorithm)
-        file.inputStream().use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
+        connection.instanceFollowRedirects = false
+        try {
+            check(connection.responseCode in 200..299) { "Request failed with HTTP ${connection.responseCode}" }
+            return connection.inputStream.use { input ->
+                val buffer = ByteArray(1024 * 1024 + 1)
+                var size = 0
+                while (size < buffer.size) {
+                    val count = input.read(buffer, size, buffer.size - size)
+                    if (count < 0) break
+                    size += count
+                }
+                check(size < buffer.size) { "Release metadata exceeds its size limit" }
+                buffer.decodeToString(0, size)
             }
+        } finally {
+            connection.disconnect()
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun File.readTextOrNull(): String? = runCatching { readText().trim() }.getOrNull()
 
     companion object {
+        private const val MAX_ARCHIVE_EXPANDED_BYTES = 8L * 1024 * 1024 * 1024
+        private const val MAX_ARCHIVE_ENTRIES = 400_000
+        private val officialCliLock = Mutex()
+        internal const val CODEX_GUEST_PATH = "/root/.local/bin/codex"
         const val AGY_GUEST_PATH = "/root/.local/bin/agy"
         const val GITHUB_CLI_GUEST_PATH = "/root/.local/bin/gh"
         private const val AGY_VERSION = "1.1.27"

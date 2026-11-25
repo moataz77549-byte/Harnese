@@ -1,0 +1,114 @@
+name: Build and package Harnese Nova 1.3.5 Antigravity repair
+
+on:
+  push:
+    branches: [feat/nova-antigravity-onboarding-repair]
+    paths:
+      - 'app/**'
+      - 'scripts/offline/**'
+      - 'scripts/release/**'
+      - '.github/workflows/nova-agy-repair-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      HARN_NOVA_JKS_B64: ${{ secrets.HARN_NOVA_JKS_B64 }}
+      MH_UPLOAD_STORE_PASSWORD: ${{ secrets.HARN_NOVA_KEYSTORE_PASS }}
+      MH_UPLOAD_KEY_ALIAS: ${{ secrets.HARN_NOVA_KEY_ALIAS }}
+      MH_UPLOAD_KEY_PASSWORD: ${{ secrets.HARN_NOVA_KEY_PASS }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare verified embedded Python and TypeScript runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y zstd
+          python3 scripts/offline/prepare-bundles.py
+
+      - name: Set up owner signing only if the original keystore is configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$HARN_NOVA_JKS_B64" && -n "$MH_UPLOAD_STORE_PASSWORD" && -n "$MH_UPLOAD_KEY_ALIAS" && -n "$MH_UPLOAD_KEY_PASSWORD" ]]; then
+            umask 077
+            mkdir -p "$RUNNER_TEMP/harnese-nova-signing"
+            MH_UPLOAD_STORE_FILE="$RUNNER_TEMP/harnese-nova-signing/nova-owner.jks"
+            printf '%s' "$HARN_NOVA_JKS_B64" | base64 -d > "$MH_UPLOAD_STORE_FILE"
+            test -s "$MH_UPLOAD_STORE_FILE"
+            echo "MH_UPLOAD_STORE_FILE=$MH_UPLOAD_STORE_FILE" >> "$GITHUB_ENV"
+            echo "OWNER_SIGNING_CONFIGURED=true" >> "$GITHUB_ENV"
+          else
+            echo "OWNER_SIGNING_CONFIGURED=false" >> "$GITHUB_ENV"
+            echo "::warning::Original Nova signing key is not configured. Will build and test but cannot publish an install-over-existing update."
+          fi
+
+      - name: Compile, run unit tests, and build Android 10+ ARM64 Release
+        run: ./gradlew :app:testOfflineDebugUnitTest :app:assembleOfflineRelease -PmhParallelInstall=true --no-daemon --stacktrace
+
+      - name: Inspect the compiled APK, JNI, and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p delivery
+          APK=$(find app/build/outputs/apk/offline/release -name '*.apk' -print -quit)
+          test -n "$APK" && test -s "$APK"
+          cp "$APK" delivery/Harnese-Nova-v1.3.5-Light-ARM64.apk
+          APK=delivery/Harnese-Nova-v1.3.5-Light-ARM64.apk
+          BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          python3 scripts/release/check_zstd_jni.py "$APK"
+          unzip -t "$APK" > delivery/apk-integrity.txt
+          "$BT/aapt" dump badging "$APK" > delivery/package.txt
+          grep -F "package: name='com.moataz.harnese.nova' versionCode='18' versionName='1.3.5'" delivery/package.txt
+          grep -F "sdkVersion:'29'" delivery/package.txt
+          grep -F "native-code: 'arm64-v8a'" delivery/package.txt
+          if [ "$OWNER_SIGNING_CONFIGURED" = true ]; then
+            "$BT/apksigner" verify --verbose --print-certs "$APK" > delivery/certificate.txt
+            grep -F "certificate SHA-256 digest: d7f31fde154fc9b46fe8ef333fd12ecdfbd9b331d71a5284c24a6ad8ad45de51" delivery/certificate.txt
+            "$BT/zipalign" -c -P 16 4 "$APK"
+          else
+            echo "::warning::Unsigned compilation passed; APK is not installable without owner signing."
+          fi
+          (cd delivery && sha256sum Harnese-Nova-v1.3.5-Light-ARM64.apk > SHA256SUMS.txt)
+          (cd delivery && zip -0 Harnese-Nova-v1.3.5-Light-ARM64.zip Harnese-Nova-v1.3.5-Light-ARM64.apk)
+          unzip -t delivery/Harnese-Nova-v1.3.5-Light-ARM64.zip
+
+      - name: Upload verification artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-1.3.5-antigravity-repair-build
+          path: delivery/
+          compression-level: 0
+          retention-days: 14
+
+      - name: Release installable owner-signed APK and ZIP only when verified
+        if: env.OWNER_SIGNING_CONFIGURED == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create harnese-nova-v1.3.5 \
+            delivery/Harnese-Nova-v1.3.5-Light-ARM64.apk \
+            delivery/Harnese-Nova-v1.3.5-Light-ARM64.zip \
+            delivery/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Harnese Nova v1.3.5 — Antigravity one-tap install" \
+            --notes "Android 10+ ARM64. Preserves com.moataz.harnese.nova and verifies the original Nova signing certificate. The Antigravity Google sign-in onboarding now includes a one-tap install button with progress, verified official latest Linux ARM64 CLI download, and retry on failure. Existing projects and app data are preserved on update. Actual Google OAuth still requires a device test."
