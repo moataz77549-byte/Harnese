@@ -515,7 +515,8 @@ class RuntimeInstaller(private val context: Context) {
     ) {
         val displayName = if (cli == OfficialCli.CODEX) "Codex CLI" else "Antigravity CLI"
         val archive = File(downloads, "${cli.executable}-${release.version}.tar.gz")
-        val label = str(R.string.rt_install_downloading_version, displayName, release.version)
+        val label = if (bundledAsset != null) str(R.string.codex_extracting_bundled)
+            else str(R.string.rt_install_downloading_version, displayName, release.version)
         val reportBytes: suspend (Long, Long) -> Unit = { bytes, total ->
             val ratio = (bytes.toFloat() / release.size).coerceIn(0f, 1f)
             onProgress(RuntimeInstallProgress(label, from + ratio * (0.9f - from).coerceAtLeast(0f), bytes,

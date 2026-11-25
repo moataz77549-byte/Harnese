@@ -95,7 +95,7 @@ class AppUpdater(
 
     suspend fun download(info: AppUpdateInfo, progress: (Long, Long) -> Unit): File {
         val directory = File(context.filesDir, "updates").also { it.mkdirs() }
-        val candidate = File(directory, "mobile-harness-${BuildConfig.APP_VARIANT}-${info.versionCode}.download")
+        val candidate = File(directory, "mobile-harness-${BuildConfig.APP_VARIANT}-${info.versionCode}.verified.apk")
         val target = File(directory, "mobile-harness-${BuildConfig.APP_VARIANT}-${info.versionCode}.apk")
         VerifiedDownload().fetch(URL(info.apkUrl), candidate, info.sha256, "SHA-256", info.sizeBytes) { bytes, total ->
             progress(bytes, total)
