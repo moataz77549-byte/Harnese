@@ -222,7 +222,7 @@ class AntigravityRuntimeBridge(
                     addAll(listOf("--input-format", "stream-json"))
                     addAll(listOf("--output-format", "stream-json"))
                     addAll(listOf("--print-timeout", "2m"))
-                    add("--dangerously-skip-permissions")
+                    add("--mode=default")
                     addAntigravitySelection(model(), effort())
                     add("--new-project")
                 }
@@ -500,9 +500,8 @@ class AntigravityRuntimeBridge(
     }
 
     override suspend fun respondToApproval(request: ToolRequest, approved: Boolean) {
-        // agy headless streaming rejects control_response messages. This driver is
-        // intentionally launched with --dangerously-skip-permissions by explicit
-        // product choice, so no Antigravity approval can be pending here.
+        // The official headless input protocol rejects control_response messages.
+        // Commands that need live approval must be run separately by the user.
     }
 
     override suspend fun stopSession(sessionId: String) {
@@ -689,9 +688,9 @@ internal fun antigravityCommand(model: String, effort: String, conversationId: S
     addAll(listOf("--input-format", "stream-json"))
     addAll(listOf("--output-format", "stream-json"))
     addAll(listOf("--print-timeout", "60m"))
-    // This is intentionally explicit and covered by tests. Antigravity tool calls
-    // do not pass through PocketDev approval dialogs while this mode is enabled.
-    add("--dangerously-skip-permissions")
+    // Edits occur in the staged workspace. Sensitive shell commands retain
+    // the CLI permission checks and require a supported approval flow.
+    add("--mode=accept-edits")
     addAntigravitySelection(model, effort)
     conversationId?.takeIf(String::isNotBlank)?.let {
         addAll(listOf("--conversation", it))

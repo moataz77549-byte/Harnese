@@ -11,7 +11,7 @@
     <string name="ws_agy_complete_signin">Завершить вход</string>
     <string name="ws_agy_connected_as">Подключено как %1$s</string>
     <string name="ws_agy_google_connected">Аккаунт Google подключён</string>
-    <string name="ws_agy_auto_approval_warning">Для Antigravity включено автоматическое одобрение инструментов. Он может изменять файлы проекта и выполнять команды без подтверждения. Изменения можно просмотреть в PocketDev.</string>
+    <string name="ws_agy_auto_approval_warning">Antigravity сохраняет проверки разрешений команд. Изменения подготавливаются для проверки. Интерактивное подтверждение может потребовать отдельного запуска.</string>
     <string name="ws_selected">Выбрано</string>
     <string name="ws_stack_included">включено</string>
     <string name="ws_bundles_included_offline">Все выбранные пакеты входят в это офлайн-приложение</string>

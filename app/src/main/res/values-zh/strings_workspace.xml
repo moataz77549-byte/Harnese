@@ -11,7 +11,7 @@
     <string name="ws_agy_complete_signin">完成登录</string>
     <string name="ws_agy_connected_as">已连接为 %1$s</string>
     <string name="ws_agy_google_connected">Google 账号已连接</string>
-    <string name="ws_agy_auto_approval_warning">已为 Antigravity 启用工具自动批准。它可以在无需确认的情况下编辑项目文件并运行命令。所有更改仍可在 PocketDev 中审查。</string>
+    <string name="ws_agy_auto_approval_warning">Antigravity 保留命令权限检查。项目修改将暂存以供审查。需要交互批准的操作可能需要单独执行。</string>
     <string name="ws_selected">已选择</string>
     <string name="ws_stack_included">已包含</string>
     <string name="ws_bundles_included_offline">所有选定的软件包均已包含在此离线版应用中</string>

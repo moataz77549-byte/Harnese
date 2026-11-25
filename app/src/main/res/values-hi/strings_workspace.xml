@@ -11,7 +11,7 @@
     <string name="ws_agy_complete_signin">साइन-इन पूरा करें</string>
     <string name="ws_agy_connected_as">%1$s के रूप में कनेक्ट है</string>
     <string name="ws_agy_google_connected">Google खाता कनेक्ट हो गया</string>
-    <string name="ws_agy_auto_approval_warning">Antigravity के लिए स्वचालित टूल स्वीकृति सक्षम है। यह बिना पुष्टि के प्रोजेक्ट फ़ाइलें संपादित कर सकता है और कमांड चला सकता है। बदलावों की समीक्षा PocketDev में की जा सकती है।</string>
+    <string name="ws_agy_auto_approval_warning">Antigravity कमांड अनुमतियों की जाँच बनाए रखता है। प्रोजेक्ट संशोधन समीक्षा के लिए तैयार होते हैं। इंटरैक्टिव अनुमति वाले कार्य अलग से चलाने पड़ सकते हैं।</string>
     <string name="ws_selected">चयनित</string>
     <string name="ws_stack_included">शामिल</string>
     <string name="ws_bundles_included_offline">सभी चयनित बंडल इस ऑफ़लाइन ऐप में शामिल हैं</string>
