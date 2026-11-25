@@ -1020,9 +1020,9 @@ class RuntimeInstaller(private val context: Context) {
                         if (path.startsWith("usr/local/lib/nodejs/") && !path.split('/').any { it.startsWith("._") }) {
                             val dest = safeChild(rootfs, path)
                             when {
-                                entry.isDirectory -> dest.mkdirs()
+                                entry.isDirectory -> createArchiveDirectory(dest)
                                 entry.isSymbolicLink -> { dest.parentFile.mkdirs(); if (dest.exists() || java.nio.file.Files.isSymbolicLink(dest.toPath())) dest.delete(); Os.symlink(entry.linkName,dest.path) }
-                                entry.isFile -> { dest.parentFile.mkdirs(); FileOutputStream(dest).use { tar.copyTo(it) }; Os.chmod(dest.path,entry.mode and 511) }
+                                entry.isFile -> { dest.parentFile.mkdirs(); openArchiveFile(dest).use { copyArchiveBytes(tar, it, MAX_ARCHIVE_EXPANDED_BYTES) }; Os.chmod(dest.path,entry.mode and 511) }
                             }
                         }
                         entry = tar.nextEntry
@@ -1217,17 +1217,20 @@ class RuntimeInstaller(private val context: Context) {
     }
 
     private fun extractZipArchive(archive: File, destination: File) {
+        var remaining = minOf(MAX_ARCHIVE_EXPANDED_BYTES, destination.usableSpace)
+        var entries = 0
         ZipInputStream(BufferedInputStream(archive.inputStream())).use { zip ->
             var entry = zip.nextEntry
             while (entry != null) {
-                val name = entry.name.removePrefix("./").trimStart('/')
+                check(++entries <= MAX_ARCHIVE_ENTRIES) { "Archive has too many entries" }
+                val name = entry.name.removePrefix("./")
                 if (name.isNotBlank()) {
                     val target = safeChild(destination, name)
                     if (entry.isDirectory) {
-                        target.mkdirs()
+                        createArchiveDirectory(target)
                     } else {
                         target.parentFile?.mkdirs()
-                        FileOutputStream(target).use { output -> zip.copyTo(output) }
+                        openArchiveFile(target).use { output -> remaining -= copyArchiveBytes(zip, output, remaining) }
                     }
                 }
                 zip.closeEntry()
@@ -1847,141 +1850,78 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         File(rootfs, "etc/resolv.conf").writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
     }
 
-    private fun extractRootfs(archive: File, destination: File) {
-        val deferredLinks = mutableListOf<Pair<File, File>>()
-        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
-            var entry: TarArchiveEntry? = tar.nextEntry
-            while (entry != null) {
-                val cleanName = entry.name.removePrefix("./")
-                val target = safeChild(destination, cleanName)
-                when {
-                    entry.isDirectory -> target.mkdirs()
-                    entry.isSymbolicLink -> {
-                        target.parentFile?.mkdirs()
-                        if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
-                        Os.symlink(entry.linkName, target.absolutePath)
-                    }
-                    entry.isLink -> {
-                        target.parentFile?.mkdirs()
-                        val linkTarget = safeChild(destination, entry.linkName.removePrefix("./"))
-                        if (linkTarget.exists()) {
-                            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-                        } else {
-                            deferredLinks += target to linkTarget
-                        }
-                    }
-                    entry.isFile -> {
-                        target.parentFile?.mkdirs()
-                        FileOutputStream(target).use { output -> tar.copyTo(output) }
-                        runCatching { Os.chmod(target.absolutePath, entry.mode and 0b111111111) }
-                    }
-                }
-                entry = tar.nextEntry
-            }
-        }
-        deferredLinks.forEach { (target, linkTarget) ->
-            require(linkTarget.isFile) { "Archive hard-link target is missing" }
-            target.parentFile?.mkdirs()
-            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-            runCatching { Os.chmod(target.absolutePath, android.system.Os.stat(linkTarget.absolutePath).st_mode) }
-        }
-    }
+    private fun extractRootfs(archive: File, destination: File) =
+        GzipCompressorInputStream(BufferedInputStream(archive.inputStream())).use { extractTar(it, destination, false) }
 
-    private fun extractZstdTar(archive: File, destination: File) {
+    private fun extractZstdTar(archive: File, destination: File) =
+        ZstdCompressorInputStream(BufferedInputStream(archive.inputStream())).use { extractTar(it, destination, false) }
+
+    private fun extractNodeArchive(archive: File, destination: File) =
+        GzipCompressorInputStream(BufferedInputStream(archive.inputStream())).use { extractTar(it, destination, true) }
+
+    private fun extractTar(input: java.io.InputStream, destination: File, stripPrefix: Boolean) {
         val deferredLinks = mutableListOf<Pair<File, File>>()
-        TarArchiveInputStream(
-            ZstdCompressorInputStream(BufferedInputStream(archive.inputStream())),
-        ).use { tar ->
+        var remaining = minOf(MAX_ARCHIVE_EXPANDED_BYTES, destination.usableSpace)
+        var entries = 0
+        fun relativePath(name: String): String {
+            val clean = name.removePrefix("./")
+            require(!clean.startsWith('/') && clean.split('/').none { it == ".." }) { "Unsafe archive path" }
+            return if (stripPrefix) clean.substringAfter('/', "") else clean
+        }
+        fun copyHardLink(target: File, source: File) {
+            require(archiveRegularFile(source)) { "Archive hard-link target is not a regular file" }
+            target.parentFile?.mkdirs()
+            source.inputStream().use { data ->
+                openArchiveFile(target).use { output -> remaining -= copyArchiveBytes(data, output, remaining) }
+            }
+            Os.chmod(target.absolutePath, Os.stat(source.absolutePath).st_mode and 511)
+        }
+        TarArchiveInputStream(input).use { tar ->
             var entry: TarArchiveEntry? = tar.nextEntry
             while (entry != null) {
-                val cleanName = entry.name.removePrefix("./")
-                if (cleanName.isNotBlank()) {
-                    val target = safeChild(destination, cleanName)
+                check(++entries <= MAX_ARCHIVE_ENTRIES) { "Archive has too many entries" }
+                val name = relativePath(entry.name)
+                if (name.isNotBlank() && name != ".") {
+                    val target = safeChild(destination, name)
                     when {
-                        entry.isDirectory -> target.mkdirs()
+                        entry.isDirectory -> createArchiveDirectory(target)
                         entry.isSymbolicLink -> {
                             target.parentFile?.mkdirs()
-                            if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
+                            if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) {
+                                check(target.delete()) { "Could not replace archive link" }
+                            }
+                            // Absolute names are guest Linux links. Host-side archive writes check
+                            // the canonical parent and never follow an existing leaf link.
                             Os.symlink(entry.linkName, target.absolutePath)
                         }
                         entry.isLink -> {
-                            target.parentFile?.mkdirs()
-                            val linkTarget = safeChild(destination, entry.linkName.removePrefix("./"))
-                            if (linkTarget.exists()) {
-                                linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-                            } else {
-                                deferredLinks += target to linkTarget
-                            }
+                            val source = safeChild(destination, relativePath(entry.linkName))
+                            if (archiveRegularFile(source)) copyHardLink(target, source)
+                            else deferredLinks += target to source
                         }
                         entry.isFile -> {
+                            check(!entry.isSparse && entry.size in 0..remaining) { "Archive entry exceeds remaining space" }
                             target.parentFile?.mkdirs()
-                            FileOutputStream(target).use { output -> tar.copyTo(output) }
-                            runCatching { Os.chmod(target.absolutePath, entry.mode and 0b111111111) }
+                            openArchiveFile(target).use { output ->
+                                val written = copyArchiveBytes(tar, output, remaining)
+                                check(written == entry.size) { "Incomplete archive entry" }
+                                remaining -= written
+                            }
+                            Os.chmod(target.absolutePath, entry.mode and 511)
                         }
                     }
                 }
                 entry = tar.nextEntry
             }
         }
-        deferredLinks.forEach { (target, linkTarget) ->
-            require(linkTarget.isFile) { "Archive hard-link target is missing" }
-            target.parentFile?.mkdirs()
-            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-            runCatching { Os.chmod(target.absolutePath, android.system.Os.stat(linkTarget.absolutePath).st_mode) }
+        deferredLinks.forEach { (target, source) ->
+            // Recheck parents after processing later entries.
+            copyHardLink(safeChild(destination, target.relativeTo(destination).path),
+                safeChild(destination, source.relativeTo(destination).path))
         }
     }
 
-    private fun extractNodeArchive(archive: File, destination: File) {
-        val deferredLinks = mutableListOf<Pair<File, File>>()
-        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
-            var entry: TarArchiveEntry? = tar.nextEntry
-            while (entry != null) {
-                val relative = entry.name.removePrefix("./").substringAfter('/', "")
-                if (relative.isNotBlank()) {
-                    val target = safeChild(destination, relative)
-                    when {
-                        entry.isDirectory -> target.mkdirs()
-                        entry.isSymbolicLink -> {
-                            target.parentFile?.mkdirs()
-                            if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
-                            Os.symlink(entry.linkName, target.absolutePath)
-                        }
-                        entry.isLink -> {
-                            val relativeLink = entry.linkName.removePrefix("./").substringAfter('/', "")
-                            val linkTarget = safeChild(destination, relativeLink)
-                            target.parentFile?.mkdirs()
-                            if (linkTarget.exists()) {
-                                linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-                            } else {
-                                deferredLinks += target to linkTarget
-                            }
-                        }
-                        entry.isFile -> {
-                            target.parentFile?.mkdirs()
-                            FileOutputStream(target).use { output -> tar.copyTo(output) }
-                            runCatching { Os.chmod(target.absolutePath, entry.mode and 0b111111111) }
-                        }
-                    }
-                }
-                entry = tar.nextEntry
-            }
-        }
-        deferredLinks.forEach { (target, linkTarget) ->
-            require(linkTarget.isFile) { "Node.js archive hard-link target is missing" }
-            target.parentFile?.mkdirs()
-            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-            runCatching { Os.chmod(target.absolutePath, android.system.Os.stat(linkTarget.absolutePath).st_mode) }
-        }
-    }
-
-    private fun safeChild(root: File, relative: String): File {
-        require(relative.isNotBlank() && !relative.startsWith('/')) { "Unsafe archive path" }
-        val file = File(root, relative)
-        val rootPath = root.canonicalFile.toPath()
-        val parentPath = (file.parentFile ?: root).canonicalFile.toPath()
-        require(parentPath.startsWith(rootPath)) { "Archive path escapes runtime" }
-        return file
-    }
+    private fun safeChild(root: File, relative: String): File = checkedArchiveChild(root, relative)
 
     private suspend fun downloadVerified(
         url: String,
@@ -2021,6 +1961,8 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
     private fun File.readTextOrNull(): String? = runCatching { readText().trim() }.getOrNull()
 
     companion object {
+        private const val MAX_ARCHIVE_EXPANDED_BYTES = 8L * 1024 * 1024 * 1024
+        private const val MAX_ARCHIVE_ENTRIES = 400_000
         private val officialCliLock = Mutex()
         internal const val CODEX_GUEST_PATH = "/root/.local/bin/codex"
         const val AGY_GUEST_PATH = "/root/.local/bin/agy"
