@@ -193,6 +193,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissAppUpdateError() = runtime.dismissAppUpdateError()
     fun finishOnboarding(profile: ProviderProfile, secret: String) = runtime.finishOnboarding(profile, secret)
     fun finishAntigravityOnboarding() = runtime.finishAntigravityOnboarding()
+    fun finishCodexOnboarding() = runtime.finishCodexOnboarding()
     fun chooseOnboardingAgent(kind: AgentKind) = runtime.chooseOnboardingAgent(kind)
     fun updateProvider(profile: ProviderProfile, secret: String) = runtime.updateProvider(profile, secret)
     fun finishBackgroundSetup() = runtime.finishBackgroundSetup()

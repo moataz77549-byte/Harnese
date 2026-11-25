@@ -292,4 +292,10 @@
     <string name="codex_review_confirm">هل تسمح لـ Codex بفحص كود مشروع %1$s وإرسال المقاطع ذات الصلة إلى خدمة الذكاء الاصطناعي المصرح بها؟</string>
     <string name="codex_review_running">اختبار العزل ومراجعة المشروع…</string>
     <string name="codex_review_complete">اكتملت المراجعة.</string>
+    <string name="agent_title_codex">OpenAI Codex</string>
+    <string name="agent_subtitle_codex">محرك CLI رسمي مرفق بالتطبيق · حساب ChatGPT</string>
+    <string name="codex_chat_ready">وكيل Codex للمشاريع</string>
+    <string name="codex_chat_description">يتضمن هذا التطبيق محرك Codex. بعد تجهيز لينكس وتسجيل الدخول، اختر Codex وافتح محادثة المشروع. تتطلب تعديلات المشاريع نجاح اختبار العزل واعتمادها من مركز الوكلاء. إذا تعذر العزل تُستخدم المساعدة النصية فقط.</string>
+    <string name="codex_continue_workspace">متابعة إلى مساحة العمل</string>
+    <string name="codex_restore_bundled">استعادة Codex المرفق دون تنزيل</string>
 </resources>

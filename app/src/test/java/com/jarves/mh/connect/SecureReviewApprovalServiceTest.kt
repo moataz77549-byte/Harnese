@@ -52,4 +52,21 @@ class SecureReviewApprovalServiceTest {
             assertEquals("safe",ProjectFilePolicy.allowedTextFile(dir,"a.txt").readText())
         } finally { dir.deleteRecursively() }
     }
+    @Test fun protectedCodexStagingExcludesSensitiveFilesAndDoesNotDeleteThem() {
+        val dir = Files.createTempDirectory("codex-stage").toFile()
+        try {
+            val original = File(dir, "project").apply { mkdirs() }
+            File(original, ".env").writeText("private")
+            File(original, "source.kt").writeText("before")
+            val service = SecureReviewApprovalService(File(dir, "reviews"))
+            val staged = service.stage("project", original, protectSensitive = true)
+            assertFalse(File(staged.workspace, ".env").exists())
+            File(staged.workspace, "source.kt").writeText("after")
+            File(staged.workspace, ".env").writeText("new private file")
+            assertEquals(listOf("source.kt"), service.finish(staged.id).entries.map { it.path })
+            service.applyLocally(staged.id)
+            assertEquals("private", File(original, ".env").readText())
+            assertEquals("after", File(original, "source.kt").readText())
+        } finally { dir.deleteRecursively() }
+    }
 }

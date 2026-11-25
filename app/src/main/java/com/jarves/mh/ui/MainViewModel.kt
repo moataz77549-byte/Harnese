@@ -452,7 +452,9 @@ class HarneseRuntimeController(private val application: Application) {
             _state.value.activeChatId?.let { preferences.saveAgentConversation(AgentKind.ANTIGRAVITY, projectId, it, id) }
         },
     )
-    private val agentRegistry = AgentRegistry.builtIns(claudeRuntime, dshRuntime, antigravityRuntime)
+    private val codexRuntime = com.jarves.mh.runtime.CodexRuntimeBridge(application)
+    private val codexController = com.jarves.mh.runtime.CodexCliController(application, installer)
+    private val agentRegistry = AgentRegistry.builtIns(claudeRuntime, dshRuntime, antigravityRuntime, codexRuntime)
     private fun activeRuntime(): com.jarves.mh.runtime.RuntimeBridge = agentRegistry.require(_state.value.agentKind).runtime
     private val providerApi = ProviderApiClient(application)
     private fun appUpdater(): AppUpdater = AppUpdater(
@@ -600,6 +602,7 @@ class HarneseRuntimeController(private val application: Application) {
         }
         runtimeScope.launch { dshRuntime.events.collect(::onRuntimeEvent) }
         runtimeScope.launch { antigravityRuntime.events.collect(::onRuntimeEvent) }
+        runtimeScope.launch { codexRuntime.events.collect(::onRuntimeEvent) }
         runtimeScope.launch {
             antigravityAuthController.state.collect { auth ->
                 _state.update { it.copy(antigravityAuth = auth) }
@@ -2080,6 +2083,7 @@ class HarneseRuntimeController(private val application: Application) {
         claudeRuntime.configureProjectRoot(projectId, rootPath)
         dshRuntime.configureProjectRoot(projectId, rootPath)
         antigravityRuntime.configureProjectRoot(projectId, rootPath)
+        codexRuntime.configureProjectRoot(projectId, rootPath)
     }
 
     init {
@@ -2402,6 +2406,11 @@ class HarneseRuntimeController(private val application: Application) {
         _state.update { it.copy(onboardingComplete = true, startupStage = StartupStage.READY) }
     }
 
+    fun finishCodexOnboarding() {
+        preferences.onboardingComplete = true
+        _state.update { it.copy(onboardingComplete = true, startupStage = StartupStage.READY) }
+    }
+
     /** Lets first-run users escape a provider/login failure without losing saved credentials. */
     fun chooseOnboardingAgent(kind: AgentKind) {
         selectAgent(kind)
@@ -2563,7 +2572,11 @@ class HarneseRuntimeController(private val application: Application) {
         if (_state.value.isRunning || _state.value.androidBuildRunning || _state.value.projectTerminalRunning || _state.value.runtimeProbeRunning) return
         val repair = name.removePrefix("repair/").takeIf { name.startsWith("repair/") && it in setOf("python","node","typescript","androidsdk") }
         val stack = when (name) { "php" -> DevStack.PHP; "cpp" -> DevStack.CPP; else -> null }
-        val agent = if (name == "antigravity") AgentKind.ANTIGRAVITY else null
+        val agent = when (name) {
+            "antigravity" -> AgentKind.ANTIGRAVITY
+            "codex" -> AgentKind.CODEX
+            else -> null
+        }
         if (stack == null && agent == null && repair == null) return
         val project = _state.value.activeProject
         val task = UUID.randomUUID().toString()
@@ -2600,6 +2613,7 @@ class HarneseRuntimeController(private val application: Application) {
     private var modelCatalogJob: kotlinx.coroutines.Job? = null
     private fun requestTelegramModels(selectedModel: String = ""): HarneseCommandResult {
         val snapshot = _state.value
+        if (snapshot.agentKind == AgentKind.CODEX) return HarneseCommandResult.success("Codex uses the signed-in account's default model.")
         if(modelCatalogJob?.isActive==true) return HarneseCommandResult.error("يجري استرجاع قائمة النماذج.")
         if(selectedModel.isNotBlank() && (snapshot.isRunning || snapshot.androidBuildRunning || snapshot.projectTerminalRunning || snapshot.runtimeProbeRunning)) return HarneseCommandResult.error("انتظر انتهاء المهمة قبل تغيير النموذج.")
         val task=UUID.randomUUID().toString()
@@ -3025,6 +3039,18 @@ class HarneseRuntimeController(private val application: Application) {
     fun pingApi() {
         if (_state.value.agentKind == AgentKind.ANTIGRAVITY) {
             testAntigravityConnection()
+            return
+        }
+        if (_state.value.agentKind == AgentKind.CODEX) {
+            if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
+            _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING) }
+            runtimeScope.launch {
+                val result = runCatching { codexController.signedIn() }
+                if (_state.value.agentKind == AgentKind.CODEX) _state.update {
+                    it.copy(apiPingStatus = if (result.getOrDefault(false)) ApiPingStatus.OK else ApiPingStatus.FAILED,
+                        apiPingMessage = str(if (result.getOrDefault(false)) R.string.codex_signed_in else R.string.codex_signed_out))
+                }
+            }
             return
         }
         val profile = _state.value.provider
@@ -5396,7 +5422,7 @@ class HarneseRuntimeController(private val application: Application) {
 
     private fun retryWithNextApiKey(event: RuntimeEvent.SessionFailed): Boolean {
         val current = _state.value
-        if (current.agentKind == AgentKind.ANTIGRAVITY) return false
+        if (current.agentKind in setOf(AgentKind.ANTIGRAVITY, AgentKind.CODEX)) return false
         if (!current.isRunning || current.activeSessionId != event.sessionId) return false
         if (!isApiKeyFailure(event.reason)) return false
         val request = activeRuntimeRequest ?: return false

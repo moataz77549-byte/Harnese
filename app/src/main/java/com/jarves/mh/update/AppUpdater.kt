@@ -11,6 +11,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 import org.json.JSONObject
+import org.json.JSONArray
+import com.jarves.mh.runtime.VerifiedDownload
+import com.jarves.mh.runtime.atomicReplace
 
 data class AppUpdateInfo(
     val versionCode: Long,
@@ -36,74 +39,75 @@ class AppUpdater(
         AppStrings.get(context, id, *args)
 
     fun check(): AppUpdateInfo? {
-        val manifestUrl = manifestUrlOverride.ifBlank { BuildConfig.APP_UPDATE_MANIFEST_URL }
-        if (!manifestUrl.startsWith("https://")) return null
-        val connection = URL(manifestUrl).openConnection() as HttpURLConnection
+        if (manifestUrlOverride.isNotBlank()) return readUpdate(manifestUrlOverride)
+        val available = mutableListOf<AppUpdateInfo>()
+        runCatching { readUpdate(BuildConfig.APP_UPDATE_MANIFEST_URL) }.getOrNull()?.let(available::add)
+        // A device already running a Nova release candidate follows that channel.
+        if (context.packageName == "com.moataz.harnese.nova" && BuildConfig.VERSION_NAME.contains("-rc.")) {
+            val catalog = runCatching { fetchMetadata("https://api.github.com/repos/moataz77549-byte/Harnese/releases?per_page=20") }.getOrNull()
+            if (catalog != null) {
+                val releases = JSONArray(catalog)
+                novaUpdateManifestUrls(releases).take(5).forEach { url ->
+                    runCatching { readUpdate(url) }.getOrNull()?.let(available::add)
+                }
+            }
+        }
+        return available.maxByOrNull(AppUpdateInfo::versionCode)
+    }
+
+    private fun readUpdate(manifestUrl: String): AppUpdateInfo? {
+        val body = fetchMetadata(manifestUrl) ?: return null
+        val root = JSONObject(body)
+        val versionCode = root.optLong("versionCode")
+        if (versionCode <= BuildConfig.VERSION_CODE) return null
+        val artifact = root.optJSONObject("artifacts")?.optJSONObject(BuildConfig.APP_VARIANT)
+            ?: root.optJSONObject(BuildConfig.APP_VARIANT) ?: root
+        val url = artifact.optString("url").ifBlank { artifact.optString("apkUrl") }
+        val digest = artifact.optString("sha256").lowercase()
+        val size = artifact.optLong("sizeBytes", -1L)
+        if (!url.startsWith("https://") || !digest.matches(Regex("[0-9a-f]{64}")) || size <= 0L) return null
+        return AppUpdateInfo(versionCode, root.optString("versionName", versionCode.toString()), url, digest, size, root.optString("notes"))
+    }
+
+    private fun fetchMetadata(url: String): String? {
+        if (!url.startsWith("https://")) return null
+        val connection = URL(url).openConnection() as HttpURLConnection
         return try {
             connection.connectTimeout = 8_000
             connection.readTimeout = 10_000
             connection.instanceFollowRedirects = true
             connection.setRequestProperty("Accept", "application/json")
-            val code = connection.responseCode
-            if (code !in 200..299) return null
-            val body = connection.inputStream.bufferedReader().use { it.readText() }
-            val root = JSONObject(body)
-            val versionCode = root.optLong("versionCode")
-            if (versionCode <= BuildConfig.VERSION_CODE) return null
-            val artifact = root.optJSONObject("artifacts")?.optJSONObject(BuildConfig.APP_VARIANT)
-                ?: root.optJSONObject(BuildConfig.APP_VARIANT)
-                ?: root
-            val url = artifact.optString("url").ifBlank { artifact.optString("apkUrl") }
-            if (!url.startsWith("https://")) return null
-            AppUpdateInfo(
-                versionCode = versionCode,
-                versionName = root.optString("versionName", versionCode.toString()),
-                apkUrl = url,
-                sha256 = artifact.optString("sha256").lowercase(),
-                sizeBytes = artifact.optLong("sizeBytes", -1L),
-                notes = root.optString("notes"),
-            )
-        } finally {
-            connection.disconnect()
-        }
+            connection.setRequestProperty("User-Agent", "Harnese-Nova")
+            if (connection.responseCode !in 200..299) return null
+            connection.inputStream.use { input ->
+                val data = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    check(data.size() + n <= 2 * 1024 * 1024) { "Update metadata exceeds its size limit" }
+                    data.write(buffer, 0, n)
+                }
+                data.toString("UTF-8")
+            }
+        } finally { connection.disconnect() }
     }
 
-    fun download(info: AppUpdateInfo, progress: (Long, Long) -> Unit): File {
+    suspend fun download(info: AppUpdateInfo, progress: (Long, Long) -> Unit): File {
         val directory = File(context.filesDir, "updates").also { it.mkdirs() }
-        val partial = File(directory, "mobile-harness-${BuildConfig.APP_VARIANT}.apk.part")
-        val target = File(directory, "mobile-harness-${BuildConfig.APP_VARIANT}.apk")
-        val connection = URL(info.apkUrl).openConnection() as HttpURLConnection
+        val candidate = File(directory, "mobile-harness-${BuildConfig.APP_VARIANT}-${info.versionCode}.download")
+        val target = File(directory, "mobile-harness-${BuildConfig.APP_VARIANT}-${info.versionCode}.apk")
+        VerifiedDownload().fetch(URL(info.apkUrl), candidate, info.sha256, "SHA-256", info.sizeBytes) { bytes, total ->
+            progress(bytes, total)
+        }
         try {
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 30_000
-            connection.instanceFollowRedirects = true
-            val code = connection.responseCode
-            check(code in 200..299) { str(R.string.rt_update_download_failed, code) }
-            val total = connection.contentLengthLong.takeIf { it > 0 } ?: info.sizeBytes
-            connection.inputStream.use { input ->
-                partial.outputStream().use { output ->
-                    val buffer = ByteArray(128 * 1024)
-                    var downloaded = 0L
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        downloaded += count
-                        progress(downloaded, total)
-                    }
-                }
-            }
-        } finally {
-            connection.disconnect()
+            verifyApk(candidate, info.versionCode)
+            atomicReplace(candidate, target)
+            return target
+        } catch (error: Throwable) {
+            candidate.delete()
+            throw error
         }
-        if (info.sha256.isNotBlank()) {
-            val actual = sha256(partial)
-            check(actual.equals(info.sha256, ignoreCase = true)) { str(R.string.rt_update_checksum_failed) }
-        }
-        verifyApk(partial, info.versionCode)
-        if (target.exists()) target.delete()
-        check(partial.renameTo(target)) { str(R.string.rt_update_prepare_failed) }
-        return target
     }
 
     @Suppress("DEPRECATION")
@@ -135,4 +139,19 @@ class AppUpdater(
 
     private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
         .digest(bytes).joinToString("") { "%02x".format(it) }
+}
+
+internal fun novaUpdateManifestUrls(releases: JSONArray): List<String> = buildList {
+    for (i in 0 until releases.length()) {
+        val release = releases.optJSONObject(i) ?: continue
+        if (release.optBoolean("draft")) continue
+        val tag = release.optString("tag_name")
+        if (!tag.matches(Regex("harnese-nova-v[0-9]+\\.[0-9]+\\.[0-9]+(?:-rc\\.[0-9]+)?"))) continue
+        val assets = release.optJSONArray("assets") ?: continue
+        for (j in 0 until assets.length()) {
+            val asset = assets.optJSONObject(j) ?: continue
+            val expected = "https://github.com/moataz77549-byte/Harnese/releases/download/$tag/harnese-nova-update.json"
+            if (asset.optString("name") == "harnese-nova-update.json" && asset.optString("browser_download_url") == expected) add(expected)
+        }
+    }
 }

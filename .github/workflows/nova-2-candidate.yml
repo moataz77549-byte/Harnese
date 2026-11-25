@@ -3,7 +3,7 @@ name: Nova 2 ARM64 candidate and verified owner release
 on:
   push:
     branches: [feat/harnese-nova-2]
-    paths: ['app/**', 'scripts/release/**', '.github/workflows/nova-2-candidate.yml', 'nova-2-signature.json']
+    paths: ['app/**', 'scripts/release/**', '.github/workflows/nova-2-candidate.yml', 'scripts/runtime-bundles/**', 'nova-2-rc2-signature.json']
   workflow_dispatch:
 
 permissions:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ !contains(github.event.head_commit.message, '[nova2-signature]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[nova2-rc2-signature]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -31,6 +31,8 @@ jobs:
         with:
           packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
+      - name: Prepare official Codex archive
+        run: bash scripts/runtime-bundles/prepare-codex.sh
       - name: Build SDK-free ARM64 candidate and test
         run: ./gradlew :app:testOnlineDebugUnitTest :app:assembleOnlineRelease -PmhParallelInstall=true --no-daemon --stacktrace
       - name: Inspect candidate
@@ -44,15 +46,19 @@ jobs:
           "$BT/zipalign" -f -P 16 4 "$APK" delivery/nova-2-unsigned.apk
           APK=delivery/nova-2-unsigned.apk
           "$BT/aapt" dump badging "$APK" > delivery/package.txt
-          grep -F "package: name='com.moataz.harnese.nova' versionCode='20' versionName='2.0.0-rc.1'" delivery/package.txt
+          grep -F "package: name='com.moataz.harnese.nova' versionCode='21' versionName='2.0.0-rc.2'" delivery/package.txt
           grep -F "sdkVersion:'28'" delivery/package.txt
           grep -F "native-code: 'arm64-v8a'" delivery/package.txt
           unzip -t "$APK" > delivery/apk-integrity.txt
           python3 scripts/release/check_zstd_jni.py "$APK" | tee delivery/zstd-jni-check.txt
           python3 - "$APK" <<'PY'
-          import sys,zipfile
+          import sys,zipfile,hashlib
           with zipfile.ZipFile(sys.argv[1]) as z:
               assert all(not v.startswith('assets/runtime/') for v in z.namelist()), 'Unexpected bundled runtime in online APK'
+              name='assets/engine/codex-aarch64-unknown-linux-musl.tar.gz'
+              assert z.getinfo(name).file_size == 127043934
+              assert hashlib.file_digest(z.open(name),'sha256').hexdigest() == '0b99526c185a4425fe96a2214fb7b6a6a7f7c1471883b7afbebe97e15e83e79e'
+              assert 'assets/licenses/Codex-LICENSE.txt' in z.namelist()
           PY
           (cd delivery && sha256sum nova-2-unsigned.apk > SHA256SUMS.txt)
           cp -r app/build/test-results/testOnlineDebugUnitTest delivery/unit-tests
@@ -64,7 +70,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   publish:
-    if: ${{ contains(github.event.head_commit.message, '[nova2-signature]') }}
+    if: ${{ contains(github.event.head_commit.message, '[nova2-rc2-signature]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -86,24 +92,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SOURCE=$(jq -r .sourceCommit nova-2-signature.json)
-          RUN=$(jq -r .verifiedRunId nova-2-signature.json)
+          SOURCE=$(jq -r .sourceCommit nova-2-rc2-signature.json)
+          RUN=$(jq -r .verifiedRunId nova-2-rc2-signature.json)
           [[ "$SOURCE" =~ ^[a-f0-9]{40}$ && "$RUN" =~ ^[0-9]+$ ]]
-          test "$(git diff --name-only "$SOURCE" "$GITHUB_SHA")" = nova-2-signature.json
+          test "$(git diff --name-only "$SOURCE" "$GITHUB_SHA")" = nova-2-rc2-signature.json
           test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq .head_sha)" = "$SOURCE"
           test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq .conclusion)" = success
           test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq .path)" = '.github/workflows/nova-2-candidate.yml'
           gh run download "$RUN" --repo "$GITHUB_REPOSITORY" --name nova-2-unsigned-arm64 --dir unsigned
           mkdir -p delivery
-          APK=delivery/Harnese-Nova-2.0.0-rc.1-Android9Plus-ARM64.apk
-          python3 scripts/release/apk_signature_patch.py apply unsigned/nova-2-unsigned.apk nova-2-signature.json "$APK"
+          APK=delivery/Harnese-Nova-2.0.0-rc.2-Android9Plus-ARM64.apk
+          python3 scripts/release/apk_signature_patch.py apply unsigned/nova-2-unsigned.apk nova-2-rc2-signature.json "$APK"
           java -jar unsigned/apksigner.jar verify --verbose --print-certs "$APK" > delivery/certificate.txt
           grep -F "certificate SHA-256 digest: $EXPECTED_CERT" delivery/certificate.txt
           grep -F "Number of signers: 1" delivery/certificate.txt
           BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
           "$BT/zipalign" -c -P 16 4 "$APK"
           "$BT/aapt" dump badging "$APK" > delivery/package.txt
-          grep -F "package: name='com.moataz.harnese.nova' versionCode='20' versionName='2.0.0-rc.1'" delivery/package.txt
+          grep -F "package: name='com.moataz.harnese.nova' versionCode='21' versionName='2.0.0-rc.2'" delivery/package.txt
           grep -F "sdkVersion:'28'" delivery/package.txt
           grep -F "native-code: 'arm64-v8a'" delivery/package.txt
           python3 scripts/release/check_zstd_jni.py "$APK" > delivery/zstd-jni-check.txt
@@ -116,9 +122,15 @@ jobs:
           done
           (cd source-package && zip -qr ../delivery/Harnese-Nova-2.0-Source.zip Harnese-Nova-2.0)
           (cd delivery && sha256sum *.apk *.zip > SHA256SUMS.txt)
+          python3 - <<'PY'
+          import hashlib,json,pathlib,os
+          p=pathlib.Path('delivery/Harnese-Nova-2.0.0-rc.2-Android9Plus-ARM64.apk')
+          a={'url':f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/releases/download/harnese-nova-v2.0.0-rc.2/{p.name}','sha256':hashlib.file_digest(p.open('rb'),'sha256').hexdigest(),'sizeBytes':p.stat().st_size}
+          pathlib.Path('delivery/harnese-nova-update.json').write_text(json.dumps({'versionCode':21,'versionName':'2.0.0-rc.2','notes':'Bundled official Codex CLI and first-class project chat integration.','artifacts':{'online':a,'offline':a}},indent=2)+'\n')
+          PY
       - name: Publish signed prerelease
         shell: bash
         run: |
           set -euo pipefail
-          SOURCE=$(jq -r .sourceCommit nova-2-signature.json)
-          gh release create harnese-nova-v2.0.0-rc.1 delivery/*.apk delivery/*.zip delivery/*.txt --repo "$GITHUB_REPOSITORY" --target "$SOURCE" --title 'Harnese Nova 2.0.0 RC1 – ARM64 Android 9+' --notes-file docs/RELEASE_NOTES.md --prerelease
+          SOURCE=$(jq -r .sourceCommit nova-2-rc2-signature.json)
+          gh release create harnese-nova-v2.0.0-rc.2 delivery/*.apk delivery/*.zip delivery/*.txt delivery/harnese-nova-update.json --repo "$GITHUB_REPOSITORY" --target "$SOURCE" --title 'Harnese Nova 2.0.0 RC2 – ARM64 Android 9+' --notes-file docs/RELEASE_NOTES.md --prerelease

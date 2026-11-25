@@ -106,6 +106,17 @@ internal fun CodexToolsPanel(projects: List<Project>, projectBusy: Boolean) {
         if (version != null) {
             TextButton(enabled = enabled, onClick = {
                 run {
+                    withContext(Dispatchers.IO) {
+                        installer.restoreBundledCodex { event ->
+                            withContext(Dispatchers.Main) { message = event.message; progress = event.fraction.coerceIn(0f, 1f) }
+                        }
+                    }
+                    version = installer.installedCodexVersion()
+                    message = context.getString(R.string.codex_ready)
+                }
+            }) { Text(stringResource(R.string.codex_restore_bundled)) }
+            TextButton(enabled = enabled, onClick = {
+                run {
                     message = context.getString(if (controller.signedIn()) R.string.codex_signed_in else R.string.codex_signed_out)
                 }
             }) { Text(stringResource(R.string.codex_account_status)) }

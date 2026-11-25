@@ -368,6 +368,19 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
                 onSelectAgent = viewModel::chooseOnboardingAgent,
                 onToggleTheme = viewModel::toggleTheme,
             )
+        state.startupStage == StartupStage.MODEL_SETUP && state.agentKind == AgentKind.CODEX ->
+            Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.agent_title_codex), style = MaterialTheme.typography.headlineMedium)
+                Text(stringResource(R.string.codex_chat_description))
+                CodexToolsPanel(emptyList(), false)
+                Button(onClick = viewModel::finishCodexOnboarding, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.codex_continue_workspace))
+                }
+                OutlinedButton(onClick = { viewModel.chooseOnboardingAgent(AgentKind.ANTIGRAVITY) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.agent_title_antigravity))
+                }
+            }
         state.startupStage == StartupStage.MODEL_SETUP -> ProviderSetupScreen(
             initial = state.provider,
             onboarding = true,
@@ -1597,6 +1610,7 @@ private fun toolchainDownloadSummary(selected: Set<DevStack>, agent: AgentKind):
             AgentKind.CLAUDE_CODE -> CLAUDE_RUNTIME_DOWNLOAD_MB
             AgentKind.DEEPSEEK_HARNESS -> DSH_RUNTIME_DOWNLOAD_MB
             AgentKind.ANTIGRAVITY -> AGY_RUNTIME_DOWNLOAD_MB
+            AgentKind.CODEX -> 0
         } +
         (if (DevStack.PYTHON in selected) PYTHON_RUNTIME_DOWNLOAD_MB else 0) +
         (if (DevStack.ANDROID in selected) ANDROID_RUNTIME_DOWNLOAD_MB else 0)
@@ -1686,11 +1700,13 @@ private fun AgentChoiceRow(
         AgentKind.CLAUDE_CODE -> Color(0xFFD97757)
         AgentKind.DEEPSEEK_HARNESS -> Color(0xFF4D6BFE)
         AgentKind.ANTIGRAVITY -> Color(0xFF4285F4)
+        AgentKind.CODEX -> Color(0xFF10A37F)
     }
     val mark = when (agent) {
         AgentKind.CLAUDE_CODE -> "CC"
         AgentKind.DEEPSEEK_HARNESS -> "DS"
         AgentKind.ANTIGRAVITY -> "AG"
+        AgentKind.CODEX -> "CX"
     }
     Row(
         modifier = Modifier
@@ -4128,6 +4144,7 @@ private fun ApiStatusChip(state: AppUiState, onSettings: () -> Unit, onPing: () 
     val providerLabel = when {
         state.agentKind == AgentKind.ANTIGRAVITY ->
             state.antigravityModel.ifBlank { agentTitle }
+        state.agentKind == AgentKind.CODEX -> agentTitle
         state.provider.model.isNotBlank() -> state.provider.model
         state.provider.baseUrl.isNotBlank() -> {
             runCatching { java.net.URI(state.provider.baseUrl).host ?: providerTitle }
@@ -4651,7 +4668,7 @@ private fun WorkspaceScreen(
                         )
                         // Agent first so it always stays visible; a long chat title is cut with "…".
                         Text(
-                            "${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
+                            "${if (state.agentKind in setOf(AgentKind.ANTIGRAVITY, AgentKind.CODEX)) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,

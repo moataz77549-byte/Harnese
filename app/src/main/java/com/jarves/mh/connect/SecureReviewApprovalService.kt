@@ -31,9 +31,17 @@ class SecureReviewApprovalService(private val directory: File) {
         digest.digest().joinToString("") { "%02x".format(it) }
     }
     private val excluded = setOf("build", ".gradle", ".idea")
-    private fun files(root: File): List<File> = root.walkTopDown().onEnter {
-        it == root || (!Files.isSymbolicLink(it.toPath()) && it.name !in excluded)
-    }.filter { it.isFile && !Files.isSymbolicLink(it.toPath()) }.toList()
+    private fun sensitive(file: File): Boolean {
+        val name = file.name.lowercase()
+        return name == ".git" || name == ".env" || name.startsWith(".env.") ||
+            name in setOf(".npmrc", ".ssh", ".gnupg", ".codex", ".gemini", "credentials.json", "secrets.json",
+                "local.properties", "key.properties", "google-services.json") ||
+            name.endsWith(".jks") || name.endsWith(".keystore") || name.endsWith(".p12") ||
+            name.endsWith(".pem") || name.endsWith(".key")
+    }
+    private fun files(root: File, protectSensitive: Boolean = false): List<File> = root.walkTopDown().onEnter {
+        it == root || (!Files.isSymbolicLink(it.toPath()) && it.name !in excluded && !(protectSensitive && sensitive(it)))
+    }.filter { it.isFile && !Files.isSymbolicLink(it.toPath()) && !(protectSensitive && sensitive(it)) }.toList()
     private fun safe(root: File, path: String): File {
         require(path.isNotBlank() && !File(path).isAbsolute && path.split('/').none { it == ".." })
         var file = root.canonicalFile
@@ -46,10 +54,10 @@ class SecureReviewApprovalService(private val directory: File) {
         temp.writeText(json.toString())
         Files.move(temp.toPath(), metadata(id).toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     }
-    @Synchronized fun stage(project: String, original: File): StagedRun {
+    @Synchronized fun stage(project: String, original: File, protectSensitive: Boolean = false): StagedRun {
         val id = UUID.randomUUID().toString()
         val root = original.canonicalFile
-        val input = files(root)
+        val input = files(root, protectSensitive)
         require(input.size <= 10000 && input.sumOf { it.length() } <= 200L * 1024 * 1024) { "Project is too large for safe staging" }
         require(root.usableSpace > input.sumOf { it.length() } * 3 + 64L * 1024 * 1024) { "Insufficient storage for staging and rollback" }
         val workspace = File(folder(id), "workspace").apply { mkdirs() }
@@ -60,8 +68,8 @@ class SecureReviewApprovalService(private val directory: File) {
             val copy = safe(workspace, path); copy.parentFile.mkdirs(); file.copyTo(copy)
             copy.setExecutable(file.canExecute(), true)
         }
-        root.walkTopDown().onEnter { it == root || (!Files.isSymbolicLink(it.toPath()) && it.name !in excluded) }
-            .filter { Files.isSymbolicLink(it.toPath()) }.forEach { link ->
+        root.walkTopDown().onEnter { it == root || (!Files.isSymbolicLink(it.toPath()) && it.name !in excluded && !(protectSensitive && sensitive(it))) }
+            .filter { Files.isSymbolicLink(it.toPath()) && !protectSensitive }.forEach { link ->
                 val destination = link.canonicalFile
                 if (destination.toPath().startsWith(root.toPath())) {
                     val relative = link.relativeTo(root).invariantSeparatorsPath
@@ -72,7 +80,7 @@ class SecureReviewApprovalService(private val directory: File) {
                 }
             }
         save(id, JSONObject().put("id", id).put("project", project).put("original", root.path)
-            .put("state", "running").put("expires", System.currentTimeMillis() + 24L * 60 * 60 * 1000).put("baseline", baseline))
+            .put("protectSensitive", protectSensitive).put("state", "running").put("expires", System.currentTimeMillis() + 24L * 60 * 60 * 1000).put("baseline", baseline))
         return StagedRun(id, workspace)
     }
     @Synchronized fun finish(id: String): Review {
@@ -80,7 +88,7 @@ class SecureReviewApprovalService(private val directory: File) {
         require(json.getString("state") == "running")
         val workspace = File(folder(id), "workspace")
         val baseline = json.getJSONObject("baseline")
-        val paths = baseline.keys().asSequence().toSet() + files(workspace).map { it.relativeTo(workspace).invariantSeparatorsPath }
+        val paths = baseline.keys().asSequence().toSet() + files(workspace, json.optBoolean("protectSensitive")).map { it.relativeTo(workspace).invariantSeparatorsPath }
         val entries = JSONArray()
         paths.sorted().forEach { path ->
             val before = if (baseline.has(path)) baseline.getString(path) else null
@@ -90,6 +98,13 @@ class SecureReviewApprovalService(private val directory: File) {
         json.put("entries", entries).put("state", if (entries.length() == 0) "unchanged" else "pending")
         save(id, json)
         return read(id)
+    }
+    @Synchronized fun abandon(id: String) {
+        val json = JSONObject(metadata(id).readText())
+        if (json.getString("state") == "running") {
+            save(id, json.put("state", "rejected"))
+            File(folder(id), "workspace").deleteRecursively()
+        }
     }
     fun read(id: String): Review {
         val json = JSONObject(metadata(id).readText())

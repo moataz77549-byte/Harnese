@@ -459,4 +459,10 @@
     <string name="codex_review_confirm">Allow Codex to inspect source in %1$s and send relevant code to your authorized AI account?</string>
     <string name="codex_review_running">Testing sandbox and reviewing project…</string>
     <string name="codex_review_complete">Review complete.</string>
+    <string name="agent_title_codex">OpenAI Codex</string>
+    <string name="agent_subtitle_codex">Official CLI bundled with this APK · ChatGPT account</string>
+    <string name="codex_chat_ready">Codex project agent</string>
+    <string name="codex_chat_description">Codex is bundled in this APK. After Linux setup and account sign-in, select Codex and open the project chat. Project edits require the local sandbox and approval through Agent Hub. If the sandbox is unavailable, only text-based assistance is attempted.</string>
+    <string name="codex_continue_workspace">Continue to workspace</string>
+    <string name="codex_restore_bundled">Restore bundled Codex offline</string>
 </resources>

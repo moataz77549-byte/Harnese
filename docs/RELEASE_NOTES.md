@@ -1,14 +1,12 @@
-# Harnese Nova 2.0.0 RC1 — Android 9+ ARM64
+# Harnese Nova 2.0.0 RC2 — Android 9+ ARM64
 
-- Based on the latest Nova 1.3.5 repair source merged with main.
-- Resumable verified downloads and ARM64 ELF validation.
-- Official CLI updates are tested in the guest before activation.
-- Independent Codex installer, latest-version check, device sign-in and logout, Linux sandbox diagnostics and an explicitly authorized read-only project-review panel in Settings.
-- Antigravity uses the official accept-edits mode with command permission checks; project changes are staged for review.
-- Runtime archives enforce safe paths, size limits and regular-file writes.
-- Existing application identity and owner signing certificate are used.
-- Online installation, with optional Linux development toolchains. No Android SDK, NDK or emulator is bundled in the APK.
+- Official unmodified OpenAI Codex CLI 0.172.0 Linux ARM64 musl archive is now embedded in the APK, with verified SHA-256 and accompanying Apache 2.0 license.
+- Codex is a fourth selectable coding engine in the main agent screen and project chat. Its account flow, cancelable tasks, bundled restoration, update checking and project review are integrated.
+- Project edits run in a secret-filtered staging copy only after the official Linux sandbox probe succeeds; local approval in Agent Hub is required to apply them. If the sandbox cannot start, the chat attempts text-only assistance with no project mounted, keeping the provider's read-only sandbox enabled.
+- Antigravity continues to discover verified official stable releases. The online core remains downloadable, and the base APK contains no Android SDK/NDK.
+- Versioned app-update manifest for the candidate channel and checksum/signature-validated resumable downloads.
+- Existing Nova package and owner signing certificate retained.
 
-This release candidate requires first-install, in-place upgrade, Linux runtime, PTY, Google OAuth and Codex sandbox/authentication checks on actual ARM64 Android devices. The CI workflow verifies the APK, JNI names, package, architecture, tests and owner certificate. Device testing is pending.
+Physical Android installation, account authentication and sandbox availability still require device verification. The ARM64 Codex binary passed the version and help probes under QEMU. The official CLI archive is bundled; cloud model responses still require a valid provider account and network.
 
 برمجة وتطوير معتز العلقمي – تعز – اليمن – 2026م

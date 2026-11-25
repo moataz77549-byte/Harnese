@@ -894,6 +894,7 @@ fun AgentScreen(
                                 val updateAvailable = state.agentUpdates.containsKey(agent)
                                 val shortTitle = when (agent) {
                                     AgentKind.ANTIGRAVITY -> "Antigravity"
+                                    AgentKind.CODEX -> "Codex"
                                     AgentKind.DEEPSEEK_HARNESS -> "DeepSeek"
                                     AgentKind.CLAUDE_CODE -> "Claude Code"
                                 }
@@ -991,6 +992,7 @@ fun AgentScreen(
                                 AgentKind.CLAUDE_CODE -> R.string.agent_title_claude
                                 AgentKind.DEEPSEEK_HARNESS -> R.string.agent_title_deepseek
                                 AgentKind.ANTIGRAVITY -> R.string.agent_title_antigravity
+                                AgentKind.CODEX -> R.string.agent_title_codex
                             },
                         )
                         Spacer(Modifier.height(8.dp))
@@ -1032,6 +1034,15 @@ fun AgentScreen(
             item {
                 if (!viewedAgentInstalled || viewedAgent != state.agentKind) {
                     // Installation/selection guidance is shown directly below the tabs.
+                } else if (state.agentKind == AgentKind.CODEX) {
+                    Surface(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(stringResource(R.string.codex_chat_ready), style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.codex_chat_description), style = MaterialTheme.typography.bodySmall)
+                            CodexToolsPanel(state.projects, state.isRunning || state.androidBuildRunning || state.projectTerminalRunning)
+                        }
+                    }
                 } else if (state.agentKind == AgentKind.ANTIGRAVITY) {
                     AgentAntigravityCard(
                         state = state,
