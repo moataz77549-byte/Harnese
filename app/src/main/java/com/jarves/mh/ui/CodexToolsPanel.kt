@@ -11,6 +11,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -24,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.jarves.mh.R
+import com.jarves.mh.model.Project
 import com.jarves.mh.runtime.CodexCliController
 import com.jarves.mh.runtime.CodexDeviceChallenge
 import com.jarves.mh.runtime.RuntimeInstaller
@@ -36,7 +40,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun CodexToolsPanel() {
+internal fun CodexToolsPanel(projects: List<Project>, projectBusy: Boolean) {
     val context = LocalContext.current
     val installer = remember(context.applicationContext) { RuntimeInstaller(context.applicationContext) }
     val controller = remember(installer) { CodexCliController(context, installer) }
@@ -46,6 +50,11 @@ internal fun CodexToolsPanel() {
     var progress by remember { mutableStateOf<Float?>(null) }
     var challenge by remember { mutableStateOf<CodexDeviceChallenge?>(null) }
     var confirmRemoval by remember { mutableStateOf(false) }
+    var selectedProjectId by remember { mutableStateOf<String?>(null) }
+    var projectMenu by remember { mutableStateOf(false) }
+    var confirmReview by remember { mutableStateOf<Project?>(null) }
+    var reviewText by remember { mutableStateOf<String?>(null) }
+    val selectedProject = projects.firstOrNull { it.id == selectedProjectId }
     var operation by remember { mutableStateOf<Job?>(null) }
     val enabled = operation == null
 
@@ -117,6 +126,29 @@ internal fun CodexToolsPanel() {
                 }
             }) { Text(stringResource(R.string.codex_check_sandbox)) }
             TextButton(enabled = enabled, onClick = { confirmRemoval = true }) { Text(stringResource(R.string.action_remove)) }
+            if (projects.isNotEmpty()) {
+                Text(stringResource(R.string.codex_review_title), style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.codex_review_detail), style = MaterialTheme.typography.bodySmall)
+                Box {
+                    OutlinedButton(enabled = enabled, onClick = { projectMenu = true }) {
+                        Text(selectedProject?.name ?: stringResource(R.string.codex_select_project))
+                    }
+                    DropdownMenu(expanded = projectMenu, onDismissRequest = { projectMenu = false }) {
+                        projects.forEach { project ->
+                            DropdownMenuItem(text = { Text(project.name) }, onClick = {
+                                selectedProjectId = project.id
+                                projectMenu = false
+                                reviewText = null
+                            })
+                        }
+                    }
+                }
+                OutlinedButton(enabled = enabled && !projectBusy && selectedProject != null,
+                    onClick = { confirmReview = selectedProject }) {
+                    Text(stringResource(R.string.codex_start_review))
+                }
+                reviewText?.let { SelectionContainer { Text(it, style = MaterialTheme.typography.bodySmall) } }
+            }
         }
         progress?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth()) }
         message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
@@ -133,6 +165,25 @@ internal fun CodexToolsPanel() {
         if (!enabled) {
             TextButton(onClick = { operation?.cancel() }) { Text(stringResource(R.string.action_cancel)) }
         }
+    }
+    confirmReview?.let { project ->
+        AlertDialog(
+            onDismissRequest = { confirmReview = null },
+            title = { Text(stringResource(R.string.codex_review_title)) },
+            text = { Text(stringResource(R.string.codex_review_confirm, project.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmReview = null
+                    reviewText = null
+                    run {
+                        message = context.getString(R.string.codex_review_running)
+                        reviewText = controller.reviewProject(project)
+                        message = context.getString(R.string.codex_review_complete)
+                    }
+                }) { Text(stringResource(R.string.codex_start_review)) }
+            },
+            dismissButton = { TextButton(onClick = { confirmReview = null }) { Text(stringResource(R.string.action_cancel)) } },
+        )
     }
     if (confirmRemoval) {
         AlertDialog(

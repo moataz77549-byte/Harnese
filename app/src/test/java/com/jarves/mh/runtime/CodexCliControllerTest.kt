@@ -14,4 +14,10 @@ class CodexCliControllerTest {
     @Test fun ignoresCodeWithoutOfficialPage() {
         assertNull(codexDeviceChallenge("Sign in at https://example.invalid/device\nABCD-EFGH"))
     }
+
+    @Test fun readsOnlyCompletedAgentMessages() {
+        assertEquals("Review finding", codexReviewMessage("""{"type":"item.completed","item":{"type":"agent_message","text":"Review finding"}}"""))
+        assertNull(codexReviewMessage("""{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"private"}}"""))
+        assertNull(codexReviewMessage("invalid"))
+    }
 }

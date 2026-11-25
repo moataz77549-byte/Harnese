@@ -285,4 +285,11 @@
     <string name="codex_remove_title">حذف ملف Codex التنفيذي؟</string>
     <string name="codex_remove_detail">تبقى المشاريع وبيانات الحساب محفوظة. استخدم تسجيل الخروج من Codex لمسح جلسة الحساب.</string>
     <string name="harnese_developer_credit">برمجة وتطوير معتز العلقمي – تعز – اليمن – 2026م</string>
+    <string name="codex_review_title">مراجعة المشروع للقراءة فقط</string>
+    <string name="codex_review_detail">تستخدم عزل Codex الرسمي وحسابك دون تعديل ملفات المشروع.</string>
+    <string name="codex_select_project">اختر مشروعًا</string>
+    <string name="codex_start_review">راجع بواسطة Codex</string>
+    <string name="codex_review_confirm">هل تسمح لـ Codex بفحص كود مشروع %1$s وإرسال المقاطع ذات الصلة إلى خدمة الذكاء الاصطناعي المصرح بها؟</string>
+    <string name="codex_review_running">اختبار العزل ومراجعة المشروع…</string>
+    <string name="codex_review_complete">اكتملت المراجعة.</string>
 </resources>

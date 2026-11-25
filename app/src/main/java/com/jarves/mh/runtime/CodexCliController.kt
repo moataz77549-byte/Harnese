@@ -2,6 +2,8 @@ package com.jarves.mh.runtime
 
 import android.content.Context
 import com.jarves.mh.ui.sanitizeTerminalOutput
+import com.jarves.mh.model.Project
+import org.json.JSONObject
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -28,6 +30,54 @@ internal class CodexCliController(context: Context, private val installer: Runti
         run(listOf("login", "--device-auth"), 15 * 60_000L, onChallenge) == 0
     suspend fun signOut(): Boolean = run(listOf("logout"), 30_000L) == 0
     suspend fun sandboxAvailable(): Boolean = run(listOf("sandbox", "linux", "/usr/bin/true"), 30_000L) == 0
+
+    /**
+     * A deliberately read-only project review. Provider sandboxing must work
+     * before the source is sent to the coding service.
+     */
+    suspend fun reviewProject(project: Project): String = withContext(Dispatchers.IO) {
+        check(sandboxAvailable()) { "Codex Linux sandbox is unavailable" }
+        check(signedIn()) { "Codex account is not signed in" }
+        val workspaceRoot = File(appContext.filesDir, "workspaces").canonicalFile
+        val base = File(workspaceRoot, project.id).canonicalFile
+        check(base.isDirectory && base.toPath().startsWith(workspaceRoot.toPath()) && base != workspaceRoot)
+        val workspace = if (project.rootPath.isBlank()) base else File(base, project.rootPath).canonicalFile
+        check(workspace.isDirectory && workspace.toPath().startsWith(base.toPath())) { "Invalid project workspace" }
+        val runtime = installer.installedRuntime()
+        val output = File.createTempFile("codex-review-", ".jsonl", appContext.cacheDir)
+        var process: Process? = null
+        try {
+            val command = listOf(
+                RuntimeInstaller.CODEX_GUEST_PATH, "--ask-for-approval", "never",
+                "exec", "--sandbox", "read-only", "--ignore-user-config", "--ephemeral",
+                "--skip-git-repo-check", "--json",
+                "Review this authorized project for code correctness, regressions, and maintainability. " +
+                    "Inspect source and the current diff if available. Do not modify files or run builds. " +
+                    "Avoid credential files and report findings with locations and suggested corrections.",
+            )
+            val started = installer.process(runtime.proot, runtime.rootfs, workspace,
+                emptyMap(), command, guestWorkspacePath = "/workspace/${project.slug}",
+                emulateHardLinks = false, outputFile = output)
+            process = started
+            started.outputStream.close()
+            withTimeout(10 * 60_000L) {
+                while (started.isAlive) {
+                    check(output.length() <= MAX_REVIEW_OUTPUT_BYTES) { "Codex output exceeds its size limit" }
+                    delay(200)
+                }
+                check(started.waitFor() == 0) { "Codex could not complete the review" }
+            }
+            check(output.length() <= MAX_REVIEW_OUTPUT_BYTES) { "Codex output exceeds its size limit" }
+            val review = output.useLines { lines ->
+                lines.mapNotNull(::codexReviewMessage).joinToString("\n\n").takeLast(60_000)
+            }
+            check(review.isNotBlank()) { "Codex returned no review message" }
+            review
+        } finally {
+            process?.let { if (it.isAlive) it.destroyForcibly() }
+            output.delete()
+        }
+    }
 
     private suspend fun run(
         arguments: List<String>,
@@ -66,4 +116,14 @@ internal class CodexCliController(context: Context, private val installer: Runti
             output.delete()
         }
     }
+}
+
+private const val MAX_REVIEW_OUTPUT_BYTES = 8L * 1024 * 1024
+
+internal fun codexReviewMessage(line: String): String? {
+    val event = runCatching { JSONObject(line) }.getOrNull() ?: return null
+    if (event.optString("type") != "item.completed") return null
+    val item = event.optJSONObject("item") ?: return null
+    if (item.optString("type") != "agent_message") return null
+    return item.optString("text").takeIf(String::isNotBlank)
 }

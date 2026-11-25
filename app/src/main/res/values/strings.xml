@@ -452,4 +452,11 @@
     <string name="codex_remove_title">Remove the Codex executable?</string>
     <string name="codex_remove_detail">Projects and Codex account data are retained. Use Sign out of Codex to clear the account session.</string>
     <string name="harnese_developer_credit">برمجة وتطوير معتز العلقمي – تعز – اليمن – 2026م</string>
+    <string name="codex_review_title">Read-only project review</string>
+    <string name="codex_review_detail">Uses the official Codex sandbox and your account. Project files stay unchanged.</string>
+    <string name="codex_select_project">Select a project</string>
+    <string name="codex_start_review">Review with Codex</string>
+    <string name="codex_review_confirm">Allow Codex to inspect source in %1$s and send relevant code to your authorized AI account?</string>
+    <string name="codex_review_running">Testing sandbox and reviewing project…</string>
+    <string name="codex_review_complete">Review complete.</string>
 </resources>

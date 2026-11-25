@@ -256,7 +256,7 @@ fun SettingsScreen(
                     icon = Icons.Default.Code,
                     expanded = expanded == SettingsSection.CODEX,
                     onClick = { toggle(SettingsSection.CODEX) },
-                ) { CodexToolsPanel() }
+                ) { CodexToolsPanel(state.projects, state.isRunning || state.projectTerminalRunning || state.androidBuildRunning) }
             }
 
             item {
