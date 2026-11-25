@@ -92,8 +92,14 @@ jobs:
           "$BT/apksigner" verify --verbose --print-certs --min-sdk-version 26 "$APK" > delivery/certificate.txt
           grep -F "certificate SHA-256 digest: d7f31fde154fc9b46fe8ef333fd12ecdfbd9b331d71a5284c24a6ad8ad45de51" delivery/certificate.txt
           grep -F "Number of signers: 1" delivery/certificate.txt
-          for scheme in v1 v2 v3; do
-            grep -E "Verified using $scheme scheme .*: true" delivery/certificate.txt
+          # Verify each scheme in the platform range where Android actually uses it.
+          # A verifier restricted to API 26+ may skip checking v1 even if present.
+          for entry in v1:23 v2:26 v3:28; do
+            scheme=${entry%:*}
+            api=${entry#*:}
+            "$BT/apksigner" verify --verbose --print-certs --min-sdk-version "$api" --max-sdk-version "$api" "$APK" > "delivery/certificate-$scheme.txt"
+            grep -E "Verified using $scheme scheme .*: true" "delivery/certificate-$scheme.txt"
+            grep -F "certificate SHA-256 digest: d7f31fde154fc9b46fe8ef333fd12ecdfbd9b331d71a5284c24a6ad8ad45de51" "delivery/certificate-$scheme.txt"
           done
           "$BT/zipalign" -c -P 16 4 "$APK"
           "$BT/aapt2" dump badging "$APK" > delivery/package.txt
