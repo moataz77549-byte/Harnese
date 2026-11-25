@@ -3,7 +3,8 @@
 - Based on the latest Nova 1.3.5 repair source merged with main.
 - Resumable verified downloads and ARM64 ELF validation.
 - Official CLI updates are tested in the guest before activation.
-- Independent Codex installer, latest-version check, device sign-in and logout, and Linux sandbox diagnostics in Settings.
+- Independent Codex installer, latest-version check, device sign-in and logout, Linux sandbox diagnostics and an explicitly authorized read-only project-review panel in Settings.
+- Antigravity uses the official accept-edits mode with command permission checks; project changes are staged for review.
 - Runtime archives enforce safe paths, size limits and regular-file writes.
 - Existing application identity and owner signing certificate are used.
 - Online installation, with optional Linux development toolchains. No Android SDK, NDK or emulator is bundled in the APK.

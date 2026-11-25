@@ -222,7 +222,7 @@ class AntigravityRuntimeBridge(
                     addAll(listOf("--input-format", "stream-json"))
                     addAll(listOf("--output-format", "stream-json"))
                     addAll(listOf("--print-timeout", "2m"))
-                    add("--mode=default")
+                    add("--mode=plan")
                     addAntigravitySelection(model(), effort())
                     add("--new-project")
                 }
