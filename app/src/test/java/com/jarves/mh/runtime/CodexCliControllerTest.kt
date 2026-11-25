@@ -20,4 +20,8 @@ class CodexCliControllerTest {
         assertNull(codexReviewMessage("""{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"private"}}"""))
         assertNull(codexReviewMessage("invalid"))
     }
+    @Test fun parsesModelCatalogWithoutHiddenModels() {
+        val result = org.json.JSONObject("""{"result":{"data":[{"model":"official-model","displayName":"Official"},{"model":"hidden","hidden":true}]}}""")
+        assertEquals(listOf(CodexModelOption("official-model", "Official")), parseCodexModels(result))
+    }
 }

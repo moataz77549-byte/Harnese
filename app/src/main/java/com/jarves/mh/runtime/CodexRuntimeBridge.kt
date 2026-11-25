@@ -80,8 +80,12 @@ class CodexRuntimeBridge(context: Context) : RuntimeBridge {
             val history = conversationHistory.recentWithinCharacterBudget(18_000)
                 .dropLast(1).joinToString("\n") { (if (it.fromUser) "User: " else "Assistant: ") + it.text }
             val input = "$instruction\n\nRecent conversation:\n$history\n\nRequest:\n$prompt"
-            val args = listOf(RuntimeInstaller.CODEX_GUEST_PATH, "--ask-for-approval", "never",
-                "exec", "--sandbox", mode, "--ignore-user-config", "--ephemeral", "--skip-git-repo-check", "--json", "-")
+            val args = buildList {
+                addAll(listOf(RuntimeInstaller.CODEX_GUEST_PATH, "--ask-for-approval", "never",
+                    "exec", "--sandbox", mode, "--ignore-user-config", "--ephemeral", "--skip-git-repo-check", "--json"))
+                CodexModelSettings(app).model.takeIf(String::isNotBlank)?.let { addAll(listOf("--model", it)) }
+                add("-")
+            }
             if (!sandboxAvailable) emit(RuntimeEvent.RuntimeLog(id, "Codex", "Text-only assistance. Project files are not mounted because the local sandbox did not pass the test."))
             val running = installer.process(runtime.proot, runtime.rootfs, workspace, emptyMap(), args,
                 guestWorkspacePath = if (sandboxAvailable) "/workspace/$projectSlug" else "/workspace/codex-chat",

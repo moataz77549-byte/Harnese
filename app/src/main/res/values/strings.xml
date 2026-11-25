@@ -465,4 +465,7 @@
     <string name="codex_chat_description">Codex is bundled in this APK. After Linux setup and account sign-in, select Codex and open the project chat. Project edits require the local sandbox and approval through Agent Hub. If the sandbox is unavailable, only text-based assistance is attempted.</string>
     <string name="codex_continue_workspace">Continue to workspace</string>
     <string name="codex_restore_bundled">Restore bundled Codex offline</string>
+    <string name="codex_refresh_models">Refresh Codex model catalog</string>
+    <string name="codex_default_model">Account default model</string>
+    <string name="codex_model_catalog_hint">The list is reported by the official CLI. Account access is confirmed when a model is used.</string>
 </resources>

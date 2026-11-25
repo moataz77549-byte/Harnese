@@ -298,4 +298,7 @@
     <string name="codex_chat_description">يتضمن هذا التطبيق محرك Codex. بعد تجهيز لينكس وتسجيل الدخول، اختر Codex وافتح محادثة المشروع. تتطلب تعديلات المشاريع نجاح اختبار العزل واعتمادها من مركز الوكلاء. إذا تعذر العزل تُستخدم المساعدة النصية فقط.</string>
     <string name="codex_continue_workspace">متابعة إلى مساحة العمل</string>
     <string name="codex_restore_bundled">استعادة Codex المرفق دون تنزيل</string>
+    <string name="codex_refresh_models">تحديث قائمة نماذج Codex</string>
+    <string name="codex_default_model">النموذج الافتراضي للحساب</string>
+    <string name="codex_model_catalog_hint">القائمة من CLI الرسمي، وتُختبر صلاحية الحساب عند استخدام النموذج.</string>
 </resources>

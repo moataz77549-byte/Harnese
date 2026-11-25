@@ -70,7 +70,7 @@ enum class AgentKind(
         "antigravity",
         "Antigravity CLI",
         "Google's official coding agent · Google account",
-        "39.9 MB",
+        "About 90 MB",
     ),
     CODEX(
         "codex",

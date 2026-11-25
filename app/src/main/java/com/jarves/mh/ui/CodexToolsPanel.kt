@@ -30,6 +30,8 @@ import com.jarves.mh.R
 import com.jarves.mh.model.Project
 import com.jarves.mh.runtime.CodexCliController
 import com.jarves.mh.runtime.CodexDeviceChallenge
+import com.jarves.mh.runtime.CodexModelOption
+import com.jarves.mh.runtime.CodexModelSettings
 import com.jarves.mh.runtime.RuntimeInstaller
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -44,6 +46,10 @@ internal fun CodexToolsPanel(projects: List<Project>, projectBusy: Boolean) {
     val context = LocalContext.current
     val installer = remember(context.applicationContext) { RuntimeInstaller(context.applicationContext) }
     val controller = remember(installer) { CodexCliController(context, installer) }
+    val modelSettings = remember(context.applicationContext) { CodexModelSettings(context.applicationContext) }
+    var modelOptions by remember { mutableStateOf<List<CodexModelOption>>(emptyList()) }
+    var modelMenu by remember { mutableStateOf(false) }
+    var activeModel by remember { mutableStateOf(modelSettings.model) }
     val scope = rememberCoroutineScope()
     var version by remember { mutableStateOf(installer.installedCodexVersion()) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -128,7 +134,9 @@ internal fun CodexToolsPanel(projects: List<Project>, projectBusy: Boolean) {
             }) { Text(stringResource(R.string.codex_sign_in)) }
             TextButton(enabled = enabled, onClick = {
                 run {
-                    message = context.getString(if (controller.signOut()) R.string.codex_signed_out else R.string.codex_operation_failed)
+                    val signedOut = controller.signOut()
+                    if (signedOut) { activeModel = ""; modelOptions = emptyList() }
+                    message = context.getString(if (signedOut) R.string.codex_signed_out else R.string.codex_operation_failed)
                 }
             }) { Text(stringResource(R.string.codex_sign_out)) }
             TextButton(enabled = enabled, onClick = {
@@ -137,6 +145,25 @@ internal fun CodexToolsPanel(projects: List<Project>, projectBusy: Boolean) {
                 }
             }) { Text(stringResource(R.string.codex_check_sandbox)) }
             TextButton(enabled = enabled, onClick = { confirmRemoval = true }) { Text(stringResource(R.string.action_remove)) }
+            TextButton(enabled = enabled, onClick = {
+                run { modelOptions = controller.models(); modelMenu = true }
+            }) { Text(stringResource(R.string.codex_refresh_models)) }
+            Box {
+                OutlinedButton(enabled = enabled, onClick = { modelMenu = true }) {
+                    Text(activeModel.ifBlank { stringResource(R.string.codex_default_model) })
+                }
+                DropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
+                    DropdownMenuItem(text = { Text(stringResource(R.string.codex_default_model)) }, onClick = {
+                        activeModel = ""; modelSettings.model = ""; modelMenu = false
+                    })
+                    modelOptions.forEach { option ->
+                        DropdownMenuItem(text = { Text(option.title) }, onClick = {
+                            activeModel = option.id; modelSettings.model = option.id; modelMenu = false
+                        })
+                    }
+                }
+            }
+            Text(stringResource(R.string.codex_model_catalog_hint), style = MaterialTheme.typography.bodySmall)
             if (projects.isNotEmpty()) {
                 Text(stringResource(R.string.codex_review_title), style = MaterialTheme.typography.titleSmall)
                 Text(stringResource(R.string.codex_review_detail), style = MaterialTheme.typography.bodySmall)
