@@ -58,7 +58,7 @@ jobs:
           APK=delivery/nova-rc4-unsigned.apk
           "$BT/aapt2" dump badging "$APK" > delivery/package.txt
           grep -F "package: name='com.moataz.harnese.nova' versionCode='23' versionName='2.0.0-rc.4'" delivery/package.txt
-          grep -F "sdkVersion:'26'" delivery/package.txt
+          grep -E "^(minSdkVersion|sdkVersion):'26'$" delivery/package.txt
           grep -F "native-code: 'arm64-v8a'" delivery/package.txt
           ! grep -E "^package:.*split=" delivery/package.txt
           unzip -t "$APK" > delivery/apk-integrity.txt
