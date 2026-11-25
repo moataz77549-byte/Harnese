@@ -61,8 +61,8 @@ val prepareOfficialCodexSource = tasks.register<Exec>("prepareOfficialCodexSourc
 val prepareBundledCodexAssets = tasks.register<Sync>("prepareBundledCodexAssets") {
     dependsOn(prepareOfficialCodexSource)
     val source = runtimeBundleDir.file("sources/codex-aarch64-unknown-linux-musl.tar.gz")
-    from(source)
-    into(generatedRuntimeAssets.map { it.dir("codex/engine") })
+    from(source) { into("engine") }
+    into(generatedRuntimeAssets.map { it.dir("codex") })
     doFirst {
         check(source.asFile.isFile) { "Run scripts/runtime-bundles/prepare-codex.sh before packaging" }
     }
@@ -153,7 +153,7 @@ android {
         }
     }
 
-    sourceSets.getByName("main").assets.srcDir(generatedRuntimeAssets.map { it.dir("codex") })
+    sourceSets.getByName("main").assets.srcDir(prepareBundledCodexAssets.map { it.destinationDir })
     sourceSets.getByName("offline").assets.srcDir(generatedRuntimeAssets.map { it.dir("offline") })
 
     buildTypes {
@@ -239,5 +239,6 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
-    .configureEach { dependsOn(prepareBundledCodexAssets) }
+tasks.matching {
+    (it.name.startsWith("merge") && it.name.endsWith("Assets")) || it.name.contains("lint", ignoreCase = true)
+}.configureEach { dependsOn(prepareBundledCodexAssets) }
