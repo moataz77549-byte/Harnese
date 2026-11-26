@@ -346,6 +346,7 @@ data class ChatMessage(
     val attachments: List<ChatAttachment> = emptyList(),
     val workItems: List<ActivityItem> = emptyList(),
     val workedMillis: Long = 0L,
+    val agentId: String? = null,
 )
 
 data class ChatAttachment(

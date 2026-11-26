@@ -193,4 +193,13 @@
     </plurals>
     <string name="vm_claude_hello">Просим Claude Code ответить…</string>
     <string name="vm_claude_working">Подписка Claude работает!</string>
+    <string name="vm_agent_switch_queued">Переключение на %1$s после текущей задачи</string>
+    <string name="vm_agent_busy_try_again">Агент занят. Повторите попытку после завершения операции.</string>
+    <string name="vm_agent_no_terminal_result">Агент завершил работу без подтверждённого результата. Повторите попытку или выберите другого агента.</string>
+    <string name="vm_queued_chat_mismatch">Откройте исходный чат, чтобы выполнить запрос из очереди.</string>
+    <string name="ws_git_commands">Команды Git</string>
+    <string name="ws_task_failed">Задача не завершена</string>
+    <string name="ws_agent_installed_version">Установлен · %1$s</string>
+    <string name="ws_agent_install">Нажмите для установки</string>
+    <string name="vm_agent_not_installed">Установите %1$s перед отправкой задачи.</string>
 </resources>

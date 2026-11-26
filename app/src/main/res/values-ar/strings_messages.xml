@@ -199,4 +199,13 @@
     </plurals>
     <string name="vm_claude_hello">جارٍ طلب رد من Claude Code…</string>
     <string name="vm_claude_working">اشتراك Claude يعمل!</string>
+    <string name="vm_agent_switch_queued">سيتم التبديل إلى %1$s بعد انتهاء المهمة الحالية</string>
+    <string name="vm_agent_busy_try_again">الوكيل مشغول حاليًا. أعد المحاولة بعد انتهاء العملية.</string>
+    <string name="vm_agent_no_terminal_result">انتهى تشغيل الوكيل دون نتيجة مؤكدة. أعد المحاولة أو اختر وكيلًا آخر.</string>
+    <string name="vm_queued_chat_mismatch">افتح المحادثة الأصلية لتشغيل الطلب المنتظر.</string>
+    <string name="ws_git_commands">أوامر Git</string>
+    <string name="ws_task_failed">لم تكتمل المهمة</string>
+    <string name="ws_agent_installed_version">مثبّت · %1$s</string>
+    <string name="ws_agent_install">اضغط للتثبيت</string>
+    <string name="vm_agent_not_installed">ثبّت %1$s قبل إرسال المهمة.</string>
 </resources>

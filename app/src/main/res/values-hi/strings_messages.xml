@@ -187,4 +187,13 @@
     </plurals>
     <string name="vm_claude_hello">Claude Code से जवाब माँगा जा रहा है…</string>
     <string name="vm_claude_working">Claude सब्सक्रिप्शन काम कर रहा है!</string>
+    <string name="vm_agent_switch_queued">वर्तमान कार्य के बाद %1$s पर स्विच होगा</string>
+    <string name="vm_agent_busy_try_again">एजेंट व्यस्त है। प्रक्रिया पूरी होने पर फिर कोशिश करें।</string>
+    <string name="vm_agent_no_terminal_result">एजेंट पुष्ट परिणाम के बिना समाप्त हुआ। फिर कोशिश करें या दूसरा एजेंट चुनें।</string>
+    <string name="vm_queued_chat_mismatch">कतार का अनुरोध चलाने के लिए मूल चैट खोलें।</string>
+    <string name="ws_git_commands">Git कमांड</string>
+    <string name="ws_task_failed">कार्य पूरा नहीं हुआ</string>
+    <string name="ws_agent_installed_version">इंस्टॉल किया गया · %1$s</string>
+    <string name="ws_agent_install">इंस्टॉल करने के लिए टैप करें</string>
+    <string name="vm_agent_not_installed">कार्य भेजने से पहले %1$s इंस्टॉल करें।</string>
 </resources>

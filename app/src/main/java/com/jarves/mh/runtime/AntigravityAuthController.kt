@@ -45,7 +45,19 @@ class AntigravityAuthController(
         "runtime/ubuntu/root/.gemini/antigravity-cli/antigravity-oauth-token",
     )
 
-    fun hasOfficialCredential(): Boolean = officialCredentialFile().isFile
+    fun hasOfficialCredential(): Boolean = officialCredentialFile().let { it.isFile && it.length() > 0L }
+
+    /** The official CLI owns the token. Restore the saved account without launching OAuth. */
+    fun restoreStoredSession() {
+        if (!hasOfficialCredential()) return
+        val email = mutableState.value.accountEmail
+        onSignedInChanged(true, email)
+        mutableState.value = AntigravityAuthState(
+            AntigravityAuthStatus.SIGNED_IN,
+            message = email?.let { str(R.string.rt_agy_connected_as, it) } ?: str(R.string.rt_agy_google_connected),
+            accountEmail = email,
+        )
+    }
 
     suspend fun beginLogin() = withContext(Dispatchers.IO) {
         if (process?.isAlive == true) return@withContext
@@ -56,7 +68,7 @@ class AntigravityAuthController(
             )
             return@withContext
         }
-        mutableState.value = AntigravityAuthState(AntigravityAuthStatus.STARTING, message = str(R.string.rt_agy_starting))
+        mutableState.value = AntigravityAuthState(AntigravityAuthStatus.STARTING, message = str(R.string.rt_agy_starting), accountEmail = mutableState.value.accountEmail)
         codeSubmitted = false
         authOutput.delete()
         val runtime = installer.installedRuntime()
@@ -151,7 +163,7 @@ class AntigravityAuthController(
                     )
                 }
                 if (isSignedInScreen(clean)) {
-                    val email = extractSignedInEmail(clean)
+                    val email = extractSignedInEmail(clean) ?: mutableState.value.accountEmail
                     onSignedInChanged(true, email)
                     mutableState.value = AntigravityAuthState(
                         AntigravityAuthStatus.SIGNED_IN,
@@ -230,6 +242,7 @@ class AntigravityAuthController(
                 mutableState.value = AntigravityAuthState(
                     AntigravityAuthStatus.ERROR,
                     message = error.message?.take(240) ?: str(R.string.rt_agy_sign_in_failed),
+                    accountEmail = mutableState.value.accountEmail,
                 )
             }
         } finally {
@@ -294,12 +307,13 @@ class AntigravityAuthController(
 
     fun cancel() {
         process?.destroy()
-        mutableState.value = AntigravityAuthState(AntigravityAuthStatus.SIGNED_OUT)
+        if (hasOfficialCredential()) restoreStoredSession()
+        else mutableState.value = AntigravityAuthState(AntigravityAuthStatus.SIGNED_OUT)
     }
 
     fun invalidateSession(message: String) {
-        onSignedInChanged(false, null)
-        mutableState.value = AntigravityAuthState(AntigravityAuthStatus.ERROR, message = message)
+        // A failed task is not an explicit sign-out. Keep chat IDs and account metadata.
+        mutableState.value = AntigravityAuthState(AntigravityAuthStatus.ERROR, message = message, accountEmail = mutableState.value.accountEmail)
     }
 }
 

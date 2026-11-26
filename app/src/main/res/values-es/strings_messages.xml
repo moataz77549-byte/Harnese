@@ -190,4 +190,13 @@
     </plurals>
     <string name="vm_claude_hello">Pidiendo a Claude Code que responda…</string>
     <string name="vm_claude_working">¡La suscripción de Claude funciona!</string>
+    <string name="vm_agent_switch_queued">Se cambiará a %1$s al finalizar la tarea actual</string>
+    <string name="vm_agent_busy_try_again">El agente está ocupado. Vuelve a intentarlo cuando termine la operación.</string>
+    <string name="vm_agent_no_terminal_result">El agente terminó sin un resultado confirmado. Reintenta o elige otro agente.</string>
+    <string name="vm_queued_chat_mismatch">Abre el chat original para ejecutar la solicitud en cola.</string>
+    <string name="ws_git_commands">Comandos de Git</string>
+    <string name="ws_task_failed">La tarea no terminó</string>
+    <string name="ws_agent_installed_version">Instalado · %1$s</string>
+    <string name="ws_agent_install">Toca para instalar</string>
+    <string name="vm_agent_not_installed">Instala %1$s antes de enviar una tarea.</string>
 </resources>

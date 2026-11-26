@@ -187,4 +187,13 @@
     </plurals>
     <string name="vm_claude_hello">Asking Claude Code to reply…</string>
     <string name="vm_claude_working">Claude subscription works!</string>
+    <string name="vm_agent_switch_queued">Will switch to %1$s after the current task</string>
+    <string name="vm_agent_busy_try_again">The agent is busy. Try again after the operation finishes.</string>
+    <string name="vm_agent_no_terminal_result">The agent ended without a confirmed result. Retry or choose another agent.</string>
+    <string name="vm_queued_chat_mismatch">Open the original chat to run this queued request.</string>
+    <string name="ws_git_commands">Git commands</string>
+    <string name="ws_task_failed">Task did not finish</string>
+    <string name="ws_agent_installed_version">Installed · %1$s</string>
+    <string name="ws_agent_install">Tap to install</string>
+    <string name="vm_agent_not_installed">Install %1$s before sending a task.</string>
 </resources>

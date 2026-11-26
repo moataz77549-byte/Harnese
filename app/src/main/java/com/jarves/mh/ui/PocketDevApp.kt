@@ -416,6 +416,9 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             state = state,
             onBack = viewModel::closeProject,
             onSend = viewModel::sendPrompt,
+            onSelectAgent = viewModel::selectAgent,
+            onInstallAgent = viewModel::installAgent,
+            onRetry = viewModel::retryFailedPrompt,
             onStop = viewModel::stopTask,
             onSteerFollowUp = viewModel::steerQueuedFollowUp,
             onRemoveFollowUp = viewModel::removeQueuedFollowUp,
@@ -1800,6 +1803,7 @@ private fun AgentSwitchSheet(
     selected: AgentKind,
     onSelect: (AgentKind) -> Unit,
     onDismiss: () -> Unit,
+    installedVersions: Map<AgentKind, String>? = null,
 ) {
     // Resolve text before entering ModalBottomSheet. Dialog windows can expose
     // the activity's base resources instead of our dynamically localized context.
@@ -1841,7 +1845,12 @@ private fun AgentSwitchSheet(
                         AgentChoiceRow(
                             agent = agent,
                             title = labels.first,
-                            subtitle = labels.second,
+                            subtitle = if (installedVersions == null) labels.second else {
+                                val version = installedVersions[agent]
+                                labels.second + " · " + if (version != null) {
+                                    localizedContext.getString(R.string.ws_agent_installed_version, version)
+                                } else localizedContext.getString(R.string.ws_agent_install)
+                            },
                             recommendedLabel = recommendedLabel,
                             selected = agent == selected,
                             onClick = { onSelect(agent) },
@@ -4379,7 +4388,7 @@ private fun ReadOnlyProjectScreen(
                 approval = null,
                 liveProcess = emptyList(),
                 isRunning = false,
-                onSend = {},
+                onSend = { false },
                 onStop = {},
                 onApproval = {},
                 listState = listState,
@@ -4405,7 +4414,10 @@ private fun ReadOnlyProjectScreen(
 private fun WorkspaceScreen(
     state: AppUiState,
     onBack: () -> Unit,
-    onSend: (String) -> Unit,
+    onSend: (String) -> Boolean,
+    onSelectAgent: (AgentKind) -> Unit,
+    onInstallAgent: (AgentKind) -> Unit,
+    onRetry: () -> Boolean,
     onStop: () -> Unit,
     onSteerFollowUp: (String) -> Unit,
     onRemoveFollowUp: (String) -> Unit,
@@ -4566,6 +4578,20 @@ private fun WorkspaceScreen(
 
     var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
     var showChats by rememberSaveable { mutableStateOf(false) }
+    var showAgentSwitch by rememberSaveable { mutableStateOf(false) }
+    var showGitCommands by rememberSaveable { mutableStateOf(false) }
+    if (showAgentSwitch) {
+        AgentSwitchSheet(
+            selected = state.pendingAgentSwitch ?: state.agentKind,
+            installedVersions = state.installedAgentVersions,
+            onSelect = { agent ->
+                showAgentSwitch = false
+                if (agent in state.installedAgentVersions || agent == state.agentKind) onSelectAgent(agent)
+                else onInstallAgent(agent)
+            },
+            onDismiss = { showAgentSwitch = false },
+        )
+    }
     var showAndroidBuild by rememberSaveable { mutableStateOf(false) }
     val activeChat = state.projectChats.firstOrNull { it.id == state.activeChatId }
     val requestAndroidAction: (AndroidAction) -> Unit = { action ->
@@ -4687,14 +4713,37 @@ private fun WorkspaceScreen(
                                 },
                             ),
                         )
-                        // Agent first so it always stays visible; a long chat title is cut with "…".
-                        Text(
-                            "${if (state.agentKind in setOf(AgentKind.ANTIGRAVITY, AgentKind.CODEX)) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Row(
+                            modifier = Modifier.clickable { showAgentSwitch = true },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                state.agentKind.localizedTitle(),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.agent_choose_title), Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                            Text(
+                                " · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
+                                modifier = Modifier.weight(1f),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        state.pendingAgentSwitch?.let { next ->
+                            Text(
+                                stringResource(R.string.vm_agent_switch_queued, next.localizedTitle()),
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects)) } },
@@ -4708,6 +4757,25 @@ private fun WorkspaceScreen(
                             else Icon(Icons.Default.PlayArrow, stringResource(R.string.ws_build_run_android))
                         }
                     }
+                    Box {
+                        IconButton(
+                            onClick = { showGitCommands = true },
+                            enabled = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
+                        ) { Icon(Icons.Default.Code, stringResource(R.string.ws_git_commands)) }
+                        DropdownMenu(expanded = showGitCommands, onDismissRequest = { showGitCommands = false }) {
+                            listOf("git status --short --branch", "git diff --stat", "git add -p", "git commit", "git push").forEach { command ->
+                                DropdownMenuItem(
+                                    text = { Text(command, fontFamily = FontFamily.Monospace) },
+                                    onClick = {
+                                        showGitCommands = false
+                                        selectedTab = WorkspaceTab.TERMINAL
+                                        onTerminalOpened()
+                                        onTerminalPrepare(command)
+                                    },
+                                )
+                            }
+                        }
+                    }
                     IconButton(onClick = { showChats = true }) { Icon(Icons.Default.History, stringResource(R.string.ws_project_chats)) }
                     if (state.isRunning) CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), strokeWidth = 2.dp)
                 },
@@ -4716,7 +4784,7 @@ private fun WorkspaceScreen(
         },
         bottomBar = {
             if (!keyboardVisible) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                WorkspaceTab.entries.filter { it != WorkspaceTab.CHANGES }.forEach { tab ->
+                WorkspaceTab.entries.filter { it != WorkspaceTab.CHANGES || state.changes.isNotEmpty() || selectedTab == WorkspaceTab.CHANGES }.forEach { tab ->
                     NavigationBarItem(
                         selected = selectedTab == tab,
                         onClick = {
@@ -4751,6 +4819,9 @@ private fun WorkspaceScreen(
                     taskFinishedAtMillis = state.taskFinishedAtMillis,
                     thinkingActive = state.liveThinking,
                     agentKind = state.agentKind,
+                    draftKey = state.activeChatId,
+                    taskFailure = state.taskFailure,
+                    onRetry = onRetry,
                     pendingAttachments = state.pendingAttachments,
                     onAttach = {
                         attachmentLauncher.launch(arrayOf("image/*", "text/*", "application/json", "application/xml"))
@@ -4772,7 +4843,7 @@ private fun WorkspaceScreen(
                         onTerminalOpened()
                         onTerminalPrepare(command)
                     },
-                    queuedFollowUps = state.queuedFollowUps,
+                    queuedFollowUps = state.queuedFollowUps.filter { it.projectId == state.activeProject?.id && it.chatId == state.activeChatId },
                     onSteerFollowUp = onSteerFollowUp,
                     onRemoveFollowUp = onRemoveFollowUp,
                 )
@@ -6253,7 +6324,7 @@ private fun ChatTab(
     approval: ToolRequest?,
     liveProcess: List<ActivityItem>,
     isRunning: Boolean,
-    onSend: (String) -> Unit,
+    onSend: (String) -> Boolean,
     onStop: () -> Unit,
     onApproval: (Boolean) -> Unit,
     listState: LazyListState,
@@ -6273,6 +6344,9 @@ private fun ChatTab(
     readOnly: Boolean = false,
     readOnlyBlocked: Boolean = false,
     onContinueHere: () -> Unit = {},
+    draftKey: String? = null,
+    taskFailure: String? = null,
+    onRetry: () -> Boolean = { false },
 ) {
     val view = LocalView.current
     // Keep the screen on while the selected agent is working in this chat. Released automatically
@@ -6281,7 +6355,7 @@ private fun ChatTab(
         view.keepScreenOn = isRunning
         onDispose { view.keepScreenOn = false }
     }
-    var prompt by rememberSaveable { mutableStateOf("") }
+    var prompt by rememberSaveable(draftKey) { mutableStateOf("") }
     val chatScope = rememberCoroutineScope()
     // True while the newest item (message, live panel, or approval card) is on screen.
     val readerAtBottom by remember {
@@ -6391,6 +6465,21 @@ private fun ChatTab(
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 8.dp)
             ) {
+                if (taskFailure != null && !isRunning) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    ) {
+                        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(stringResource(R.string.ws_task_failed), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onErrorContainer)
+                                Text(taskFailure, fontSize = 12.sp, color = MaterialTheme.colorScheme.onErrorContainer, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                            }
+                            TextButton(onClick = { onRetry() }) { Text(stringResource(R.string.ws_try_again)) }
+                        }
+                    }
+                }
                 if (queuedFollowUps.isNotEmpty()) {
                     Column(
                         Modifier
@@ -6534,8 +6623,7 @@ private fun ChatTab(
                                         enabled = canSend,
                                         onClick = {
                                             if (canSend) {
-                                                onSend(prompt)
-                                                prompt = ""
+                                                if (onSend(prompt)) prompt = ""
                                             }
                                         },
                                     ),
@@ -7000,6 +7088,17 @@ private fun MessageBubble(message: ChatMessage, onRunInTerminal: (String) -> Uni
             modifier = Modifier.fillMaxWidth(if (message.fromUser) .82f else .92f),
         ) {
             Column(Modifier.padding(top = 12.dp)) {
+                if (!message.fromUser) {
+                    AgentKind.entries.firstOrNull { it.stableId == message.agentId }?.let { author ->
+                        Text(
+                            author.localizedTitle(),
+                            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 6.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
                 SelectionContainer {
                     if (message.fromUser) {
                         Text(

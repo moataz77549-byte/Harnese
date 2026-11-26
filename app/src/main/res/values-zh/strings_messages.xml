@@ -184,4 +184,13 @@
     </plurals>
     <string name="vm_claude_hello">正在请求 Claude Code 回复…</string>
     <string name="vm_claude_working">Claude 订阅可用！</string>
+    <string name="vm_agent_switch_queued">当前任务结束后将切换到 %1$s</string>
+    <string name="vm_agent_busy_try_again">代理正忙，请在操作结束后重试。</string>
+    <string name="vm_agent_no_terminal_result">代理结束时没有确认结果。请重试或选择其他代理。</string>
+    <string name="vm_queued_chat_mismatch">打开原始聊天以执行排队的请求。</string>
+    <string name="ws_git_commands">Git 命令</string>
+    <string name="ws_task_failed">任务未完成</string>
+    <string name="ws_agent_installed_version">已安装 · %1$s</string>
+    <string name="ws_agent_install">点击安装</string>
+    <string name="vm_agent_not_installed">发送任务前请安装 %1$s。</string>
 </resources>

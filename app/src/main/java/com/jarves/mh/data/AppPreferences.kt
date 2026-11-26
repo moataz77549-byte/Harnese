@@ -396,6 +396,7 @@ class AppPreferences(private val context: Context) {
                     }
                 })
                 put("workedMillis", m.workedMillis)
+                m.agentId?.let { put("agentId", it) }
                 put("workItems", JSONArray().apply {
                     m.workItems.forEach { item ->
                         put(JSONObject().apply {
@@ -456,6 +457,7 @@ class AppPreferences(private val context: Context) {
                         }
                     }.orEmpty(),
                     workedMillis = obj.optLong("workedMillis", 0L),
+                    agentId = obj.optString("agentId").takeIf { it.isNotBlank() && it != "null" },
                     workItems = obj.optJSONArray("workItems")?.let { workItems ->
                         (0 until workItems.length()).mapNotNull { index ->
                             runCatching {

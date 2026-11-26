@@ -265,6 +265,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun removePendingAttachment(attachmentId: String) = runtime.removePendingAttachment(attachmentId)
     fun openChatAttachment(attachment: ChatAttachment) = runtime.openChatAttachment(attachment)
     fun sendPrompt(prompt: String) = runtime.sendPrompt(prompt)
+    fun retryFailedPrompt() = runtime.retryFailedPrompt()
     fun steerQueuedFollowUp(id: String) = runtime.steerQueuedFollowUp(id)
     fun removeQueuedFollowUp(id: String) = runtime.removeQueuedFollowUp(id)
     fun answerApproval(approved: Boolean) = runtime.answerApproval(approved)

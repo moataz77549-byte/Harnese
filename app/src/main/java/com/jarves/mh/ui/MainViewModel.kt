@@ -273,7 +273,9 @@ private data class ProjectTerminalResult(
 
 private data class RuntimeRetryRequest(
     val runtime: com.jarves.mh.runtime.RuntimeBridge,
+    val agentKind: AgentKind,
     val project: Project,
+    val chatId: String,
     val prompt: String,
     val history: List<ChatMessage>,
     val provider: ProviderProfile,
@@ -282,6 +284,8 @@ private data class RuntimeRetryRequest(
 data class QueuedFollowUp(
     val id: String = UUID.randomUUID().toString(),
     val projectId: String,
+    val chatId: String,
+    val agentKind: AgentKind,
     val prompt: String,
     val attachments: List<ChatAttachment>,
 )
@@ -360,6 +364,10 @@ data class AppUiState(
     val previewReady: Boolean = false,
     val previewUrl: String? = null,
     val isRunning: Boolean = false,
+    val pendingAgentSwitch: AgentKind? = null,
+    val taskFailure: String? = null,
+    val taskHasOutput: Boolean = false,
+    val changesAgentKind: AgentKind? = null,
     val queuedFollowUps: List<QueuedFollowUp> = emptyList(),
     val activeSessionId: String? = null,
     val toastMessage: String? = null,
@@ -486,6 +494,9 @@ class HarneseRuntimeController(private val application: Application) {
     private var githubAuthJob: kotlinx.coroutines.Job? = null
     @Volatile private var lastOpenedAntigravityAuthUrl: String? = null
     private var activeRuntimeRequest: RuntimeRetryRequest? = null
+    private var runtimeAttempt = 0L
+    private var runtimeRequestInFlight = false
+    private var lastTerminalSucceeded = false
     private val pendingFollowUps = java.util.ArrayDeque<QueuedFollowUp>()
     @Volatile private var steeringToFollowUp: Boolean = false
     private val failedApiKeyIds = mutableSetOf<String>()
@@ -494,6 +505,10 @@ class HarneseRuntimeController(private val application: Application) {
     // Writes are drained into a per-chat batch below so rapid activity frames do not
     // serialize hundreds of obsolete snapshots.
     private val transcriptWrites = Channel<TranscriptWrite>(Channel.UNLIMITED)
+    private val recentTranscripts = linkedMapOf<Pair<String, String>, List<ChatMessage>>()
+
+    private fun loadChatTranscript(projectId: String, chatId: String): List<ChatMessage> =
+        recentTranscripts[projectId to chatId] ?: preferences.loadMessages(projectId, chatId)
     private val initialAgentKind = AgentKind.fromStored(preferences.agentKind)
     private val initialPrimaryAgentKind = preferences.primaryAgentKind
         .takeIf(String::isNotBlank)
@@ -505,8 +520,8 @@ class HarneseRuntimeController(private val application: Application) {
         preferences.antigravityAccountEmail,
     ) { signedIn, email ->
         preferences.antigravitySignedIn = signedIn
-        preferences.antigravityAccountEmail = email.orEmpty()
-        if (!signedIn) preferences.clearAgentConversations(AgentKind.ANTIGRAVITY)
+        if (signedIn && !email.isNullOrBlank()) preferences.antigravityAccountEmail = email
+        if (!signedIn && email == null) preferences.antigravityAccountEmail = ""
     }
     private val _state = MutableStateFlow(
         AppUiState(
@@ -606,9 +621,9 @@ class HarneseRuntimeController(private val application: Application) {
                 }
             }
         }
-        runtimeScope.launch { dshRuntime.events.collect(::onRuntimeEvent) }
-        runtimeScope.launch { antigravityRuntime.events.collect(::onRuntimeEvent) }
-        runtimeScope.launch { codexRuntime.events.collect(::onRuntimeEvent) }
+        runtimeScope.launch { dshRuntime.events.collect { event -> onRuntimeEvent(dshRuntime, event) } }
+        runtimeScope.launch { antigravityRuntime.events.collect { event -> onRuntimeEvent(antigravityRuntime, event) } }
+        runtimeScope.launch { codexRuntime.events.collect { event -> onRuntimeEvent(codexRuntime, event) } }
         runtimeScope.launch {
             antigravityAuthController.state.collect { auth ->
                 _state.update { it.copy(antigravityAuth = auth) }
@@ -624,11 +639,9 @@ class HarneseRuntimeController(private val application: Application) {
                 }
             }
         }
-        if (antigravityAuthController.hasOfficialCredential() &&
-            (!preferences.antigravitySignedIn || preferences.antigravityAccountEmail.isBlank())
-        ) {
-            runtimeScope.launch { antigravityAuthController.beginLogin() }
-        }
+        // Reuse agy's own private credential; starting the interactive login here
+        // previously opened OAuth again whenever the CLI did not expose an email.
+        antigravityAuthController.restoreStoredSession()
         if (!preferences.legacySeededCredentialRemoved) {
             vault.remove(ProviderKind.CUSTOM.name)
             preferences.legacySeededCredentialRemoved = true
@@ -929,7 +942,7 @@ class HarneseRuntimeController(private val application: Application) {
 
     fun clearDeveloperRuntimeCache() {
         val current = _state.value
-        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning) {
+        if (current.isRunning || runtimeRequestInFlight || current.projectTerminalRunning || current.androidBuildRunning) {
             _state.update { it.copy(toastMessage = str(R.string.diagnostics_cache_busy)) }
             return
         }
@@ -2094,7 +2107,7 @@ class HarneseRuntimeController(private val application: Application) {
 
     init {
         runtimeScope.launch { RuntimeSetupController.snapshot.collect(::onSetupSnapshot) }
-        runtimeScope.launch { claudeRuntime.events.collect(::onRuntimeEvent) }
+        runtimeScope.launch { claudeRuntime.events.collect { event -> onRuntimeEvent(claudeRuntime, event) } }
         runtimeScope.launch { bootstrap() }
     }
 
@@ -2447,8 +2460,16 @@ class HarneseRuntimeController(private val application: Application) {
 
     /** Called from the first-launch setup screen; persists the agent choice for setup and Settings. */
     fun selectAgent(kind: AgentKind) {
-        if (_state.value.agentKind == kind) return
-        if (_state.value.isRunning) {
+        val snapshot = _state.value
+        if (snapshot.agentKind == kind) {
+            _state.update { it.copy(pendingAgentSwitch = null) }
+            return
+        }
+        if (snapshot.isRunning || runtimeRequestInFlight) {
+            _state.update { it.copy(pendingAgentSwitch = kind, toastMessage = str(R.string.vm_agent_switch_queued, kind.localizedTitle(getApplication()))) }
+            return
+        }
+        if (snapshot.projectTerminalRunning || snapshot.androidBuildRunning || snapshot.runtimeProbeRunning) {
             _state.update { it.copy(toastMessage = str(R.string.vm_stop_agent_before_switching)) }
             return
         }
@@ -2460,6 +2481,7 @@ class HarneseRuntimeController(private val application: Application) {
             val provider = preferences.loadProvider(vault, kind)
             current.copy(
                 agentKind = kind,
+                pendingAgentSwitch = null,
                 primaryAgentKind = if (selectingInitialAgent) kind else current.primaryAgentKind,
                 provider = provider,
                 activeApiKeyName = vault.list(provider.kind.name).firstOrNull(ApiKeyInfo::isActive)?.name,
@@ -2773,8 +2795,13 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     fun logoutAntigravity() {
+        if (activeRuntimeRequest?.agentKind == AgentKind.ANTIGRAVITY || runtimeRequestInFlight) {
+            _state.update { it.copy(toastMessage = str(R.string.vm_agent_busy_try_again)) }
+            return
+        }
         runtimeScope.launch {
             runCatching { antigravityAuthController.logout() }
+                .onSuccess { preferences.clearAgentConversations(AgentKind.ANTIGRAVITY) }
                 .onFailure { error -> _state.update { it.copy(toastMessage = error.message ?: str(R.string.vm_sign_out_failed)) } }
         }
     }
@@ -3177,7 +3204,7 @@ class HarneseRuntimeController(private val application: Application) {
             }
             return
         }
-        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning) {
+        if (current.isRunning || runtimeRequestInFlight || current.projectTerminalRunning || current.androidBuildRunning) {
             val chats = preferences.loadProjectChats(project.id).ifEmpty {
                 listOf(ProjectChat(title = str(R.string.vm_main_chat)))
             }
@@ -3187,7 +3214,7 @@ class HarneseRuntimeController(private val application: Application) {
                     readOnlyProject = project,
                     readOnlyProjectChats = chats,
                     readOnlyChatId = chat.id,
-                    readOnlyMessages = preferences.loadMessages(project.id, chat.id),
+                    readOnlyMessages = loadChatTranscript(project.id, chat.id),
                 )
             }
             return
@@ -3199,7 +3226,7 @@ class HarneseRuntimeController(private val application: Application) {
             listOf(ProjectChat(title = str(R.string.vm_main_chat))).also { preferences.saveProjectChats(project.id, it) }
         }
         val activeChat = chats.first()
-        val saved = preferences.loadMessages(project.id, activeChat.id)
+        val saved = loadChatTranscript(project.id, activeChat.id)
         val msgs = saved.ifEmpty { listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")) }
         val androidBuild = loadAndroidBuildRecord(project.id)
         _state.update {
@@ -3217,7 +3244,10 @@ class HarneseRuntimeController(private val application: Application) {
                 liveThinking = false,
                 taskStartedAtMillis = null,
                 taskFinishedAtMillis = null,
+                taskFailure = null,
+                taskHasOutput = false,
                 changes = emptyList(),
+                changesAgentKind = null,
                 workspaceFiles = emptyList(),
                 androidProjectDetected = false,
                 filesLoading = true,
@@ -3247,16 +3277,19 @@ class HarneseRuntimeController(private val application: Application) {
             )
         }
         refreshProjectFiles()
+        val owner = _state.value.agentKind
+        val runtime = activeRuntime()
         runtimeScope.launch {
-            val pending = activeRuntime().loadPendingChanges(project.id)
-            if (_state.value.activeProject?.id == project.id) _state.update { it.copy(changes = pending) }
+            val pending = runCatching { runtime.loadPendingChanges(project.id) }.getOrDefault(emptyList())
+            if (_state.value.activeProject?.id == project.id && _state.value.agentKind == owner && !_state.value.isRunning) {
+                _state.update { it.copy(changes = pending, changesAgentKind = owner.takeIf { pending.isNotEmpty() }) }
+            }
         }
     }
 
     fun closeProject() {
-        val active = _state.value.activeProject
         persistMessages()
-        if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
+        if (_state.value.isRunning || runtimeRequestInFlight || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
             _state.update {
                 it.copy(
                     workspaceVisible = false,
@@ -3270,28 +3303,7 @@ class HarneseRuntimeController(private val application: Application) {
             return
         }
 
-        if (active != null) {
-            val chats = preferences.loadProjectChats(active.id)
-            val userMessages = chats.sumOf { preferences.loadMessages(active.id, it.id).count { m -> m.fromUser } }
-            val workspaceDir = File(getApplication<Application>().filesDir, "workspaces/${active.id}")
-            val userFiles = if (workspaceDir.isDirectory) {
-                workspaceDir.walkTopDown().filter { file ->
-                    file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
-                }.count()
-            } else 0
-
-            if (userMessages == 0 && userFiles == 0 && !_state.value.isRunning && !_state.value.projectTerminalRunning) {
-                // Unused empty project; delete immediately so it does not clutter the project list.
-                _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == active.id }) }
-                preferences.saveProjects(_state.value.projects)
-                runtimeScope.launch(Dispatchers.IO) {
-                    workspaceDir.deleteRecursively()
-                    terminalHistoryFile(active.id).delete()
-                    preferences.deleteProjectChats(active.id)
-                }
-            }
-        }
-
+        // Closing a project is navigation, not a request to delete its workspace.
         _state.update {
             it.copy(
                 activeProject = null,
@@ -4197,7 +4209,7 @@ class HarneseRuntimeController(private val application: Application) {
 
     fun createChat() {
         val project = _state.value.activeProject ?: return
-        if (_state.value.isRunning) return
+        if (_state.value.isRunning || runtimeRequestInFlight) return
         persistMessages()
         val chat = ProjectChat(title = str(R.string.vm_new_chat))
         val chats = listOf(chat) + _state.value.projectChats
@@ -4211,6 +4223,8 @@ class HarneseRuntimeController(private val application: Application) {
                 liveThinking = false,
                 taskStartedAtMillis = null,
                 taskFinishedAtMillis = null,
+                taskFailure = null,
+                taskHasOutput = false,
                 pendingApproval = null,
                 pendingAttachments = emptyList(),
             )
@@ -4220,10 +4234,10 @@ class HarneseRuntimeController(private val application: Application) {
     fun switchChat(chatId: String) {
         val current = _state.value
         val project = current.activeProject ?: return
-        if (current.isRunning || current.activeChatId == chatId) return
+        if (current.isRunning || runtimeRequestInFlight || current.activeChatId == chatId) return
         val chat = current.projectChats.firstOrNull { it.id == chatId } ?: return
         persistMessages()
-        val saved = preferences.loadMessages(project.id, chat.id)
+        val saved = loadChatTranscript(project.id, chat.id)
         _state.update {
             it.copy(
                 activeChatId = chat.id,
@@ -4232,6 +4246,8 @@ class HarneseRuntimeController(private val application: Application) {
                 liveThinking = false,
                 taskStartedAtMillis = null,
                 taskFinishedAtMillis = null,
+                taskFailure = null,
+                taskHasOutput = false,
                 pendingApproval = null,
                 pendingAttachments = emptyList(),
             )
@@ -4928,34 +4944,62 @@ class HarneseRuntimeController(private val application: Application) {
         return clean.ifBlank { "attachment-${UUID.randomUUID().toString().take(8)}" }
     }
 
-    fun sendPrompt(prompt: String) {
-        val project = state.value.activeProject ?: return
-        if (_state.value.agentKind == AgentKind.ANTIGRAVITY &&
-            _state.value.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN) {
-            _state.update { it.copy(toastMessage = str(R.string.vm_antigravity_signin_before_task)) }
-            return
+    /** A rejected submission leaves the composer draft intact. */
+    fun sendPrompt(prompt: String): Boolean {
+        val snapshot = state.value
+        val project = snapshot.activeProject ?: return false
+        val chatId = snapshot.activeChatId ?: return false
+        val attachments = snapshot.pendingAttachments
+        if (prompt.isBlank() && attachments.isEmpty()) return false
+        if (snapshot.runtimeProbeRunning || snapshot.agentInstalling != null || snapshot.agentUpdating != null) {
+            _state.update { it.copy(toastMessage = str(R.string.vm_agent_busy_try_again)) }
+            return false
         }
-        if (_state.value.agentKind == AgentKind.DEEPSEEK_HARNESS && _state.value.provider.kind == ProviderKind.CLAUDE) {
-            _state.update { it.copy(toastMessage = str(R.string.vm_dsh_claude_unsupported)) }
-            return
+        if (snapshot.isRunning || snapshot.androidBuildRunning) {
+            queueFollowUp(project, chatId, snapshot.agentKind, prompt, attachments)
+            return true
         }
-        val attachments = state.value.pendingAttachments
-        if (prompt.isBlank() && attachments.isEmpty()) return
-        if (state.value.runtimeProbeRunning) return
-        if (state.value.isRunning || state.value.androidBuildRunning) {
-            queueFollowUp(project, prompt, attachments)
-            return
-        }
-        if (state.value.projectTerminalRunning) {
+        if (runtimeRequestInFlight || snapshot.projectTerminalRunning) {
             _state.update { it.copy(toastMessage = str(R.string.an_wait_terminal_then_send)) }
-            return
+            return false
         }
+        if (!canStartAgent(snapshot)) return false
         startPrompt(project, prompt, attachments)
+        return true
     }
 
-    private fun queueFollowUp(project: Project, prompt: String, attachments: List<ChatAttachment>) {
+    private fun canStartAgent(snapshot: AppUiState): Boolean {
+        if (!installer.isAgentInstalled(snapshot.agentKind)) {
+            _state.update { it.copy(toastMessage = str(R.string.vm_agent_not_installed, snapshot.agentKind.localizedTitle(getApplication()))) }
+            return false
+        }
+        if (snapshot.agentKind == AgentKind.ANTIGRAVITY && snapshot.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN) {
+            _state.update { it.copy(toastMessage = str(R.string.vm_antigravity_signin_before_task)) }
+            return false
+        }
+        if (snapshot.agentKind == AgentKind.DEEPSEEK_HARNESS && snapshot.provider.kind == ProviderKind.CLAUDE) {
+            _state.update { it.copy(toastMessage = str(R.string.vm_dsh_claude_unsupported)) }
+            return false
+        }
+        return true
+    }
+
+    fun retryFailedPrompt(): Boolean {
+        val snapshot = state.value
+        if (snapshot.taskFailure == null || snapshot.isRunning || runtimeRequestInFlight ||
+            snapshot.androidBuildRunning || snapshot.projectTerminalRunning || snapshot.runtimeProbeRunning ||
+            snapshot.agentInstalling != null || snapshot.agentUpdating != null) return false
+        val project = snapshot.activeProject ?: return false
+        val previous = snapshot.messages.lastOrNull { it.fromUser } ?: return false
+        if (!canStartAgent(snapshot)) return false
+        startPrompt(project, previous.text, previous.attachments)
+        if (snapshot.pendingAttachments.isNotEmpty()) _state.update { it.copy(pendingAttachments = snapshot.pendingAttachments) }
+        return true
+    }
+
+    private fun queueFollowUp(project: Project, chatId: String, agent: AgentKind, prompt: String, attachments: List<ChatAttachment>) {
         val requestText = prompt.trim().ifBlank { "Please review the attached files." }
-        pendingFollowUps.addLast(QueuedFollowUp(projectId = project.id, prompt = requestText, attachments = attachments))
+        pendingFollowUps.addLast(QueuedFollowUp(projectId = project.id, chatId = chatId, agentKind = agent, prompt = requestText, attachments = attachments))
         _state.update {
             it.copy(
                 pendingAttachments = emptyList(),
@@ -4979,13 +5023,13 @@ class HarneseRuntimeController(private val application: Application) {
         when {
             _state.value.isRunning -> {
                 steeringToFollowUp = true
-                runtimeScope.launch { activeRuntime().stopActiveSession() }
+                runtimeScope.launch { activeRuntimeRequest?.runtime?.stopActiveSession() }
             }
             _state.value.androidBuildRunning -> {
                 steeringToFollowUp = true
                 cancelAndroidBuild()
             }
-            else -> startNextFollowUp()
+            else -> startNextFollowUp(explicit = true)
         }
     }
 
@@ -5012,6 +5056,9 @@ class HarneseRuntimeController(private val application: Application) {
                 messages = it.messages + ChatMessage(fromUser = true, text = prompt.trim(), attachments = attachments),
                 pendingAttachments = emptyList(),
                 isRunning = true,
+                activeSessionId = null,
+                taskFailure = null,
+                taskHasOutput = false,
                 activity = listOf(ActivityItem(str(R.string.vm_understanding_request), str(R.string.vm_preparing_safe_plan), false)) + it.activity,
                 liveProcess = listOf(ActivityItem("Think", requestPlanningSummary(requestText, it.agentKind), false)),
                 liveThinking = true,
@@ -5036,52 +5083,91 @@ class HarneseRuntimeController(private val application: Application) {
             appendLine("</attached_files>")
         }
         failedApiKeyIds.clear()
-        activeRuntimeRequest = RuntimeRetryRequest(
+        val request = RuntimeRetryRequest(
             runtime = activeRuntime(),
+            agentKind = state.value.agentKind,
             project = project,
+            chatId = state.value.activeChatId.orEmpty(),
             prompt = runtimePrompt,
             history = history,
             provider = state.value.provider,
         )
+        activeRuntimeRequest = request
+        lastTerminalSucceeded = false
+        launchRuntimeRequest(request)
+    }
+
+    private fun launchRuntimeRequest(request: RuntimeRetryRequest, delayBeforeMs: Long = 0L) {
+        val attempt = ++runtimeAttempt
+        runtimeRequestInFlight = true
         runtimeScope.launch {
-            activeRuntimeRequest?.let { request ->
+            if (delayBeforeMs > 0) delay(delayBeforeMs)
+            if (activeRuntimeRequest !== request || attempt != runtimeAttempt) return@launch
+            val result = runCatching {
                 request.runtime.startSession(
-                    request.project.id,
-                    request.project.slug,
-                    request.project.kind,
-                    request.prompt,
-                    request.history,
-                    request.provider,
+                    request.project.id, request.project.slug, request.project.kind,
+                    request.prompt, request.history, request.provider,
                 )
+            }
+            if (attempt != runtimeAttempt) return@launch
+            // A bridge can fail before publishing SessionStarted, or return without
+            // a terminal event. Do not leave the composer stuck in "running".
+            delay(200)
+            if (attempt != runtimeAttempt) return@launch
+            if (activeRuntimeRequest === request && _state.value.isRunning) {
+                onRuntimeEvent(
+                    request.runtime,
+                    RuntimeEvent.SessionFailed(
+                        _state.value.activeSessionId ?: UUID.randomUUID().toString(),
+                        result.exceptionOrNull()?.message ?: str(R.string.vm_agent_no_terminal_result),
+                    ),
+                    allowUnstartedFailure = true,
+                )
+            }
+            if (attempt != runtimeAttempt) return@launch
+            runtimeRequestInFlight = false
+            if (!_state.value.isRunning) {
+                val switch = _state.value.pendingAgentSwitch
+                if (switch != null) {
+                    selectAgent(switch)
+                } else if (lastTerminalSucceeded && pendingFollowUps.isNotEmpty()) {
+                    startNextFollowUp()
+                }
             }
         }
     }
 
     fun answerApproval(approved: Boolean) {
         val request = state.value.pendingApproval ?: return
-        runtimeScope.launch { activeRuntime().respondToApproval(request, approved) }
+        val runtime = activeRuntimeRequest?.runtime ?: return
+        runtimeScope.launch { runtime.respondToApproval(request, approved) }
     }
 
     fun stopTask() {
         if (!_state.value.isRunning) return
         steeringToFollowUp = false
-        pendingFollowUps.clear()
-        _state.update { it.copy(queuedFollowUps = emptyList()) }
-        runtimeScope.launch { activeRuntime().stopActiveSession() }
+        // The stop button cancels only the active task. Queued drafts remain available.
+        val runtime = activeRuntimeRequest?.runtime ?: return
+        runtimeScope.launch { runtime.stopActiveSession() }
     }
 
-    private fun startNextFollowUp() {
-        val next = if (pendingFollowUps.isEmpty()) null else pendingFollowUps.removeFirst()
-        if (next == null) {
-            _state.update { it.copy(queuedFollowUps = emptyList()) }
+    private fun startNextFollowUp(explicit: Boolean = false) {
+        val snapshot = _state.value
+        if (snapshot.isRunning || runtimeRequestInFlight || snapshot.androidBuildRunning || snapshot.projectTerminalRunning ||
+            snapshot.runtimeProbeRunning || snapshot.agentInstalling != null || snapshot.agentUpdating != null) return
+        val next = pendingFollowUps.peekFirst() ?: return
+        val project = snapshot.activeProject ?: return
+        if (project.id != next.projectId || snapshot.activeChatId != next.chatId) {
+            _state.update { it.copy(toastMessage = str(R.string.vm_queued_chat_mismatch)) }
             return
         }
-        val project = _state.value.activeProject
-        if (project == null || project.id != next.projectId) {
-            pendingFollowUps.clear()
-            _state.update { it.copy(queuedFollowUps = emptyList()) }
-            return
+        if (snapshot.agentKind != next.agentKind) {
+            if (!explicit) return
+            selectAgent(next.agentKind)
+            if (_state.value.agentKind != next.agentKind) return
         }
+        if (!canStartAgent(_state.value)) return
+        pendingFollowUps.removeFirst()
         _state.update { it.copy(queuedFollowUps = pendingFollowUps.toList()) }
         startPrompt(project, next.prompt, next.attachments)
     }
@@ -5089,7 +5175,7 @@ class HarneseRuntimeController(private val application: Application) {
     fun undoLastChanges() {
         val project = _state.value.activeProject ?: return
         runtimeScope.launch {
-            val restored = activeRuntime().undoLastChanges(project.id)
+            val restored = agentRegistry.require(_state.value.changesAgentKind ?: _state.value.agentKind).runtime.undoLastChanges(project.id)
             _state.update { current ->
                 current.copy(
                     changes = if (restored) emptyList() else current.changes,
@@ -5108,7 +5194,7 @@ class HarneseRuntimeController(private val application: Application) {
     fun keepLastChanges() {
         val project = _state.value.activeProject ?: return
         runtimeScope.launch {
-            activeRuntime().acceptLastChanges(project.id)
+            agentRegistry.require(_state.value.changesAgentKind ?: _state.value.agentKind).runtime.acceptLastChanges(project.id)
             _state.update {
                 it.copy(
                     changes = emptyList(),
@@ -5121,7 +5207,7 @@ class HarneseRuntimeController(private val application: Application) {
     fun undoFileChange(path: String) {
         val project = _state.value.activeProject ?: return
         runtimeScope.launch {
-            if (activeRuntime().undoFileChange(project.id, path)) {
+            if (agentRegistry.require(_state.value.changesAgentKind ?: _state.value.agentKind).runtime.undoFileChange(project.id, path)) {
                 _state.update { current -> current.copy(changes = current.changes.filterNot { it.path == path }) }
                 refreshProjectFiles()
             }
@@ -5131,7 +5217,7 @@ class HarneseRuntimeController(private val application: Application) {
     fun keepFileChange(path: String) {
         val project = _state.value.activeProject ?: return
         runtimeScope.launch {
-            if (activeRuntime().acceptFileChange(project.id, path)) {
+            if (agentRegistry.require(_state.value.changesAgentKind ?: _state.value.agentKind).runtime.acceptFileChange(project.id, path)) {
                 _state.update { current -> current.copy(changes = current.changes.filterNot { it.path == path }) }
             }
         }
@@ -5239,12 +5325,22 @@ class HarneseRuntimeController(private val application: Application) {
         )
     }
 
-    private fun onRuntimeEvent(event: RuntimeEvent) {
-        val terminalEventForActiveSession =
-            (event is RuntimeEvent.SessionCompleted || event is RuntimeEvent.SessionFailed) &&
-                _state.value.isRunning &&
-                (_state.value.activeSessionId == null || _state.value.activeSessionId == event.sessionId)
-        if (event is RuntimeEvent.SessionFailed && _state.value.agentKind == AgentKind.ANTIGRAVITY &&
+    private fun onRuntimeEvent(
+        source: com.jarves.mh.runtime.RuntimeBridge,
+        incoming: RuntimeEvent,
+        allowUnstartedFailure: Boolean = false,
+    ) {
+        val request = activeRuntimeRequest ?: return
+        val snapshot = _state.value
+        if (!snapshot.isRunning || request.runtime !== source ||
+            snapshot.activeProject?.id != request.project.id || snapshot.activeChatId != request.chatId) return
+        if (!acceptsRuntimeEvent(snapshot.activeSessionId, incoming, allowUnstartedFailure)) return
+        val event = if (incoming is RuntimeEvent.SessionCompleted && !snapshot.taskHasOutput) {
+            RuntimeEvent.SessionFailed(incoming.sessionId, str(R.string.vm_agent_no_terminal_result))
+        } else incoming
+        val terminalEventForActiveSession = event is RuntimeEvent.SessionCompleted || event is RuntimeEvent.SessionFailed
+        if (event is RuntimeEvent.SessionFailed && request.agentKind == AgentKind.ANTIGRAVITY &&
+            !antigravityAuthController.hasOfficialCredential() &&
             (event.reason.contains("sign-in", true) || event.reason.contains("authentication", true))) {
             antigravityAuthController.invalidateSession(event.reason)
         }
@@ -5267,9 +5363,9 @@ class HarneseRuntimeController(private val application: Application) {
                     }
                     val lastMessage = timeline.messages.lastOrNull()
                     if (lastMessage != null && !lastMessage.fromUser && lastMessage.workItems.isEmpty() && lastMessage.workedMillis == 0L) {
-                        timeline.copy(messages = timeline.messages.dropLast(1) + lastMessage.copy(text = lastMessage.text + event.text))
+                        timeline.copy(messages = timeline.messages.dropLast(1) + lastMessage.copy(text = lastMessage.text + event.text, agentId = request.agentKind.stableId), taskHasOutput = timeline.taskHasOutput || event.text.isNotBlank())
                     } else {
-                        timeline.copy(messages = timeline.messages + ChatMessage(fromUser = false, text = event.text))
+                        timeline.copy(messages = timeline.messages + ChatMessage(fromUser = false, text = event.text, agentId = request.agentKind.stableId), taskHasOutput = timeline.taskHasOutput || event.text.isNotBlank())
                     }
                 }
                 is RuntimeEvent.ReasoningProgress -> {
@@ -5384,14 +5480,14 @@ class HarneseRuntimeController(private val application: Application) {
                         current.liveProcess.toMutableList().also { items ->
                             val runningItem = items[runningIndex]
                             items[runningIndex] = ActivityItem(
-                                "${event.toolName} completed",
-                                runningItem.detail.ifBlank { summary },
+                                if (event.summary == "Tool failed") str(R.string.md_tool_failed) else "${event.toolName} completed",
+                                if (event.summary == "Tool failed") summary else runningItem.detail.ifBlank { summary },
                                 isCommand = event.toolName == "Bash",
                             ).let(::boundedActivityItem)
                         }
                     } else {
                         current.liveProcess + boundedActivityItem(ActivityItem(
-                            "${event.toolName} completed",
+                            if (event.summary == "Tool failed") str(R.string.md_tool_failed) else "${event.toolName} completed",
                             summary,
                             isCommand = event.toolName == "Bash",
                         ))
@@ -5406,6 +5502,8 @@ class HarneseRuntimeController(private val application: Application) {
                 }
                 is RuntimeEvent.FilesChanged -> current.copy(
                     changes = event.changes,
+                    changesAgentKind = request.agentKind.takeIf { event.changes.isNotEmpty() },
+                    taskHasOutput = current.taskHasOutput || event.paths.isNotEmpty(),
                     liveThinking = false,
                     liveProcess = if (event.paths.isEmpty()) current.liveProcess else current.liveProcess +
                         ActivityItem(
@@ -5427,6 +5525,8 @@ class HarneseRuntimeController(private val application: Application) {
                     attachTaskDuration(finishWorkSegment(current, finishedAt), finishedAt).copy(
                         isRunning = false,
                         activeSessionId = null,
+                        pendingApproval = null,
+                        taskFailure = null,
                         activity = listOf(ActivityItem(str(R.string.vm_task_completed), str(R.string.vm_agent_finished, current.agentKind.localizedTitle(getApplication())))) +
                             current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
                         taskFinishedAtMillis = finishedAt,
@@ -5446,6 +5546,7 @@ class HarneseRuntimeController(private val application: Application) {
                         isRunning = false,
                         activeSessionId = null,
                         pendingApproval = null,
+                        taskFailure = displayReason,
                         toastMessage = displayReason.takeIf {
                             event.reason.contains("user not found", true) ||
                                 event.reason.contains("API key", true) ||
@@ -5459,15 +5560,10 @@ class HarneseRuntimeController(private val application: Application) {
             }
         }
         if (terminalEventForActiveSession) {
+            lastTerminalSucceeded = event is RuntimeEvent.SessionCompleted || steeringToFollowUp
             activeRuntimeRequest = null
             failedApiKeyIds.clear()
             steeringToFollowUp = false
-            if (pendingFollowUps.isNotEmpty()) {
-                runtimeScope.launch {
-                    delay(150)
-                    if (!_state.value.isRunning) startNextFollowUp()
-                }
-            }
         }
         if (event is RuntimeEvent.FilesChanged || event is RuntimeEvent.SessionCompleted) {
             _state.value.activeProject?.id?.let { projectId ->
@@ -5501,17 +5597,7 @@ class HarneseRuntimeController(private val application: Application) {
                 liveProcess = it.liveProcess + ActivityItem(str(R.string.vm_api_key_switched), str(R.string.vm_using_key, next.name), true),
             )
         }
-        runtimeScope.launch {
-            kotlinx.coroutines.delay(300)
-            request.runtime.startSession(
-                request.project.id,
-                request.project.slug,
-                request.project.kind,
-                request.prompt,
-                request.history,
-                request.provider,
-            )
-        }
+        launchRuntimeRequest(request, delayBeforeMs = 300)
         return true
     }
 
@@ -5605,6 +5691,9 @@ class HarneseRuntimeController(private val application: Application) {
                 workedMillis = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L),
             )
         }
+        recentTranscripts.remove(project.id to chatId)
+        recentTranscripts[project.id to chatId] = messages
+        while (recentTranscripts.size > 16) recentTranscripts.remove(recentTranscripts.keys.first())
         transcriptWrites.trySend(TranscriptWrite(project.id, chatId, messages))
     }
 
@@ -5811,7 +5900,8 @@ class HarneseRuntimeController(private val application: Application) {
                 if (_state.value.activeProject?.id != project.id || _state.value.activeChatId != chat.id)
                     return HarneseCommandResult.error("تعذّر تأكيد وجهة الرسالة.")
                 integrationSource = "telegram"
-                try { sendPrompt(command.prompt) } finally { integrationSource = "android" }
+                val accepted = try { sendPrompt(command.prompt) } finally { integrationSource = "android" }
+                if (!accepted) return HarneseCommandResult.error("تعذّر بدء الطلب. راجع حالة الوكيل على الهاتف.")
                 HarneseCommandResult.success("تم إرسال التعليمات إلى الوكيل في مشروع ${project.name}، دردشة ${chat.title}.")
             }
             HarneseCommand.PendingApproval -> {

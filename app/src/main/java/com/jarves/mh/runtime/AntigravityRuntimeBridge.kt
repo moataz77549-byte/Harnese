@@ -353,7 +353,16 @@ class AntigravityRuntimeBridge(
             val workspace = stagedRun.workspace
             checkpoints.createCheckpoint(projectId, originalWorkspace)
             val before = checkpoints.snapshot(workspace)
-            val command = antigravityCommand(model(), effort(), conversationId(projectId))
+            val resumedConversation = conversationId(projectId)
+            val recent = conversationHistory.recentWithinCharacterBudget(12_000).dropLast(1)
+                .filter { it.text.isNotBlank() }
+            val needsHandoff = resumedConversation.isNullOrBlank() ||
+                recent.lastOrNull { !it.fromUser }?.agentId?.let { it != com.jarves.mh.model.AgentKind.ANTIGRAVITY.stableId } == true
+            val handoffPrompt = if (needsHandoff && recent.isNotEmpty()) {
+                val context = recent.joinToString("\n") { (if (it.fromUser) "User: " else "Assistant: ") + it.text }
+                "Conversation context (previous messages, for reference):\n$context\n\nCurrent request:\n$prompt"
+            } else prompt
+            val command = antigravityCommand(model(), effort(), resumedConversation)
             val process = installer.process(
                 installed.proot,
                 installed.rootfs,
@@ -367,7 +376,7 @@ class AntigravityRuntimeBridge(
             if (userStopRequested) process.destroy()
             val request = JSONObject()
                 .put("event", "user")
-                .put("message", JSONObject().put("content", antigravityWorkspacePrompt(projectSlug, prompt)))
+                .put("message", JSONObject().put("content", antigravityWorkspacePrompt(projectSlug, handoffPrompt)))
                 .toString() + "\n"
             process.outputStream.write(request.toByteArray())
             process.outputStream.flush()
@@ -449,10 +458,10 @@ class AntigravityRuntimeBridge(
                 }
                 if (count <= 0) continue
                 offset += count
-                pending.append(bytes.decodeToString(0, count))
+                pending.append(bytes.copyOf(count).toString(Charsets.ISO_8859_1))
                 var newline = pending.indexOf("\n")
                 while (newline >= 0) {
-                    val line = pending.substring(0, newline).trimEnd('\r')
+                    val line = pending.substring(0, newline).toByteArray(Charsets.ISO_8859_1).toString(Charsets.UTF_8).trimEnd('\r')
                     pending.delete(0, newline + 1)
                     handleLine(line)
                     if (resultSeen) break@outputLoop
@@ -462,7 +471,7 @@ class AntigravityRuntimeBridge(
             if (resultSeen) {
                 stopAfterTerminalResult(process)
             } else {
-                pending.toString().trim().takeIf(String::isNotEmpty)?.let { handleLine(it) }
+                pending.toString().toByteArray(Charsets.ISO_8859_1).toString(Charsets.UTF_8).trim().takeIf(String::isNotEmpty)?.let { handleLine(it) }
                 val exit = process.waitFor()
                 check(exit == 0 && resultSeen) {
                     friendlyError(pending.toString().takeLast(1_000).ifBlank { "Antigravity exited with code $exit" })
