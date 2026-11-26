@@ -18,4 +18,13 @@ class RuntimeEventRoutingTest {
         assertFalse(acceptsRuntimeEvent(null, RuntimeEvent.SessionFailed("old", "error")))
         assertTrue(acceptsRuntimeEvent(null, RuntimeEvent.SessionFailed("new", "launch error"), true))
     }
+
+    @Test fun savedAntigravityLoginSurvivesTransientFailures() {
+        assertFalse(needsAntigravityReconnect("Network timeout", true))
+        assertFalse(needsAntigravityReconnect("Authentication endpoint temporarily unavailable", true))
+        assertFalse(needsAntigravityReconnect("Quota exhausted", true))
+        assertTrue(needsAntigravityReconnect("Antigravity needs Google sign-in", true))
+        assertTrue(needsAntigravityReconnect("invalid_grant", true))
+        assertTrue(needsAntigravityReconnect("authentication required", false))
+    }
 }

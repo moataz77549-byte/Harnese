@@ -15,3 +15,11 @@ internal fun acceptsRuntimeEvent(
     if (activeSessionId == null) return allowUnstartedFailure && event is RuntimeEvent.SessionFailed
     return event.sessionId == activeSessionId
 }
+
+/** Keep a valid saved credential across network, quota and ordinary process failures. */
+internal fun needsAntigravityReconnect(reason: String, credentialPresent: Boolean): Boolean =
+    reason.contains("needs Google sign-in", ignoreCase = true) ||
+        reason.contains("invalid_grant", ignoreCase = true) ||
+        reason.contains("token revoked", ignoreCase = true) ||
+        (!credentialPresent && (reason.contains("sign-in", ignoreCase = true) ||
+            reason.contains("authentication", ignoreCase = true)))

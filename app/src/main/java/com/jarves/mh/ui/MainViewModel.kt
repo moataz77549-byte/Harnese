@@ -518,8 +518,10 @@ class HarneseRuntimeController(private val application: Application) {
         application,
         preferences.antigravitySignedIn,
         preferences.antigravityAccountEmail,
+        preferences.antigravityReconnectRequired,
     ) { signedIn, email ->
         preferences.antigravitySignedIn = signedIn
+        if (signedIn || email == null) preferences.antigravityReconnectRequired = false
         if (signedIn && !email.isNullOrBlank()) preferences.antigravityAccountEmail = email
         if (!signedIn && email == null) preferences.antigravityAccountEmail = ""
     }
@@ -5339,10 +5341,13 @@ class HarneseRuntimeController(private val application: Application) {
             RuntimeEvent.SessionFailed(incoming.sessionId, str(R.string.vm_agent_no_terminal_result))
         } else incoming
         val terminalEventForActiveSession = event is RuntimeEvent.SessionCompleted || event is RuntimeEvent.SessionFailed
-        if (event is RuntimeEvent.SessionFailed && request.agentKind == AgentKind.ANTIGRAVITY &&
-            !antigravityAuthController.hasOfficialCredential() &&
-            (event.reason.contains("sign-in", true) || event.reason.contains("authentication", true))) {
-            antigravityAuthController.invalidateSession(event.reason)
+        if (event is RuntimeEvent.SessionFailed && request.agentKind == AgentKind.ANTIGRAVITY) {
+            val requiresReconnect = needsAntigravityReconnect(event.reason, antigravityAuthController.hasOfficialCredential())
+            if (requiresReconnect) {
+                preferences.antigravityReconnectRequired = true
+                preferences.antigravitySignedIn = false
+                antigravityAuthController.invalidateSession(event.reason)
+            }
         }
         if (event is RuntimeEvent.SessionFailed && retryWithNextApiKey(event)) return
         _state.update { current ->

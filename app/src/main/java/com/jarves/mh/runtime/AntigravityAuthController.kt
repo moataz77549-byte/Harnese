@@ -17,6 +17,7 @@ class AntigravityAuthController(
     private val context: Context,
     initiallySignedIn: Boolean,
     initialAccountEmail: String,
+    initiallyReconnectRequired: Boolean = false,
     private val onSignedInChanged: (Boolean, String?) -> Unit,
 ) {
     private val installer = RuntimeInstaller(context)
@@ -33,6 +34,7 @@ class AntigravityAuthController(
     private val logoutOutput = File(context.cacheDir, "antigravity-logout-output.log")
     @Volatile private var process: Process? = null
     @Volatile private var codeSubmitted = false
+    @Volatile private var reconnectRequired = initiallyReconnectRequired
 
     init {
         // Remove output left by an app/process crash before starting a new OAuth flow.
@@ -49,8 +51,12 @@ class AntigravityAuthController(
 
     /** The official CLI owns the token. Restore the saved account without launching OAuth. */
     fun restoreStoredSession() {
-        if (!hasOfficialCredential()) return
         val email = mutableState.value.accountEmail
+        if (reconnectRequired) {
+            mutableState.value = AntigravityAuthState(AntigravityAuthStatus.ERROR, message = str(R.string.rt_agy_sign_in_failed), accountEmail = email)
+            return
+        }
+        if (!hasOfficialCredential()) return
         onSignedInChanged(true, email)
         mutableState.value = AntigravityAuthState(
             AntigravityAuthStatus.SIGNED_IN,
@@ -71,29 +77,47 @@ class AntigravityAuthController(
         mutableState.value = AntigravityAuthState(AntigravityAuthStatus.STARTING, message = str(R.string.rt_agy_starting), accountEmail = mutableState.value.accountEmail)
         codeSubmitted = false
         authOutput.delete()
-        val runtime = installer.installedRuntime()
-        val workspace = java.io.File(context.filesDir, "workspaces/antigravity-auth").apply { mkdirs() }
-        val running = installer.process(
-            runtime.proot,
-            runtime.rootfs,
-            workspace,
-            // SSH selects agy's official manual browser URL + one-time code flow.
-            // NativeSpawn supplies a real PTY; PocketDev remains only the terminal.
-            mapOf(
-                "SSH_CONNECTION" to "127.0.0.1 1 127.0.0.1 1",
-                "TERM" to "xterm-256color",
-                "NO_COLOR" to "1",
-            ),
-            listOf(RuntimeInstaller.AGY_GUEST_PATH),
-            guestWorkspacePath = "/workspace/antigravity-auth",
-            emulateHardLinks = false,
-            outputFile = authOutput,
-            pseudoTerminal = true,
-            ptyRows = 40,
-            ptyColumns = 120,
-        )
+        val running = runCatching {
+            val runtime = installer.installedRuntime()
+            val workspace = java.io.File(context.filesDir, "workspaces/antigravity-auth").apply { mkdirs() }
+            installer.process(
+                runtime.proot,
+                runtime.rootfs,
+                workspace,
+                // SSH selects agy's official manual browser URL + one-time code flow.
+                // NativeSpawn supplies a real PTY; PocketDev remains only the terminal.
+                mapOf(
+                    "SSH_CONNECTION" to "127.0.0.1 1 127.0.0.1 1",
+                    "TERM" to "xterm-256color",
+                    "NO_COLOR" to "1",
+                ),
+                listOf(RuntimeInstaller.AGY_GUEST_PATH),
+                guestWorkspacePath = "/workspace/antigravity-auth",
+                emulateHardLinks = false,
+                outputFile = authOutput,
+                pseudoTerminal = true,
+                ptyRows = 40,
+                ptyColumns = 120,
+            )
+        }.getOrElse { error ->
+            mutableState.value = AntigravityAuthState(
+                AntigravityAuthStatus.ERROR,
+                message = error.message?.take(240) ?: str(R.string.rt_agy_sign_in_failed),
+                accountEmail = mutableState.value.accountEmail,
+            )
+            return@withContext
+        }
+        val native = running as? NativeSpawnProcess
+        if (native == null) {
+            running.destroy()
+            mutableState.value = AntigravityAuthState(
+                AntigravityAuthStatus.ERROR,
+                message = str(R.string.rt_agy_sign_in_failed),
+                accountEmail = mutableState.value.accountEmail,
+            )
+            return@withContext
+        }
         process = running
-        val native = running as? NativeSpawnProcess ?: error("Unsupported Antigravity authentication process")
         var offset = 0L
         val output = StringBuilder()
         var handshakeReplies = 0
@@ -164,12 +188,6 @@ class AntigravityAuthController(
                 }
                 if (isSignedInScreen(clean)) {
                     val email = extractSignedInEmail(clean) ?: mutableState.value.accountEmail
-                    onSignedInChanged(true, email)
-                    mutableState.value = AntigravityAuthState(
-                        AntigravityAuthStatus.SIGNED_IN,
-                        message = email?.let { str(R.string.rt_agy_connected_as, it) } ?: str(R.string.rt_agy_google_connected),
-                        accountEmail = email,
-                    )
                     // Leave the official CLI cleanly so it has a chance to flush
                     // its own credential/session state before PocketDev closes
                     // the temporary terminal. PocketDev never reads that state.
@@ -182,6 +200,14 @@ class AntigravityAuthController(
                         delay(50)
                     }
                     if (running.isAlive) running.destroy()
+                    check(hasOfficialCredential()) { str(R.string.rt_agy_sign_in_failed) }
+                    reconnectRequired = false
+                    onSignedInChanged(true, email)
+                    mutableState.value = AntigravityAuthState(
+                        AntigravityAuthStatus.SIGNED_IN,
+                        message = email?.let { str(R.string.rt_agy_connected_as, it) } ?: str(R.string.rt_agy_google_connected),
+                        accountEmail = email,
+                    )
                     break
                 }
                 if (!colorScreenCompleted && clean.contains("Choose your color scheme", true)) {
@@ -290,6 +316,7 @@ class AntigravityAuthController(
                 }
             }
             check(!hasOfficialCredential()) { str(R.string.rt_agy_logout_incomplete) }
+            reconnectRequired = false
             onSignedInChanged(false, null)
             mutableState.value = AntigravityAuthState(AntigravityAuthStatus.SIGNED_OUT, message = str(R.string.rt_agy_signed_out))
         } catch (error: Throwable) {
@@ -313,6 +340,7 @@ class AntigravityAuthController(
 
     fun invalidateSession(message: String) {
         // A failed task is not an explicit sign-out. Keep chat IDs and account metadata.
+        reconnectRequired = true
         mutableState.value = AntigravityAuthState(AntigravityAuthStatus.ERROR, message = message, accountEmail = mutableState.value.accountEmail)
     }
 }
