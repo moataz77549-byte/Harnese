@@ -206,4 +206,6 @@
     <string name="ws_repo_verify">GitHub जाँचें</string>
     <string name="ws_gradle_root">Gradle रूट: %1$s</string>
     <string name="vm_agy_auth_retry">सहेजा गया खाता सुरक्षित है। कनेक्शन दोबारा जाँचें।</string>
+    <string name="vm_transcript_retry">बातचीत सहेजी नहीं जा सकी। खाली जगह जाँचें। फिर से प्रयास किया जाएगा।</string>
+    <string name="vm_connection_check_failed">खाते की पुष्टि नहीं हो सकी। कनेक्शन फिर से जाँचें।</string>
 </resources>

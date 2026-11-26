@@ -209,4 +209,6 @@
     <string name="ws_repo_verify">Verificar GitHub</string>
     <string name="ws_gradle_root">Raíz de Gradle: %1$s</string>
     <string name="vm_agy_auth_retry">Se conserva la cuenta guardada. Reintenta la conexión.</string>
+    <string name="vm_transcript_retry">No se pudo guardar la conversación. Comprueba el espacio libre. Se volverá a intentar.</string>
+    <string name="vm_connection_check_failed">No se pudo verificar la cuenta. Repite la prueba de conexión.</string>
 </resources>

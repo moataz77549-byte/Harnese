@@ -416,10 +416,14 @@ class AppPreferences(private val context: Context) {
         val projectDir = File(chatsDir, projectId).also { it.mkdirs() }
         val destination = File(projectDir, "$chatId.json")
         val temporary = File(projectDir, ".$chatId.json.tmp")
-        temporary.writeText(arr.toString())
-        if (!temporary.renameTo(destination)) {
-            temporary.copyTo(destination, overwrite = true)
-            temporary.delete()
+        temporary.outputStream().use { output ->
+            output.write(arr.toString().toByteArray(Charsets.UTF_8))
+            output.fd.sync()
+        }
+        try {
+            android.system.Os.rename(temporary.absolutePath, destination.absolutePath)
+        } catch (error: android.system.ErrnoException) {
+            throw java.io.IOException("Could not replace chat transcript", error)
         }
     }
 
@@ -428,6 +432,7 @@ class AppPreferences(private val context: Context) {
         return loadLegacyMessages(file)
     }
 
+    @Synchronized
     fun deleteProjectChats(projectId: String) {
         File(chatsDir, projectId).deleteRecursively()
         File(chatsDir, "$projectId.json").delete()

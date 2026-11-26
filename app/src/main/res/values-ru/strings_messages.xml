@@ -212,4 +212,6 @@
     <string name="ws_repo_verify">Проверить GitHub</string>
     <string name="ws_gradle_root">Корень Gradle: %1$s</string>
     <string name="vm_agy_auth_retry">Сохранённая учётная запись сохранена. Повторите проверку подключения.</string>
+    <string name="vm_transcript_retry">Не удалось сохранить беседу. Проверьте свободное место. Попытка будет повторена.</string>
+    <string name="vm_connection_check_failed">Не удалось проверить учётную запись. Повторите проверку подключения.</string>
 </resources>

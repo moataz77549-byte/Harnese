@@ -206,4 +206,6 @@
     <string name="ws_repo_verify">Check GitHub</string>
     <string name="ws_gradle_root">Gradle root: %1$s</string>
     <string name="vm_agy_auth_retry">The saved account is retained. Retry the connection check.</string>
+    <string name="vm_transcript_retry">Check the available storage. Saving the conversation will be retried.</string>
+    <string name="vm_connection_check_failed">Could not verify the account. Try the connection check again.</string>
 </resources>

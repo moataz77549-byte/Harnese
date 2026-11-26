@@ -57,7 +57,10 @@ class AntigravityAuthController(
             mutableState.value = AntigravityAuthState(AntigravityAuthStatus.ERROR, message = str(R.string.rt_agy_sign_in_failed), accountEmail = email)
             return
         }
-        if (!hasOfficialCredential()) return
+        if (!hasOfficialCredential()) {
+            mutableState.value = AntigravityAuthState(AntigravityAuthStatus.SIGNED_OUT, accountEmail = email)
+            return
+        }
         onSignedInChanged(true, email)
         mutableState.value = AntigravityAuthState(
             AntigravityAuthStatus.SIGNED_IN,
@@ -122,7 +125,7 @@ class AntigravityAuthController(
         var offset = 0L
         val output = StringBuilder()
         var handshakeReplies = 0
-        var lastHandshakeReplyLength = 0
+        var charsSinceHandshake = 0
         var loginMenuAdvanced = false
         var colorScreenCompleted = false
         var renderingScreenCompleted = false
@@ -142,7 +145,10 @@ class AntigravityAuthController(
                 }
                 if (count <= 0) continue
                 offset += count
-                output.append(bytes.decodeToString(0, count))
+                val chunk = bytes.decodeToString(0, count)
+                output.append(chunk)
+                if (output.length > 64_000) output.delete(0, output.length - 64_000)
+                charsSinceHandshake = minOf(64_000, charsSinceHandshake + chunk.length)
                 val clean = sanitizeTerminalOutput(output.toString()).takeLast(40_000)
                 // Antigravity's renderer asks a real terminal for DEC mode and
                 // Kitty keyboard-protocol status before it paints its UI, and it
@@ -150,13 +156,13 @@ class AntigravityAuthController(
                 // so answer the standard queries ourselves; `script` forwards
                 // this to agy's PTY unchanged.
                 if (handshakeReplies < 5 &&
-                    output.length - lastHandshakeReplyLength > 200 &&
-                    output.substring(lastHandshakeReplyLength).contains("\u001B[?u")
+                    charsSinceHandshake > 200 &&
+                    output.substring(output.length - charsSinceHandshake).contains("\u001B[?u")
                 ) {
                     running.outputStream.write(TERMINAL_HANDSHAKE_REPLY.toByteArray())
                     running.outputStream.flush()
                     handshakeReplies++
-                    lastHandshakeReplyLength = output.length
+                    charsSinceHandshake = 0
                 }
                 if (handshakeReplies > 0 &&
                     !loginMenuAdvanced &&
@@ -260,7 +266,7 @@ class AntigravityAuthController(
                     error(str(R.string.rt_agy_auth_failed))
                 }
             }
-            if (!codeSubmitted && mutableState.value.status == AntigravityAuthStatus.STARTING) {
+            if (mutableState.value.status != AntigravityAuthStatus.SIGNED_IN) {
                 val exit = running.waitFor()
                 error(str(R.string.rt_agy_closed_early, exit))
             }

@@ -203,4 +203,6 @@
     <string name="ws_repo_verify">验证 GitHub</string>
     <string name="ws_gradle_root">Gradle 根目录：%1$s</string>
     <string name="vm_agy_auth_retry">已保留保存的账户，请重新检查连接。</string>
+    <string name="vm_transcript_retry">无法保存对话。请检查可用空间，应用将重试。</string>
+    <string name="vm_connection_check_failed">无法验证账号。请再次检查连接。</string>
 </resources>

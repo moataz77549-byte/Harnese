@@ -218,4 +218,6 @@
     <string name="ws_repo_verify">تحقق من GitHub</string>
     <string name="ws_gradle_root">جذر Gradle: %1$s</string>
     <string name="vm_agy_auth_retry">تم الاحتفاظ بالحساب المحفوظ. أعد اختبار الاتصال.</string>
+    <string name="vm_transcript_retry">تعذّر حفظ المحادثة. تحقّق من المساحة المتاحة، وسيعيد التطبيق محاولة الحفظ.</string>
+    <string name="vm_connection_check_failed">تعذّر التحقق من الحساب. أعد اختبار الاتصال.</string>
 </resources>

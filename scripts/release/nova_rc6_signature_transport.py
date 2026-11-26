@@ -2,7 +2,7 @@
 """Transport only a public signed APK delta, never an owner private key."""
 import argparse, base64, hashlib, json, pathlib, re, subprocess, tempfile, zipfile
 
-NAME = "Harnese-Nova-2.0.0-rc.6-Android8Plus-ARM64.apk"
+NAMES = {"Harnese-Nova-2.0.0-rc.6-Android8Plus-ARM64.apk", "Harnese-Nova-2.1.0-Android8Plus-ARM64.apk"}
 CERT = "d7f31fde154fc9b46fe8ef333fd12ecdfbd9b331d71a5284c24a6ad8ad45de51"
 MAX_APK = 32 * 1024 * 1024
 MAX_DELTA = 2 * 1024 * 1024
@@ -33,6 +33,8 @@ def create(base, signed, source, run_id, output):
         raise ValueError("Invalid CI source")
     if base.stat().st_size > MAX_APK or signed.stat().st_size > MAX_APK:
         raise ValueError("Unexpected APK size")
+    if signed.name not in NAMES:
+        raise ValueError("Unexpected APK filename")
     verify_payload(base, signed)
     with tempfile.TemporaryDirectory() as work:
         delta = pathlib.Path(work) / "public-signature-delta.zst"
@@ -41,7 +43,7 @@ def create(base, signed, source, run_id, output):
             raise ValueError("Public signature delta too large")
         data = delta.read_bytes()
     manifest = dict(schemaVersion=1,sourceCommit=source,verifiedRunId=int(run_id),
-                    fileName=NAME,certificateSha256=CERT,baseSha256=sha(base),
+                    fileName=signed.name,certificateSha256=CERT,baseSha256=sha(base),
                     baseSizeBytes=base.stat().st_size,signedSha256=sha(signed),
                     signedSizeBytes=signed.stat().st_size,deltaSha256=hashlib.sha256(data).hexdigest(),
                     delta=base64.b64encode(data).decode("ascii"))
@@ -49,7 +51,7 @@ def create(base, signed, source, run_id, output):
 
 def apply(base, manifest, output):
     d=json.loads(manifest.read_text())
-    if d.get("schemaVersion")!=1 or d.get("fileName")!=NAME or d.get("certificateSha256")!=CERT:
+    if d.get("schemaVersion")!=1 or d.get("fileName") not in NAMES or d.get("certificateSha256")!=CERT:
         raise ValueError("Unexpected release identity")
     if d["baseSizeBytes"] != base.stat().st_size or sha(base)!=d["baseSha256"]:
         raise ValueError("CI base checksum mismatch")

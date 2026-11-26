@@ -292,12 +292,6 @@ data class QueuedFollowUp(
     val attachments: List<ChatAttachment>,
 )
 
-private data class TranscriptWrite(
-    val projectId: String,
-    val chatId: String,
-    val messages: List<ChatMessage>,
-)
-
 private data class ImportedZipProject(
     val project: Project,
     val sourceAttachment: ChatAttachment,
@@ -507,13 +501,14 @@ class HarneseRuntimeController(private val application: Application) {
     private val failedApiKeyIds = mutableSetOf<String>()
     private val folderMetadataCache = java.util.concurrent.ConcurrentHashMap<String, FolderMetadata>()
     private val folderCountsInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-    // Writes are drained into a per-chat batch below so rapid activity frames do not
-    // serialize hundreds of obsolete snapshots.
-    private val transcriptWrites = Channel<TranscriptWrite>(Channel.UNLIMITED)
-    private val recentTranscripts = linkedMapOf<Pair<String, String>, List<ChatMessage>>()
+    private val pendingChatWrites = PendingChatWrites()
+    private val transcriptWakeup = Channel<Unit>(Channel.CONFLATED)
+    private var connectionCheckGeneration = 0L
+    private var antigravityLoginJob: kotlinx.coroutines.Job? = null
+    private var antigravityLogoutJob: kotlinx.coroutines.Job? = null
 
     private fun loadChatTranscript(projectId: String, chatId: String): List<ChatMessage> =
-        recentTranscripts[projectId to chatId] ?: preferences.loadMessages(projectId, chatId)
+        pendingChatWrites.get(projectId to chatId) ?: preferences.loadMessages(projectId, chatId)
     private val initialAgentKind = AgentKind.fromStored(preferences.agentKind)
     private val initialPrimaryAgentKind = preferences.primaryAgentKind
         .takeIf(String::isNotBlank)
@@ -616,16 +611,27 @@ class HarneseRuntimeController(private val application: Application) {
         runtimeScope.launch { refreshGitHubConnection() }
         RuntimeSetupController.restore(application)
         runtimeScope.launch(Dispatchers.IO) {
-            for (pending in transcriptWrites) {
-                delay(TRANSCRIPT_WRITE_DEBOUNCE_MS)
-                val latestByChat = linkedMapOf((pending.projectId to pending.chatId) to pending)
-                while (true) {
-                    val next = transcriptWrites.tryReceive().getOrNull() ?: break
-                    latestByChat[next.projectId to next.chatId] = next
+            var retryDelay = TRANSCRIPT_WRITE_DEBOUNCE_MS
+            for (signal in transcriptWakeup) {
+                delay(retryDelay)
+                var failed = false
+                for ((key, messages) in pendingChatWrites.snapshot()) {
+                    try {
+                        synchronized(preferences) {
+                            if (pendingChatWrites.get(key) === messages) {
+                                preferences.saveMessages(key.first, key.second, messages)
+                                pendingChatWrites.saved(key, messages)
+                            }
+                        }
+                    } catch (error: java.io.IOException) {
+                        if (!failed && retryDelay == TRANSCRIPT_WRITE_DEBOUNCE_MS) {
+                            _state.update { it.copy(toastMessage = str(R.string.vm_transcript_retry)) }
+                        }
+                        failed = true
+                    }
                 }
-                latestByChat.values.forEach { latest ->
-                    preferences.saveMessages(latest.projectId, latest.chatId, latest.messages)
-                }
+                retryDelay = if (failed) minOf(retryDelay * 2, 10_000L) else TRANSCRIPT_WRITE_DEBOUNCE_MS
+                if (failed) transcriptWakeup.trySend(Unit)
             }
         }
         runtimeScope.launch { dshRuntime.events.collect { event -> onRuntimeEvent(dshRuntime, event) } }
@@ -726,7 +732,7 @@ class HarneseRuntimeController(private val application: Application) {
                     terminalProcess = proc
                     val native = proc as? NativeSpawnProcess
                     var offset = 0L
-                    val streamed = StringBuilder()
+                    val streamed = TerminalOutputTail(MAX_PROJECT_TERMINAL_OUTPUT * 4)
                     var autoConfirmed = false
                     while (proc.isAlive || (native?.outputFile?.length() ?: 0L) > offset) {
                         val file = native?.outputFile
@@ -742,11 +748,12 @@ class HarneseRuntimeController(private val application: Application) {
                         }
                         if (count > 0) {
                             offset += count
-                            streamed.append(bytes.decodeToString(0, count))
-                            _terminalLiveOutput.value = sanitizeTerminalOutput(streamed.toString())
+                            streamed.append(bytes, count)
+                            val raw = streamed.text()
+                            _terminalLiveOutput.value = sanitizeTerminalOutput(raw)
                                 .trimEnd()
                                 .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
-                            if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, streamed.toString())) {
+                            if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, raw)) {
                                 proc.outputStream.write("y\n".toByteArray())
                                 proc.outputStream.flush()
                                 autoConfirmed = true
@@ -755,12 +762,12 @@ class HarneseRuntimeController(private val application: Application) {
                     }
                     val exit = proc.waitFor()
                     runCatching { proc.outputStream.close() }
-                    val out = sanitizeTerminalOutput(streamed.toString()).trim()
+                    val out = sanitizeTerminalOutput(streamed.text(final = true)).trim().takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
                     val finalOut = if (out.isNotEmpty() || exit == 0) out else str(R.string.vm_process_exited_code, exit)
                     finalOut to exit
                 }.getOrElse { str(R.string.vm_error_with_message, it.message.orEmpty()) to 1 }
             }
-            _terminalLines.update { it + TerminalOutputLine(command = command, output = output, exitCode = exitCode) }
+            _terminalLines.update { (it + TerminalOutputLine(command = command, output = output, exitCode = exitCode)).takeLast(MAX_PROJECT_TERMINAL_HISTORY) }
             _terminalLiveOutput.value = ""
             _terminalCurrentCommand.value = null
             _isTerminalRunning.value = false
@@ -1078,7 +1085,7 @@ class HarneseRuntimeController(private val application: Application) {
         val native = process as? NativeSpawnProcess
             ?: return ProjectTerminalResult(str(R.string.vm_unsupported_terminal_process), 1, cwd)
         var offset = 0L
-        val output = StringBuilder()
+        val output = TerminalOutputTail(MAX_PROJECT_TERMINAL_OUTPUT * 4)
         var autoConfirmed = false
         while (process.isAlive || native.outputFile.length() > offset) {
             val available = native.outputFile.length() - offset
@@ -1093,8 +1100,8 @@ class HarneseRuntimeController(private val application: Application) {
             }
             if (count > 0) {
                 offset += count
-                output.append(bytes.decodeToString(0, count))
-                val visible = sanitizeTerminalOutput(output.toString().substringBefore(marker))
+                output.append(bytes, count)
+                val visible = sanitizeTerminalOutput(output.text().substringBefore(marker))
                     .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
                 if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, visible)) {
                     process.outputStream.write("y\n".toByteArray())
@@ -1115,7 +1122,7 @@ class HarneseRuntimeController(private val application: Application) {
         }
         val exitCode = process.waitFor()
         runCatching { process.outputStream.close() }
-        val raw = output.toString()
+        val raw = output.text(final = true)
         val reportedCwd = raw.substringAfter(marker, "").lineSequence().firstOrNull()?.trim().orEmpty()
         val cwdAfter = ProjectWorkspaceInspector.existingGuestDirectory(
             workspace, guestWorkspacePath, reportedCwd.ifBlank { resolvedCwd },
@@ -2426,6 +2433,8 @@ class HarneseRuntimeController(private val application: Application) {
         preferences.saveProvider(saved, _state.value.agentKind)
         preferences.onboardingComplete = true
         _state.update { it.copy(onboardingComplete = true, provider = saved, startupStage = StartupStage.READY) }
+        connectionCheckGeneration++
+        _state.update { it.copy(apiPingStatus = ApiPingStatus.IDLE, apiPingMessage = null) }
         refreshActiveApiKey(profile.kind)
         autoPingApi()
     }
@@ -2481,6 +2490,7 @@ class HarneseRuntimeController(private val application: Application) {
             _state.update { it.copy(toastMessage = str(R.string.vm_stop_agent_before_switching)) }
             return
         }
+        connectionCheckGeneration++
         val selectingInitialAgent = !preferences.runtimeSetupComplete
         preferences.agentKind = kind.stableId
         if (selectingInitialAgent) preferences.primaryAgentKind = kind.stableId
@@ -2793,8 +2803,15 @@ class HarneseRuntimeController(private val application: Application) {
 
     fun startAntigravityLogin() {
         if (_state.value.agentInstalling != null || _state.value.isRunning) return
+        if (antigravityLoginJob?.isActive == true || antigravityLogoutJob?.isActive == true) return
+        if (!preferences.antigravityReconnectRequired && antigravityAuthController.hasOfficialCredential()) {
+            antigravityAuthController.restoreStoredSession()
+            return
+        }
+        connectionCheckGeneration++
+        _state.update { it.copy(apiPingStatus = ApiPingStatus.IDLE, apiPingMessage = null) }
         lastOpenedAntigravityAuthUrl = null
-        runtimeScope.launch { antigravityAuthController.beginLogin() }
+        antigravityLoginJob = runtimeScope.launch { antigravityAuthController.beginLogin() }
     }
 
     fun submitAntigravityCode(code: String) {
@@ -2807,7 +2824,12 @@ class HarneseRuntimeController(private val application: Application) {
             _state.update { it.copy(toastMessage = str(R.string.vm_agent_busy_try_again)) }
             return
         }
-        runtimeScope.launch {
+        if (antigravityLogoutJob?.isActive == true) return
+        connectionCheckGeneration++
+        _state.update { it.copy(apiPingStatus = ApiPingStatus.IDLE, apiPingMessage = null) }
+        antigravityLogoutJob = runtimeScope.launch {
+            antigravityLoginJob?.cancel()
+            antigravityLoginJob?.join()
             runCatching { antigravityAuthController.logout() }
                 .onSuccess { preferences.clearAgentConversations(AgentKind.ANTIGRAVITY) }
                 .onFailure { error -> _state.update { it.copy(toastMessage = error.message ?: str(R.string.vm_sign_out_failed)) } }
@@ -3088,6 +3110,8 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     fun pingApi() {
+        val generation = connectionCheckGeneration
+        val kind = _state.value.agentKind
         if (_state.value.agentKind == AgentKind.ANTIGRAVITY) {
             testAntigravityConnection()
             return
@@ -3097,9 +3121,10 @@ class HarneseRuntimeController(private val application: Application) {
             _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING) }
             runtimeScope.launch {
                 val result = runCatching { codexController.signedIn() }
-                if (_state.value.agentKind == AgentKind.CODEX) _state.update {
+                if (generation != connectionCheckGeneration) return@launch
+                _state.update {
                     it.copy(apiPingStatus = if (result.getOrDefault(false)) ApiPingStatus.OK else ApiPingStatus.FAILED,
-                        apiPingMessage = str(if (result.getOrDefault(false)) R.string.codex_signed_in else R.string.codex_signed_out))
+                        apiPingMessage = if (result.isFailure) str(R.string.vm_connection_check_failed) else str(if (result.getOrThrow()) R.string.codex_signed_in else R.string.codex_signed_out))
                 }
             }
             return
@@ -3118,11 +3143,12 @@ class HarneseRuntimeController(private val application: Application) {
                 profile.baseUrl,
                 profile.model,
                 key,
-                providerProtocolForAgent(profile, _state.value.agentKind),
+                providerProtocolForAgent(profile, kind),
                 emptyList(),
                 profile.openRouterProviderOrder,
                 profile.openRouterAllowFallbacks,
             )
+            if (generation != connectionCheckGeneration) return@launch
             when (result) {
                 is ConnectionValidation.Success -> _state.update {
                     it.copy(apiPingStatus = ApiPingStatus.OK, apiPingMessage = str(R.string.vm_ping_success))
@@ -3138,8 +3164,11 @@ class HarneseRuntimeController(private val application: Application) {
     private fun testClaudeSubscription(profile: ProviderProfile) {
         if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
         _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = str(R.string.vm_claude_hello)) }
+        val generation = connectionCheckGeneration
         runtimeScope.launch {
-            runCatching { claudeRuntime.hello(profile) }
+            val result = runCatching { claudeRuntime.hello(profile) }
+            if (generation != connectionCheckGeneration) return@launch
+            result
                 .onSuccess {
                     _state.update { it.copy(apiPingStatus = ApiPingStatus.OK, apiPingMessage = str(R.string.vm_claude_working)) }
                 }
@@ -3174,9 +3203,10 @@ class HarneseRuntimeController(private val application: Application) {
             return
         }
         _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = str(R.string.vm_antigravity_hello)) }
+        val generation = connectionCheckGeneration
         runtimeScope.launch {
             val result = runCatching { antigravityRuntime.hello() }
-            if (_state.value.agentKind != AgentKind.ANTIGRAVITY) return@launch
+            if (generation != connectionCheckGeneration) return@launch
             result.onSuccess {
                 _state.update {
                     it.copy(
@@ -4130,6 +4160,7 @@ class HarneseRuntimeController(private val application: Application) {
         if (_state.value.activeProject?.id == projectId || _state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == projectId }) }
         preferences.saveProjects(_state.value.projects)
+        pendingChatWrites.forgetProject(projectId)
         folderMetadataCache.keys.removeAll { it.startsWith("$projectId:") }
         runtimeScope.launch(Dispatchers.IO) {
             val filesDir = getApplication<Application>().filesDir
@@ -5783,10 +5814,8 @@ class HarneseRuntimeController(private val application: Application) {
                 workedMillis = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L),
             )
         }
-        recentTranscripts.remove(project.id to chatId)
-        recentTranscripts[project.id to chatId] = messages
-        while (recentTranscripts.size > 16) recentTranscripts.remove(recentTranscripts.keys.first())
-        transcriptWrites.trySend(TranscriptWrite(project.id, chatId, messages))
+        pendingChatWrites.put(project.id to chatId, messages)
+        transcriptWakeup.trySend(Unit)
     }
 
     private fun boundedActivityItem(item: ActivityItem): ActivityItem {
