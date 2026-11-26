@@ -200,4 +200,13 @@
     <string name="ws_agent_install">Toca para instalar</string>
     <string name="vm_agent_not_installed">Instala %1$s antes de enviar una tarea.</string>
     <string name="vm_agent_proposed_changes">Cambios propuestos — revísalos en el centro de agentes</string>
+    <string name="vm_terminal_project_directory">Directorio de trabajo: %1$s</string>
+    <string name="vm_project_repo_verified">Acceso a GitHub verificado: %1$s · rama predeterminada %2$s</string>
+    <string name="vm_project_repo_check_failed">No se pudo verificar el repositorio. Comprueba la conexión de GitHub y reintenta.</string>
+    <string name="ws_project_metadata_empty">Espacio sin proyecto de compilación reconocido</string>
+    <string name="ws_project_metadata_loading">Inspeccionando el proyecto…</string>
+    <string name="ws_repo_checking">Comprobando…</string>
+    <string name="ws_repo_verify">Verificar GitHub</string>
+    <string name="ws_gradle_root">Raíz de Gradle: %1$s</string>
+    <string name="vm_agy_auth_retry">Se conserva la cuenta guardada. Reintenta la conexión.</string>
 </resources>

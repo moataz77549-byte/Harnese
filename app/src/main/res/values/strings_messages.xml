@@ -197,4 +197,13 @@
     <string name="ws_agent_install">Tap to install</string>
     <string name="vm_agent_not_installed">Install %1$s before sending a task.</string>
     <string name="vm_agent_proposed_changes">Proposed changes — review in Agent Hub</string>
+    <string name="vm_terminal_project_directory">Working directory: %1$s</string>
+    <string name="vm_project_repo_verified">GitHub access verified: %1$s · default branch %2$s</string>
+    <string name="vm_project_repo_check_failed">Unable to verify this repository. Check the GitHub connection and retry.</string>
+    <string name="ws_project_metadata_empty">Workspace without a recognized build</string>
+    <string name="ws_project_metadata_loading">Inspecting project…</string>
+    <string name="ws_repo_checking">Checking…</string>
+    <string name="ws_repo_verify">Check GitHub</string>
+    <string name="ws_gradle_root">Gradle root: %1$s</string>
+    <string name="vm_agy_auth_retry">The saved account is retained. Retry the connection check.</string>
 </resources>

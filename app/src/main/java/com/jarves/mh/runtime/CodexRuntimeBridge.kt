@@ -60,9 +60,13 @@ class CodexRuntimeBridge(context: Context) : RuntimeBridge {
         try {
             check(installer.installedCodexVersion() != null) { "Install Codex from the agent screen." }
             check(controller.signedIn()) { "Sign in with your ChatGPT account in the Codex agent screen." }
-            val sandboxAvailable = projectKind == ProjectKind.PROJECT && controller.sandboxAvailable()
+            val selectedWorkspace = checkpoints.ensureWorkspace(projectId)
+            val facts = runCatching { ProjectWorkspaceInspector.inspect(selectedWorkspace) }
+                .getOrElse { ProjectWorkspaceFacts(false, "Workspace", null, null, null, emptyList()) }
+            val actualProject = projectKind == ProjectKind.PROJECT || facts.recognized
+            val sandboxAvailable = actualProject && controller.sandboxAvailable()
             val workspace = if (sandboxAvailable) {
-                reviews.stage(projectId, checkpoints.ensureWorkspace(projectId), protectSensitive = true)
+                reviews.stage(projectId, selectedWorkspace, protectSensitive = true)
                     .also { staged = it }.workspace
             } else {
                 File(app.filesDir, "engine-diagnostics/codex-chat").apply { mkdirs() }
@@ -75,18 +79,21 @@ class CodexRuntimeBridge(context: Context) : RuntimeBridge {
             val instruction = if (sandboxAvailable) {
                 "Work only with the authorized staged project copy. Produce ordinary code changes for local review. Do not use external services, deploy, or access credentials."
             } else {
-                "Answer using only the user's supplied prompt and conversation. Provide code examples or suggested edits as text. Do not use tools or access files. The project sandbox is unavailable."
+                "Answer using the user's supplied prompt, conversation, and verified local metadata below. Provide code examples or suggested edits as text. Project file contents and tools are unavailable. Never claim to have built, edited, pushed, or inspected source files."
             }
             val history = conversationHistory.recentWithinCharacterBudget(18_000)
                 .dropLast(1).joinToString("\n") { (if (it.fromUser) "User: " else "Assistant: ") + it.text }
-            val input = "$instruction\n\nRecent conversation:\n$history\n\nRequest:\n$prompt"
+            val projectContext = if (actualProject) facts.promptSummary() else "Quick chat; no recognized project files."
+            val input = "$instruction\n\n$projectContext\n\nRecent conversation:\n$history\n\nRequest:\n$prompt"
             val args = buildList {
                 addAll(listOf(RuntimeInstaller.CODEX_GUEST_PATH, "--ask-for-approval", "never",
                     "exec", "--sandbox", mode, "--ignore-user-config", "--ephemeral", "--skip-git-repo-check", "--json"))
                 CodexModelSettings(app).model.takeIf(String::isNotBlank)?.let { addAll(listOf("--model", it)) }
                 add("-")
             }
-            if (!sandboxAvailable) emit(RuntimeEvent.RuntimeLog(id, "Codex", "Text-only assistance. Project files are not mounted because the local sandbox did not pass the test."))
+            if (!sandboxAvailable) emit(RuntimeEvent.RuntimeLog(id, "Codex", if (actualProject) {
+                "Project identity detected. The local sandbox is unavailable; metadata-only assistance, no source files or project tools."
+            } else "Quick chat. No recognized local project."))
             val running = installer.process(runtime.proot, runtime.rootfs, workspace, emptyMap(), args,
                 guestWorkspacePath = if (sandboxAvailable) "/workspace/$projectSlug" else "/workspace/codex-chat",
                 emulateHardLinks = false, outputFile = archive)

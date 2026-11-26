@@ -246,6 +246,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun createChat() = runtime.createChat()
     fun switchChat(chatId: String) = runtime.switchChat(chatId)
     fun refreshProjectFiles() = runtime.refreshProjectFiles()
+    fun verifyProjectRepository() = runtime.verifyProjectRepository()
     fun loadProjectDirectory(relativePath: String) = runtime.loadProjectDirectory(relativePath)
     fun openFile(entry: WorkspaceEntry) = runtime.openFile(entry)
     fun closeFile() = runtime.closeFile()

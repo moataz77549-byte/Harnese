@@ -51,6 +51,7 @@ class AntigravityAuthController(
 
     /** The official CLI owns the token. Restore the saved account without launching OAuth. */
     fun restoreStoredSession() {
+        if (process?.isAlive == true) return
         val email = mutableState.value.accountEmail
         if (reconnectRequired) {
             mutableState.value = AntigravityAuthState(AntigravityAuthStatus.ERROR, message = str(R.string.rt_agy_sign_in_failed), accountEmail = email)
@@ -195,9 +196,9 @@ class AntigravityAuthController(
                         running.outputStream.write("/quit\r\n".toByteArray())
                         running.outputStream.flush()
                     }
-                    repeat(20) {
-                        if (!running.isAlive) return@repeat
-                        delay(50)
+                    // Give the official process time to flush refreshed credentials.
+                    repeat(40) {
+                        if (running.isAlive || !hasOfficialCredential()) delay(100)
                     }
                     if (running.isAlive) running.destroy()
                     check(hasOfficialCredential()) { str(R.string.rt_agy_sign_in_failed) }

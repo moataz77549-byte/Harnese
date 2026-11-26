@@ -65,8 +65,8 @@ class AppPreferences(private val context: Context) {
         set(value) { preferences.edit().putBoolean("agent_antigravity_signed_in", value).apply() }
 
     var antigravityReconnectRequired: Boolean
-        get() = preferences.getBoolean("agent_antigravity_reconnect_required", false)
-        set(value) { preferences.edit().putBoolean("agent_antigravity_reconnect_required", value).apply() }
+        get() = preferences.getBoolean("agent_antigravity_confirmed_reconnect_required", false)
+        set(value) { preferences.edit().putBoolean("agent_antigravity_confirmed_reconnect_required", value).apply() }
 
     var antigravityAccountEmail: String
         get() = preferences.getString("agent_antigravity_account_email", "") ?: ""

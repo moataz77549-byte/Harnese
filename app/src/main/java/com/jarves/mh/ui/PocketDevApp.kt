@@ -424,6 +424,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onRemoveFollowUp = viewModel::removeQueuedFollowUp,
             onApproval = viewModel::answerApproval,
             onRefreshFiles = viewModel::refreshProjectFiles,
+            onVerifyProjectRepository = viewModel::verifyProjectRepository,
             onLoadProjectDirectory = viewModel::loadProjectDirectory,
             onCreateWorkspaceEntry = viewModel::createWorkspaceEntry,
             onRenameWorkspaceEntry = viewModel::renameWorkspaceEntry,
@@ -4423,6 +4424,7 @@ private fun WorkspaceScreen(
     onRemoveFollowUp: (String) -> Unit,
     onApproval: (Boolean) -> Unit,
     onRefreshFiles: () -> Unit,
+    onVerifyProjectRepository: () -> Unit,
     onLoadProjectDirectory: (String) -> Unit,
     onCreateWorkspaceEntry: (String, String, Boolean) -> Unit,
     onRenameWorkspaceEntry: (String, String) -> Unit,
@@ -4822,6 +4824,11 @@ private fun WorkspaceScreen(
                     draftKey = state.activeChatId,
                     taskFailure = state.taskFailure,
                     onRetry = onRetry,
+                    projectFacts = state.projectFacts,
+                    projectRootLabel = state.activeProject?.let { "/workspace/${it.slug}" },
+                    repositoryChecking = state.projectRepositoryChecking,
+                    repositoryStatus = state.projectRepositoryStatus,
+                    onVerifyRepository = onVerifyProjectRepository,
                     pendingAttachments = state.pendingAttachments,
                     onAttach = {
                         attachmentLauncher.launch(arrayOf("image/*", "text/*", "application/json", "application/xml"))
@@ -6347,6 +6354,11 @@ private fun ChatTab(
     draftKey: String? = null,
     taskFailure: String? = null,
     onRetry: () -> Boolean = { false },
+    projectFacts: com.jarves.mh.runtime.ProjectWorkspaceFacts? = null,
+    projectRootLabel: String? = null,
+    repositoryChecking: Boolean = false,
+    repositoryStatus: String? = null,
+    onVerifyRepository: () -> Unit = {},
 ) {
     val view = LocalView.current
     // Keep the screen on while the selected agent is working in this chat. Released automatically
@@ -6364,6 +6376,44 @@ private fun ChatTab(
         }
     }
     Column(Modifier.fillMaxSize().imePadding()) {
+        if (!readOnly && projectRootLabel != null) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Folder, null, modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(6.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                projectFacts?.let { if (it.recognized) it.framework else stringResource(R.string.ws_project_metadata_empty) }
+                                    ?: stringResource(R.string.ws_project_metadata_loading),
+                                fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(projectRootLabel, fontSize = 10.sp, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        projectFacts?.githubRepository?.let {
+                            TextButton(onClick = onVerifyRepository, enabled = !repositoryChecking) {
+                                Text(stringResource(if (repositoryChecking) R.string.ws_repo_checking else R.string.ws_repo_verify))
+                            }
+                        }
+                    }
+                    projectFacts?.gradleRoot?.takeIf(String::isNotBlank)?.let { root ->
+                        Text(stringResource(R.string.ws_gradle_root, root), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    projectFacts?.githubRepository?.let { repo ->
+                        Text(
+                            repo + (projectFacts?.branch?.let { " · $it" } ?: ""),
+                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    repositoryStatus?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                }
+            }
+        }
         Box(Modifier.weight(1f)) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),

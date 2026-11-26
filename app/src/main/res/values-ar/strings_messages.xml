@@ -209,4 +209,13 @@
     <string name="ws_agent_install">اضغط للتثبيت</string>
     <string name="vm_agent_not_installed">ثبّت %1$s قبل إرسال المهمة.</string>
     <string name="vm_agent_proposed_changes">تعديلات مقترحة — راجعها في مركز الوكلاء</string>
+    <string name="vm_terminal_project_directory">مجلد العمل: %1$s</string>
+    <string name="vm_project_repo_verified">تم التحقق من الوصول إلى %1$s · الفرع الافتراضي %2$s</string>
+    <string name="vm_project_repo_check_failed">تعذر التحقق من المستودع. تحقّق من اتصال GitHub وأعد المحاولة.</string>
+    <string name="ws_project_metadata_empty">مساحة عمل بلا مشروع بناء معروف</string>
+    <string name="ws_project_metadata_loading">جارٍ فحص المشروع…</string>
+    <string name="ws_repo_checking">جارٍ التحقق…</string>
+    <string name="ws_repo_verify">تحقق من GitHub</string>
+    <string name="ws_gradle_root">جذر Gradle: %1$s</string>
+    <string name="vm_agy_auth_retry">تم الاحتفاظ بالحساب المحفوظ. أعد اختبار الاتصال.</string>
 </resources>

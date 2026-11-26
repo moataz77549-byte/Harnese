@@ -94,6 +94,8 @@ import com.jarves.mh.runtime.RuntimeTaskController
 import com.jarves.mh.runtime.androidGradleCommand
 import com.jarves.mh.runtime.diagnoseAndroidBuildFailure
 import com.jarves.mh.runtime.findAndroidProjectRoot
+import com.jarves.mh.runtime.ProjectWorkspaceFacts
+import com.jarves.mh.runtime.ProjectWorkspaceInspector
 import com.jarves.mh.runtime.findDebugApk
 import com.jarves.mh.runtime.findReusableDebugApk
 import com.jarves.mh.runtime.inferAndroidBuildStage
@@ -341,6 +343,9 @@ data class AppUiState(
     val projectChats: List<ProjectChat> = emptyList(),
     val activeChatId: String? = null,
     val workspaceFiles: List<WorkspaceEntry> = emptyList(),
+    val projectFacts: ProjectWorkspaceFacts? = null,
+    val projectRepositoryChecking: Boolean = false,
+    val projectRepositoryStatus: String? = null,
     val androidProjectDetected: Boolean = false,
     val filesLoading: Boolean = false,
     val diagnostics: DeveloperDiagnostics = DeveloperDiagnostics(),
@@ -809,7 +814,10 @@ class HarneseRuntimeController(private val application: Application) {
     fun openProjectTerminal() {
         val project = _state.value.activeProject ?: return
         if (_state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
-        _state.update { it.copy(projectTerminalCwd = projectGuestRoot(project)) }
+        val cwd = ProjectWorkspaceInspector.existingGuestDirectory(
+            projectWorkspaceRoot(project), projectGuestRoot(project), _state.value.projectTerminalCwd,
+        )
+        _state.update { it.copy(projectTerminalCwd = cwd) }
     }
 
     fun confirmProjectTerminalCommand() {
@@ -1046,10 +1054,11 @@ class HarneseRuntimeController(private val application: Application) {
             ?: return ProjectTerminalResult(str(R.string.vm_project_unavailable), 1, cwd)
         val workspace = projectWorkspaceRoot(project)
         val guestWorkspacePath = projectGuestRoot(project)
+        val resolvedCwd = ProjectWorkspaceInspector.terminalWorkingDirectory(workspace, guestWorkspacePath, cwd, command)
         val marker = "__POCKETDEV_CWD_${UUID.randomUUID()}__"
         val preparedCommand = prepareInteractiveShellCommand(command)
         val script = """
-            cd -- ${shellQuote(cwd)} || exit 1
+            cd -- ${shellQuote(resolvedCwd)} || exit 1
             $preparedCommand
             pocket_status=${'$'}?
             printf '\n$marker%s\n' "${'$'}PWD"
@@ -1107,16 +1116,15 @@ class HarneseRuntimeController(private val application: Application) {
         val exitCode = process.waitFor()
         runCatching { process.outputStream.close() }
         val raw = output.toString()
-        val cwdAfter = raw.substringAfter(marker, "")
-            .lineSequence()
-            .firstOrNull()
-            ?.trim()
-            ?.takeIf { it == guestWorkspacePath || it.startsWith("$guestWorkspacePath/") }
-            ?: cwd
+        val reportedCwd = raw.substringAfter(marker, "").lineSequence().firstOrNull()?.trim().orEmpty()
+        val cwdAfter = ProjectWorkspaceInspector.existingGuestDirectory(
+            workspace, guestWorkspacePath, reportedCwd.ifBlank { resolvedCwd },
+        )
         val cleanOutput = sanitizeTerminalOutput(raw.substringBefore(marker))
             .trim()
             .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
-        return ProjectTerminalResult(cleanOutput, exitCode, cwdAfter)
+        val rootedOutput = if (resolvedCwd != cwd) str(R.string.vm_terminal_project_directory, resolvedCwd) + "\n" + cleanOutput else cleanOutput
+        return ProjectTerminalResult(rootedOutput, exitCode, cwdAfter)
     }
 
     private fun sendProcessInput(process: Process?, text: String) {
@@ -1209,9 +1217,7 @@ class HarneseRuntimeController(private val application: Application) {
             }
             ProjectTerminalSnapshot(
                 lines = lines.takeLast(MAX_PROJECT_TERMINAL_HISTORY),
-                cwd = root.optString("cwd", guestRoot).takeIf {
-                    it == guestRoot || it.startsWith("$guestRoot/")
-                } ?: guestRoot,
+                cwd = ProjectWorkspaceInspector.existingGuestDirectory(projectWorkspaceRoot(project), guestRoot, root.optString("cwd", guestRoot)),
             )
         }.getOrDefault(ProjectTerminalSnapshot(cwd = guestRoot))
     }
@@ -3153,6 +3159,11 @@ class HarneseRuntimeController(private val application: Application) {
     fun testAntigravityConnection() {
         if (_state.value.agentKind != AgentKind.ANTIGRAVITY) return
         if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
+        if (_state.value.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN &&
+            !preferences.antigravityReconnectRequired && antigravityAuthController.hasOfficialCredential()) {
+            antigravityAuthController.restoreStoredSession()
+            _state.update { it.copy(antigravityAuth = antigravityAuthController.state.value) }
+        }
         if (_state.value.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN) {
             _state.update {
                 it.copy(
@@ -3165,6 +3176,7 @@ class HarneseRuntimeController(private val application: Application) {
         _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = str(R.string.vm_antigravity_hello)) }
         runtimeScope.launch {
             val result = runCatching { antigravityRuntime.hello() }
+            if (_state.value.agentKind != AgentKind.ANTIGRAVITY) return@launch
             result.onSuccess {
                 _state.update {
                     it.copy(
@@ -3173,8 +3185,14 @@ class HarneseRuntimeController(private val application: Application) {
                     )
                 }
             }.onFailure { error ->
+                val reason = error.message.orEmpty()
+                if (needsAntigravityReconnect(reason, antigravityAuthController.hasOfficialCredential())) {
+                    preferences.antigravityReconnectRequired = true
+                    preferences.antigravitySignedIn = false
+                    antigravityAuthController.invalidateSession(reason)
+                }
                 _state.update {
-                    it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = helloFailureMessage(error.message.orEmpty()))
+                    it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = helloFailureMessage(reason))
                 }
             }
         }
@@ -3184,15 +3202,17 @@ class HarneseRuntimeController(private val application: Application) {
         val value = raw.replace(Regex("\\s+"), " ").trim()
         return when {
             value.contains("not installed", true) -> str(R.string.vm_antigravity_cli_missing)
+            needsAntigravityReconnect(value, antigravityAuthController.hasOfficialCredential()) -> str(R.string.vm_antigravity_reconnect)
             value.contains("sign-in", true) || value.contains("not signed in", true) ||
-                value.contains("authentication", true) -> str(R.string.vm_antigravity_reconnect)
+                value.contains("authentication", true) -> str(R.string.vm_agy_auth_retry)
             value.contains("did not answer", true) -> str(R.string.vm_antigravity_no_answer)
             value.isBlank() -> str(R.string.vm_antigravity_no_answer)
             else -> value.take(200)
         }
     }
 
-    fun openProject(project: Project) {
+    fun openProject(requestedProject: Project) {
+        var project = requestedProject
         val current = _state.value
         if (current.activeProject?.id == project.id) {
             _state.update {
@@ -3220,6 +3240,16 @@ class HarneseRuntimeController(private val application: Application) {
                 )
             }
             return
+        }
+        // Older releases stored imported repositories as quick chats. Promote real
+        // workspaces without changing the selected root or deleting any files.
+        if (project.kind == ProjectKind.QUICK_PROJECT &&
+            runCatching { ProjectWorkspaceInspector.inspect(projectWorkspaceRoot(project)).recognized }.getOrDefault(false)
+        ) {
+            project = project.copy(kind = ProjectKind.PROJECT)
+            val updated = current.projects.map { if (it.id == project.id) project else it }
+            preferences.saveProjects(updated)
+            _state.update { it.copy(projects = updated) }
         }
         configureBridgeRoots(project.id, project.rootPath)
         val terminal = loadProjectTerminal(project)
@@ -3251,6 +3281,9 @@ class HarneseRuntimeController(private val application: Application) {
                 changes = emptyList(),
                 changesAgentKind = null,
                 workspaceFiles = emptyList(),
+                projectFacts = null,
+                projectRepositoryChecking = false,
+                projectRepositoryStatus = null,
                 androidProjectDetected = false,
                 filesLoading = true,
                 projectTerminalLines = terminal.lines,
@@ -3314,6 +3347,9 @@ class HarneseRuntimeController(private val application: Application) {
                 activeChatId = null,
                 changes = emptyList(),
                 workspaceFiles = emptyList(),
+                projectFacts = null,
+                projectRepositoryChecking = false,
+                projectRepositoryStatus = null,
                 androidProjectDetected = false,
                 filesLoading = false,
                 isRunning = false,
@@ -3578,7 +3614,7 @@ class HarneseRuntimeController(private val application: Application) {
                 description = "Imported project workspace",
                 language = str(R.string.vm_language_general),
                 slug = identity.slug,
-                kind = ProjectKind.QUICK_PROJECT,
+                kind = ProjectKind.PROJECT,
             )
             val nestedRoot = detectNestedProjectRoot(preliminary)
             val projectRoot = nestedRoot?.let { File(destination, it) } ?: destination
@@ -3702,7 +3738,7 @@ class HarneseRuntimeController(private val application: Application) {
                             description = repositoryName?.let { "GitHub · $it" } ?: "Imported Git repository",
                             language = metadata.second,
                             slug = identity.slug,
-                            kind = ProjectKind.QUICK_PROJECT,
+                            kind = ProjectKind.PROJECT,
                         )
                     } catch (error: Throwable) {
                         workspace.deleteRecursively()
@@ -3887,7 +3923,7 @@ class HarneseRuntimeController(private val application: Application) {
     fun disconnectGitHub() {
         if (_state.value.githubAuthStatus == GitHubAuthStatus.STARTING) return
         val login = _state.value.githubLogin
-        _state.update { it.copy(githubAuthStatus = GitHubAuthStatus.STARTING, githubMessage = str(R.string.vm_github_signing_out)) }
+        _state.update { it.copy(githubAuthStatus = GitHubAuthStatus.STARTING, githubMessage = str(R.string.vm_github_signing_out), projectRepositoryStatus = null, projectRepositoryChecking = false) }
         runtimeScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -4106,15 +4142,8 @@ class HarneseRuntimeController(private val application: Application) {
 
     private fun detectNestedProjectRoot(project: Project): String? {
         val base = File(getApplication<Application>().filesDir, "workspaces/${project.id}")
-        if (!base.isDirectory) return null
-        val visible = base.listFiles().orEmpty().filterNot { file ->
-            file.name == ".claude" || file.name == ".claude.json"
-        }
-        val onlyDirectory = visible.singleOrNull()?.takeIf(File::isDirectory) ?: return null
-        val containsProjectFiles = onlyDirectory.walkTopDown()
-            .maxDepth(2)
-            .any { it.isFile && it.name !in setOf(".DS_Store", ".claude.json") }
-        return onlyDirectory.name.takeIf { containsProjectFiles && !it.contains("..") }
+        return runCatching { ProjectWorkspaceInspector.uniqueProjectRoot(base) }.getOrNull()
+            ?.takeIf(String::isNotBlank)
     }
 
     fun useSuggestedProjectRoot() {
@@ -4133,6 +4162,9 @@ class HarneseRuntimeController(private val application: Application) {
                 projects = projects,
                 activeProject = updated,
                 suggestedProjectRoot = null,
+                projectFacts = null,
+                projectRepositoryStatus = null,
+                projectRepositoryChecking = false,
                 projectTerminalCwd = guestRoot,
                 changes = emptyList(),
                 toastMessage = str(R.string.vm_project_root_set, root),
@@ -4260,23 +4292,72 @@ class HarneseRuntimeController(private val application: Application) {
         val project = _state.value.activeProject ?: return
         _state.update { it.copy(filesLoading = true) }
         runtimeScope.launch {
-            val (entries, suggestedRoot, androidProjectDetected) = withContext(Dispatchers.IO) {
-                Triple(
-                    readWorkspaceDirectory(project, ""),
-                    if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null,
-                    findAndroidProjectRoot(projectWorkspaceRoot(project)) != null,
-                )
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = projectWorkspaceRoot(project)
+                    val facts = ProjectWorkspaceInspector.inspect(root)
+                    val information = Triple(
+                        readWorkspaceDirectory(project, ""),
+                        if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null,
+                        findAndroidProjectRoot(root) != null,
+                    )
+                    information to facts
+                }
             }
-            if (_state.value.activeProject?.id == project.id) {
-                _state.update {
-                    it.copy(
+            if (_state.value.activeProject?.id != project.id || _state.value.activeProject?.rootPath != project.rootPath) return@launch
+            result.onSuccess { (information, facts) ->
+                val (entries, suggestedRoot, androidProjectDetected) = information
+                _state.update { current ->
+                    val sameRepo = current.projectFacts?.githubRepository == facts.githubRepository
+                    current.copy(
                         workspaceFiles = entries,
                         filesLoading = false,
                         suggestedProjectRoot = suggestedRoot,
                         androidProjectDetected = androidProjectDetected,
+                        projectFacts = facts,
+                        projectRepositoryStatus = current.projectRepositoryStatus.takeIf { sameRepo },
+                        projectRepositoryChecking = current.projectRepositoryChecking && sameRepo,
                     )
                 }
                 loadMissingFolderCounts(project, entries)
+            }.onFailure {
+                _state.update { it.copy(filesLoading = false, toastMessage = str(R.string.vm_project_unavailable)) }
+            }
+        }
+    }
+
+    /** Explicit, read-only check of the selected local project's GitHub origin.
+     * The CLI owns authentication. Tokens and repository contents never enter chat.
+     */
+    fun verifyProjectRepository() {
+        val snapshot = _state.value
+        val project = snapshot.activeProject ?: return
+        val repo = snapshot.projectFacts?.githubRepository ?: return
+        if (snapshot.projectRepositoryChecking) return
+        if (snapshot.githubAuthStatus != GitHubAuthStatus.CONNECTED) {
+            _state.update { it.copy(projectRepositoryStatus = str(R.string.vm_github_auth_required)) }
+            return
+        }
+        _state.update { it.copy(projectRepositoryChecking = true, projectRepositoryStatus = null) }
+        runtimeScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val response = runGitHubCli(listOf("api", "repos/$repo", "--jq", "{full_name: .full_name, default_branch: .default_branch, archived: .archived}"))
+                    if (response.exitCode != 0) error(githubLoadError(response.failure()))
+                    val metadata = JSONObject(response.stdout)
+                    val name = metadata.getString("full_name")
+                    val branch = metadata.getString("default_branch")
+                    check(name.equals(repo, ignoreCase = true)) { str(R.string.vm_github_invalid_response) }
+                    str(R.string.vm_project_repo_verified, name, branch)
+                }
+            }
+            if (_state.value.activeProject?.id == project.id &&
+                _state.value.projectFacts?.githubRepository == repo &&
+                _state.value.githubLogin == snapshot.githubLogin && _state.value.githubAuthStatus == GitHubAuthStatus.CONNECTED
+            ) {
+                _state.update {
+                    it.copy(projectRepositoryChecking = false, projectRepositoryStatus = result.getOrElse { str(R.string.vm_project_repo_check_failed) })
+                }
             }
         }
     }
@@ -4976,8 +5057,14 @@ class HarneseRuntimeController(private val application: Application) {
             return false
         }
         if (snapshot.agentKind == AgentKind.ANTIGRAVITY && snapshot.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN) {
-            _state.update { it.copy(toastMessage = str(R.string.vm_antigravity_signin_before_task)) }
-            return false
+            if (!preferences.antigravityReconnectRequired && antigravityAuthController.hasOfficialCredential()) {
+                antigravityAuthController.restoreStoredSession()
+                _state.update { it.copy(antigravityAuth = antigravityAuthController.state.value) }
+            }
+            if (_state.value.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN) {
+                _state.update { it.copy(toastMessage = str(R.string.vm_antigravity_signin_before_task)) }
+                return false
+            }
         }
         if (snapshot.agentKind == AgentKind.DEEPSEEK_HARNESS && snapshot.provider.kind == ProviderKind.CLAUDE) {
             _state.update { it.copy(toastMessage = str(R.string.vm_dsh_claude_unsupported)) }
@@ -5738,13 +5825,17 @@ class HarneseRuntimeController(private val application: Application) {
     private fun executeIntegrationCommand(command: HarneseCommand): HarneseCommandResult {
         fun findProject(projectId: String): Project? =
             _state.value.projects.firstOrNull { it.id == projectId }
-        fun busy(): Boolean = _state.value.runtimeProbeRunning || _state.value.isRunning ||
-            _state.value.projectTerminalRunning || _state.value.androidBuildRunning
+        fun busy(): Boolean = _state.value.runtimeProbeRunning || _state.value.isRunning || runtimeRequestInFlight ||
+            _state.value.projectTerminalRunning || _state.value.androidBuildRunning ||
+            _state.value.agentInstalling != null || _state.value.agentUpdating != null ||
+            _state.value.gitCloneRunning || _state.value.projectImporting
 
         return when (command) {
             is HarneseCommand.HubOperation -> {
                 val s = _state.value
-                val project = command.projectId?.let(::findProject) ?: s.activeProject
+                val project = if (command.projectId != null) {
+                    findProject(command.projectId) ?: return HarneseCommandResult.error("المشروع المحدد غير موجود.")
+                } else s.activeProject
                 val journal = com.jarves.mh.connect.HarneseEventBus.get(application)
                 val text = when (command.name) {
                     "runtimes", "python", "node", "typescript", "androidsdk", "runtimehealth", "disk" -> {
@@ -5773,7 +5864,9 @@ class HarneseRuntimeController(private val application: Application) {
                             if (busy()) return HarneseCommandResult.error("أوقف المهمة قبل تغيير الوكيل.")
                             val kind = AgentKind.entries.firstOrNull { it.name.equals(command.argument, true) || it.stableId.equals(command.argument, true) }
                                 ?: return HarneseCommandResult.error(AgentKind.entries.joinToString("\n") { it.stableId })
+                            if (!installer.isAgentInstalled(kind)) return HarneseCommandResult.error("ثبّت الوكيل أولًا من الهاتف.")
                             selectAgent(kind)
+                            if (_state.value.agentKind != kind) return HarneseCommandResult.error("تعذر التبديل إلى الوكيل المحدد.")
                         }
                         "الوكيل: ${_state.value.agentKind.name}"
                     }
@@ -5781,6 +5874,7 @@ class HarneseRuntimeController(private val application: Application) {
                         if (project == null) return HarneseCommandResult.error("اختر مشروعًا أولًا.")
                         if (busy()) return HarneseCommandResult.error("توجد مهمة متعارضة؛ انتظر أو ألغها.")
                         openProject(project)
+                        if (_state.value.activeProject?.id != project.id) return HarneseCommandResult.error("تعذر تأكيد المشروع المحدد.")
                         integrationSource = "telegram"
                         try { performAndroidAction(AndroidAction.FORCE_BUILD) } finally { integrationSource = "android" }
                         if (!_state.value.androidBuildRunning) return HarneseCommandResult.error(_state.value.toastMessage ?: "تعذر بدء البناء.")

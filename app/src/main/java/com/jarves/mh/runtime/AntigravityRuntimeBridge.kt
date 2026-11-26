@@ -663,9 +663,9 @@ internal fun antigravityFriendlyError(raw: String, diagnostic: String = ""): Str
     return when {
         ANTIGRAVITY_NETWORK_ERRORS.any { value.contains(it, ignoreCase = true) } ->
             "Antigravity could not reach Google. Check your internet or DNS connection, then try again."
+        value.contains("invalid_grant", true) -> "Antigravity credentials require reconnect (invalid_grant)."
+        value.contains("token revoked", true) -> "Antigravity credentials require reconnect (token revoked)."
         value.contains("authentication required", true) ||
-            value.contains("invalid_grant", true) ||
-            value.contains("token revoked", true) ||
             value.contains("not signed in", true) ||
             value.contains("not logged in", true) ->
             "Antigravity needs Google sign-in. Open Settings → Coding agent."

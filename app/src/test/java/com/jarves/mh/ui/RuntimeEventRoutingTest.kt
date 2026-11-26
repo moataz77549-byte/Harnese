@@ -23,7 +23,9 @@ class RuntimeEventRoutingTest {
         assertFalse(needsAntigravityReconnect("Network timeout", true))
         assertFalse(needsAntigravityReconnect("Authentication endpoint temporarily unavailable", true))
         assertFalse(needsAntigravityReconnect("Quota exhausted", true))
-        assertTrue(needsAntigravityReconnect("Antigravity needs Google sign-in", true))
+        assertFalse(needsAntigravityReconnect("Antigravity needs Google sign-in", true))
+        assertTrue(needsAntigravityReconnect("Antigravity needs Google sign-in", false))
+        assertTrue(needsAntigravityReconnect("token revoked", true))
         assertTrue(needsAntigravityReconnect("invalid_grant", true))
         assertTrue(needsAntigravityReconnect("authentication required", false))
     }

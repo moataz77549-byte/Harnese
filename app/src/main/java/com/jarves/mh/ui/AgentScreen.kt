@@ -828,6 +828,8 @@ fun AgentScreen(
                             Text(
                                 if (isAntigravity) {
                                     "Antigravity · ${formatAntigravityModelName(state.antigravityModel)}"
+                                } else if (state.agentKind == AgentKind.CODEX) {
+                                    state.agentKind.localizedTitle()
                                 } else {
                                     "${state.agentKind.localizedTitle()} · ${model.ifBlank { selectedKind.localizedTitle() }}"
                                 },

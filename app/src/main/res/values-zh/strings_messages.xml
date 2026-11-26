@@ -194,4 +194,13 @@
     <string name="ws_agent_install">点击安装</string>
     <string name="vm_agent_not_installed">发送任务前请安装 %1$s。</string>
     <string name="vm_agent_proposed_changes">建议的更改 — 在代理中心审核</string>
+    <string name="vm_terminal_project_directory">工作目录：%1$s</string>
+    <string name="vm_project_repo_verified">GitHub 访问已验证：%1$s · 默认分支 %2$s</string>
+    <string name="vm_project_repo_check_failed">无法验证仓库，请检查 GitHub 连接并重试。</string>
+    <string name="ws_project_metadata_empty">未识别到构建项目的工作区</string>
+    <string name="ws_project_metadata_loading">正在检查项目…</string>
+    <string name="ws_repo_checking">正在验证…</string>
+    <string name="ws_repo_verify">验证 GitHub</string>
+    <string name="ws_gradle_root">Gradle 根目录：%1$s</string>
+    <string name="vm_agy_auth_retry">已保留保存的账户，请重新检查连接。</string>
 </resources>

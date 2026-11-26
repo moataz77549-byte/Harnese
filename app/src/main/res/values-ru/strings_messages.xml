@@ -203,4 +203,13 @@
     <string name="ws_agent_install">Нажмите для установки</string>
     <string name="vm_agent_not_installed">Установите %1$s перед отправкой задачи.</string>
     <string name="vm_agent_proposed_changes">Предложенные изменения — проверьте их в центре агентов</string>
+    <string name="vm_terminal_project_directory">Рабочий каталог: %1$s</string>
+    <string name="vm_project_repo_verified">Доступ к GitHub подтверждён: %1$s · ветка по умолчанию %2$s</string>
+    <string name="vm_project_repo_check_failed">Не удалось проверить репозиторий. Проверьте подключение GitHub и повторите попытку.</string>
+    <string name="ws_project_metadata_empty">Рабочая область без распознанного проекта сборки</string>
+    <string name="ws_project_metadata_loading">Проверка проекта…</string>
+    <string name="ws_repo_checking">Проверка…</string>
+    <string name="ws_repo_verify">Проверить GitHub</string>
+    <string name="ws_gradle_root">Корень Gradle: %1$s</string>
+    <string name="vm_agy_auth_retry">Сохранённая учётная запись сохранена. Повторите проверку подключения.</string>
 </resources>

@@ -197,4 +197,13 @@
     <string name="ws_agent_install">इंस्टॉल करने के लिए टैप करें</string>
     <string name="vm_agent_not_installed">कार्य भेजने से पहले %1$s इंस्टॉल करें।</string>
     <string name="vm_agent_proposed_changes">प्रस्तावित बदलाव — एजेंट हब में समीक्षा करें</string>
+    <string name="vm_terminal_project_directory">कार्य निर्देशिका: %1$s</string>
+    <string name="vm_project_repo_verified">GitHub पहुँच सत्यापित: %1$s · डिफ़ॉल्ट शाखा %2$s</string>
+    <string name="vm_project_repo_check_failed">रिपॉज़िटरी सत्यापित नहीं हुई। GitHub कनेक्शन जाँचें और पुनः प्रयास करें।</string>
+    <string name="ws_project_metadata_empty">पहचाने गए बिल्ड प्रोजेक्ट के बिना कार्यक्षेत्र</string>
+    <string name="ws_project_metadata_loading">प्रोजेक्ट की जाँच हो रही है…</string>
+    <string name="ws_repo_checking">जाँच हो रही है…</string>
+    <string name="ws_repo_verify">GitHub जाँचें</string>
+    <string name="ws_gradle_root">Gradle रूट: %1$s</string>
+    <string name="vm_agy_auth_retry">सहेजा गया खाता सुरक्षित है। कनेक्शन दोबारा जाँचें।</string>
 </resources>
