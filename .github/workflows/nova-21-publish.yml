@@ -12,7 +12,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
       EXPECTED_CERT: d7f31fde154fc9b46fe8ef333fd12ecdfbd9b331d71a5284c24a6ad8ad45de51
@@ -78,6 +78,19 @@ jobs:
           a={'url':f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/releases/download/harnese-nova-v2.1.0/{p.name}','sha256':hashlib.file_digest(p.open('rb'),'sha256').hexdigest(),'sizeBytes':p.stat().st_size}
           pathlib.Path('delivery/harnese-nova-update.json').write_text(json.dumps({'versionCode':26,'versionName':'2.1.0','notes':'Chat persistence, bounded terminal logs, agent connection checks, and Antigravity session recovery.','artifacts':{'online':a,'offline':a}},indent=2)+'\n')
           PY
+      - name: Enable KVM for the disposable Android emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Upgrade RC6 in place on Android 11 with ARM64 translation
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: bash scripts/release/test_nova21_upgrade.sh
       - name: Publish verified, owner-signed 2.1 prerelease
         shell: bash
         run: |

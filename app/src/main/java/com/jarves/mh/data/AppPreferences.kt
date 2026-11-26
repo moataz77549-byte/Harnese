@@ -332,6 +332,16 @@ class AppPreferences(private val context: Context) {
 
     private val chatsDir = File(context.filesDir, "chats").also { it.mkdirs() }
 
+    fun rememberSelectedChat(projectId: String, chatId: String) {
+        preferences.edit().putString("selected_chat_$projectId", chatId).apply()
+    }
+
+    fun selectedChat(projectId: String, chats: List<ProjectChat>): ProjectChat {
+        val savedId = preferences.getString("selected_chat_$projectId", null)
+        return chats.firstOrNull { it.id == savedId } ?: chats.first()
+    }
+
+    @Synchronized
     fun saveProjectChats(projectId: String, chats: List<ProjectChat>) {
         val projectDir = File(chatsDir, projectId).also { it.mkdirs() }
         val arr = JSONArray()
@@ -343,7 +353,7 @@ class AppPreferences(private val context: Context) {
                 put("updatedAtMillis", chat.updatedAtMillis)
             })
         }
-        File(projectDir, "index.json").writeText(arr.toString())
+        replaceChatFile(File(projectDir, "index.json"), arr.toString())
     }
 
     fun loadProjectChats(projectId: String): List<ProjectChat> {
@@ -414,10 +424,13 @@ class AppPreferences(private val context: Context) {
             })
         }
         val projectDir = File(chatsDir, projectId).also { it.mkdirs() }
-        val destination = File(projectDir, "$chatId.json")
-        val temporary = File(projectDir, ".$chatId.json.tmp")
+        replaceChatFile(File(projectDir, "$chatId.json"), arr.toString())
+    }
+
+    private fun replaceChatFile(destination: File, content: String) {
+        val temporary = File(destination.parentFile, ".${destination.name}.tmp")
         temporary.outputStream().use { output ->
-            output.write(arr.toString().toByteArray(Charsets.UTF_8))
+            output.write(content.toByteArray(Charsets.UTF_8))
             output.fd.sync()
         }
         try {
@@ -434,6 +447,7 @@ class AppPreferences(private val context: Context) {
 
     @Synchronized
     fun deleteProjectChats(projectId: String) {
+        preferences.edit().remove("selected_chat_$projectId").apply()
         File(chatsDir, projectId).deleteRecursively()
         File(chatsDir, "$projectId.json").delete()
     }

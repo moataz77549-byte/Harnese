@@ -3260,7 +3260,7 @@ class HarneseRuntimeController(private val application: Application) {
             val chats = preferences.loadProjectChats(project.id).ifEmpty {
                 listOf(ProjectChat(title = str(R.string.vm_main_chat)))
             }
-            val chat = chats.first()
+            val chat = preferences.selectedChat(project.id, chats)
             _state.update {
                 it.copy(
                     readOnlyProject = project,
@@ -3287,7 +3287,7 @@ class HarneseRuntimeController(private val application: Application) {
         val chats = preferences.loadProjectChats(project.id).ifEmpty {
             listOf(ProjectChat(title = str(R.string.vm_main_chat))).also { preferences.saveProjectChats(project.id, it) }
         }
-        val activeChat = chats.first()
+        val activeChat = preferences.selectedChat(project.id, chats)
         val saved = loadChatTranscript(project.id, activeChat.id)
         val msgs = saved.ifEmpty { listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")) }
         val androidBuild = loadAndroidBuildRecord(project.id)
@@ -3417,7 +3417,7 @@ class HarneseRuntimeController(private val application: Application) {
         _state.update {
             it.copy(
                 readOnlyChatId = chatId,
-                readOnlyMessages = preferences.loadMessages(project.id, chatId),
+                readOnlyMessages = loadChatTranscript(project.id, chatId),
             )
         }
     }
@@ -3425,6 +3425,7 @@ class HarneseRuntimeController(private val application: Application) {
     fun activateReadOnlyProject() {
         if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         val project = _state.value.readOnlyProject ?: return
+        _state.value.readOnlyChatId?.let { preferences.rememberSelectedChat(project.id, it) }
         closeReadOnlyProject()
         openProject(project)
     }
@@ -4279,6 +4280,7 @@ class HarneseRuntimeController(private val application: Application) {
         val chat = ProjectChat(title = str(R.string.vm_new_chat))
         val chats = listOf(chat) + _state.value.projectChats
         preferences.saveProjectChats(project.id, chats)
+        preferences.rememberSelectedChat(project.id, chat.id)
         _state.update {
             it.copy(
                 projectChats = chats,
@@ -4303,6 +4305,7 @@ class HarneseRuntimeController(private val application: Application) {
         val chat = current.projectChats.firstOrNull { it.id == chatId } ?: return
         persistMessages()
         val saved = loadChatTranscript(project.id, chat.id)
+        preferences.rememberSelectedChat(project.id, chat.id)
         _state.update {
             it.copy(
                 activeChatId = chat.id,
@@ -5960,7 +5963,7 @@ class HarneseRuntimeController(private val application: Application) {
                     return HarneseCommandResult.error("الدردشة غير موجودة.")
                 val s = _state.value
                 val messages = if (s.activeProject?.id == project.id && s.activeChatId == command.chatId)
-                    s.messages else preferences.loadMessages(project.id, command.chatId)
+                    s.messages else loadChatTranscript(project.id, command.chatId)
                 HarneseCommandResult.success(if (messages.isEmpty()) "لا توجد رسائل." else
                     messages.takeLast(8).joinToString("\n\n") {
                         "${if (it.fromUser) "👤" else "🤖"} ${it.text.take(420)}"
