@@ -52,9 +52,14 @@ class McpConnectionManager(context: Context) {
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             if (connection.responseCode !in 200..299) {
                 val error = runCatching { JSONObject(connection.errorStream.bufferedReader().use { reader ->
-                    val buffer = CharArray(16_000)
-                    val count = reader.read(buffer)
-                    if (count <= 0) "" else String(buffer, 0, count)
+                    val result = StringBuilder()
+                    val buffer = CharArray(1024)
+                    while (result.length < 16_000) {
+                        val count = reader.read(buffer, 0, minOf(buffer.size, 16_000 - result.length))
+                        if (count < 0) break
+                        result.append(buffer, 0, count)
+                    }
+                    result.toString()
                 }).optJSONObject("error") }.getOrNull()
                 throw RemoteFailure(connection.responseCode,error?.optInt("code"),error?.optJSONObject("data")?.optJSONArray("supported"))
             }

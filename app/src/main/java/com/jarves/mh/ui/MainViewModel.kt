@@ -220,7 +220,6 @@ data class OpenedFileState(
     val readOnlyReason: FileReadOnlyReason? = null,
     val originalFingerprint: String? = null,
     val lineEnding: String = "\n",
-    val hadTrailingNewline: Boolean = false,
     val targetLine: Int? = null,
     val targetColumn: Int? = null,
 )
@@ -1297,6 +1296,7 @@ class HarneseRuntimeController(private val application: Application) {
         if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning) return false
         val workspace = findAndroidProjectRoot(projectWorkspaceRoot(project)) ?: return false
         val apk = findReusableDebugApk(workspace) ?: return false
+        if (AndroidAppInstaller.packageName(application, apk).isNullOrBlank()) return false
         val reuseTask = UUID.randomUUID().toString()
         com.jarves.mh.connect.HarneseEventBus.get(application).publish(
             id = "build:$reuseTask", project = project.id, chat = current.activeChatId.orEmpty(), task = reuseTask,
@@ -1542,7 +1542,8 @@ class HarneseRuntimeController(private val application: Application) {
                 }
                 if (task == "clean") null else {
                     _state.update { it.copy(androidBuildStage = AndroidBuildStage.FINDING_APK, androidBuildMessage = str(R.string.an_finding_apk)) }
-                    findDebugApk(workspace) ?: error(str(R.string.an_no_debug_apk_found))
+                    findDebugApk(workspace)?.takeIf { !AndroidAppInstaller.packageName(application, it).isNullOrBlank() }
+                        ?: error(str(R.string.an_no_debug_apk_found))
                 }
             }.onSuccess { apk ->
                 val shouldInstallAndRun = apk != null && action == AndroidAction.BUILD_AND_RUN
@@ -1765,12 +1766,12 @@ class HarneseRuntimeController(private val application: Application) {
                 val app = getApplication<Application>()
                 @Suppress("DEPRECATION")
                 val archive = app.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
-                val packageName = archive?.packageName ?: AndroidAppInstaller.packageName(app, apk)
+                val packageName = archive?.packageName ?: return@runCatching null
                 AndroidApkInfo(
                     path = apk.absolutePath,
                     fileName = apk.name,
                     sizeBytes = apk.length(),
-                    sha256 = fingerprint(apk),
+                    sha256 = AndroidAppInstaller.apkFingerprint(apk),
                     builtAtMillis = apk.lastModified(),
                     packageName = packageName,
                     versionName = archive?.versionName,
@@ -3261,6 +3262,7 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     fun openProject(requestedProject: Project) {
+        if (_state.value.activeProject?.id != requestedProject.id && editorHasPendingChanges()) return
         var project = requestedProject
         val current = _state.value
         if (current.activeProject?.id == project.id) {
@@ -3350,6 +3352,7 @@ class HarneseRuntimeController(private val application: Application) {
                 androidApkInfo = null,
                 androidHealthRunning = false,
                 androidHealthChecks = emptyList(),
+                openedFile = null,
                 androidBuildPhase = androidBuild.phase,
                 androidBuildAction = androidBuild.action,
                 androidBuildStage = androidBuild.stage,
@@ -3374,7 +3377,15 @@ class HarneseRuntimeController(private val application: Application) {
         }
     }
 
+    private fun editorHasPendingChanges(): Boolean {
+        val file = _state.value.openedFile ?: return false
+        if (!file.dirty && !file.saving) return false
+        _state.update { it.copy(toastMessage = str(R.string.unsaved_changes)) }
+        return true
+    }
+
     fun closeProject() {
+        if (editorHasPendingChanges()) return
         persistMessages()
         if (_state.value.isRunning || runtimeRequestInFlight || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
             _state.update {
@@ -3394,6 +3405,8 @@ class HarneseRuntimeController(private val application: Application) {
         _state.update {
             it.copy(
                 activeProject = null,
+                openedFile = null,
+                androidApkInfo = null,
                 workspaceVisible = false,
                 projectChats = emptyList(),
                 activeChatId = null,
@@ -3455,6 +3468,7 @@ class HarneseRuntimeController(private val application: Application) {
     fun consumeToast() = _state.update { it.copy(toastMessage = null) }
 
     fun createProject(name: String) {
+        if (editorHasPendingChanges()) return
         if (name.isBlank()) return
         if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
             _state.update { it.copy(toastMessage = str(R.string.vm_stop_before_new_project)) }
@@ -3476,6 +3490,8 @@ class HarneseRuntimeController(private val application: Application) {
         _state.update {
             it.copy(
                 projects = listOf(project) + it.projects,
+                openedFile = null,
+                androidApkInfo = null,
                 activeProject = project,
                 workspaceVisible = true,
                 messages = listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")),
@@ -3508,6 +3524,7 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     fun createDevelopmentProject(name: String, typescript: Boolean) {
+        if (editorHasPendingChanges()) return
         if (name.isBlank() || _state.value.isRunning || _state.value.androidBuildRunning || _state.value.projectTerminalRunning || _state.value.runtimeProbeRunning) return
         createProject(name)
         val project = _state.value.activeProject ?: return
@@ -3517,6 +3534,7 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     fun createAndroidProject(name: String, template: AndroidTemplate) {
+        if (editorHasPendingChanges()) return
         if (name.isBlank()) return
         if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
             _state.update { it.copy(toastMessage = str(R.string.an_stop_before_new_project)) }
@@ -3553,6 +3571,7 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     fun createQuickProject() {
+        if (editorHasPendingChanges()) return
         if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
             _state.update { it.copy(toastMessage = str(R.string.vm_stop_before_new_project)) }
             return
@@ -4494,7 +4513,6 @@ class HarneseRuntimeController(private val application: Application) {
                                 readOnlyReason = FileReadOnlyReason.TOO_LARGE.takeIf { tooLarge },
                                 originalFingerprint = if (tooLarge) null else MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) },
                                 lineEnding = if (decoded.contains("\r\n")) "\r\n" else "\n",
-                                hadTrailingNewline = decoded.endsWith("\n") || decoded.endsWith("\r"),
                             )
                         }
                     }
@@ -4560,8 +4578,7 @@ class HarneseRuntimeController(private val application: Application) {
                     if (opened.originalFingerprint == null || fingerprint(file) != opened.originalFingerprint) {
                         return@runCatching false
                     }
-                    var normalized = opened.draft.replace("\r\n", "\n").replace('\r', '\n')
-                    if (opened.lineEnding == "\r\n") normalized = normalized.replace("\n", "\r\n")
+                    val normalized = editorTextForSave(opened.draft, opened.lineEnding)
                     val temporary = File(file.parentFile, ".${file.name}.${UUID.randomUUID()}.tmp")
                     try {
                         temporary.writeText(normalized, Charsets.UTF_8)
