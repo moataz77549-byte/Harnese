@@ -5645,7 +5645,6 @@ class HarneseRuntimeController(private val application: Application) {
                     )
                 }
                 is RuntimeEvent.ToolProgress -> {
-                    val failedTool = event.summary == "Tool failed" || event.summary.startsWith("FAILED") || event.summary.startsWith("UNVERIFIED")
                     val runningIndex = current.liveProcess.indexOfLast {
                         !it.isComplete && it.title == "Running ${event.toolName}"
                     }
@@ -5673,6 +5672,7 @@ class HarneseRuntimeController(private val application: Application) {
                     pendingApproval = null,
                 ), ActivityItem(str(R.string.vm_action_rejected), str(R.string.vm_agent_continue_without, current.agentKind.localizedTitle(getApplication()))))
                 is RuntimeEvent.ToolCompleted -> {
+                    val failedTool = event.summary == "Tool failed" || event.summary.startsWith("FAILED") || event.summary.startsWith("UNVERIFIED")
                     // Bridges fill empty tool results with English placeholders; translate for display.
                     val summary = when (event.summary) {
                         "Tool failed" -> str(R.string.md_tool_failed)
