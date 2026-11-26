@@ -3,6 +3,20 @@ on:
   push:
     branches: [feat/nova-2.3-project-build]
     paths: [nova-23-signature.json]
+  workflow_call:
+    inputs:
+      direct_sign:
+        type: boolean
+        default: false
+    secrets:
+      HARN_NOVA_JKS_B64:
+        required: false
+      HARN_NOVA_KEYSTORE_PASS:
+        required: false
+      HARN_NOVA_KEY_ALIAS:
+        required: false
+      HARN_NOVA_KEY_PASS:
+        required: false
 permissions:
   contents: write
   actions: read
@@ -17,17 +31,44 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       EXPECTED_CERT: d7f31fde154fc9b46fe8ef333fd12ecdfbd9b331d71a5284c24a6ad8ad45de51
     steps:
+      - name: Check original signing availability without exposing credentials
+        id: preflight
+        env:
+          DIRECT_SIGN: ${{ inputs.direct_sign }}
+          HARN_NOVA_JKS_B64: ${{ secrets.HARN_NOVA_JKS_B64 }}
+          HARN_NOVA_KEYSTORE_PASS: ${{ secrets.HARN_NOVA_KEYSTORE_PASS }}
+          HARN_NOVA_KEY_ALIAS: ${{ secrets.HARN_NOVA_KEY_ALIAS }}
+          HARN_NOVA_KEY_PASS: ${{ secrets.HARN_NOVA_KEY_PASS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/feat/nova-2.3-project-build
+          if [[ "$DIRECT_SIGN" == true ]]; then
+            for name in HARN_NOVA_JKS_B64 HARN_NOVA_KEYSTORE_PASS HARN_NOVA_KEY_ALIAS HARN_NOVA_KEY_PASS; do
+              if [[ -z "${!name}" ]]; then
+                echo 'ready=false' >> "$GITHUB_OUTPUT"
+                echo '::warning::Original signing secrets unavailable; use the existing local owner signature transport. No release published.'
+                echo 'Owner signing blocked: missing original signing configuration.' >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+            done
+          fi
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+        if: steps.preflight.outputs.ready == 'true'
         with:
           fetch-depth: 0
       - uses: actions/setup-java@v4
+        if: steps.preflight.outputs.ready == 'true'
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        if: steps.preflight.outputs.ready == 'true'
         with:
           packages: platform-tools
       - name: Verify CI source and retrieve exact unsigned APK
+        if: steps.preflight.outputs.ready == 'true' && !inputs.direct_sign
         shell: bash
         run: |
           set -euo pipefail
@@ -44,14 +85,55 @@ jobs:
           test -s "$BASE" && test -s "$JAR"
           echo "BASE=$BASE" >> "$GITHUB_ENV"
           echo "SIGNER=$JAR" >> "$GITHUB_ENV"
-      - name: Verify public signature transport, payload, and application identity
+          echo "SOURCE_COMMIT=$SOURCE" >> "$GITHUB_ENV"
+      - name: Download exact unsigned APK from successful build job
+        if: steps.preflight.outputs.ready == 'true' && inputs.direct_sign
+        uses: actions/download-artifact@v4
+        with:
+          name: nova-23-unsigned-arm64
+          path: unsigned
+      - name: Sign verified CI artifact using only original owner secrets
+        if: steps.preflight.outputs.ready == 'true' && inputs.direct_sign
+        env:
+          HARN_NOVA_JKS_B64: ${{ secrets.HARN_NOVA_JKS_B64 }}
+          HARN_NOVA_KEYSTORE_PASS: ${{ secrets.HARN_NOVA_KEYSTORE_PASS }}
+          HARN_NOVA_KEY_ALIAS: ${{ secrets.HARN_NOVA_KEY_ALIAS }}
+          HARN_NOVA_KEY_PASS: ${{ secrets.HARN_NOVA_KEY_PASS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          BASE=$(find unsigned -name nova-23-unsigned.apk -type f -print -quit)
+          JAR=$(find unsigned -name apksigner.jar -type f -print -quit)
+          test -s "$BASE" && test -s "$JAR"
+          (cd "$(dirname "$BASE")" && sha256sum -c UNSIGNED-SHA256SUMS.txt)
+          KEY=$(mktemp "$RUNNER_TEMP/nova-owner.XXXXXX")
+          trap 'rm -f "$KEY"' EXIT
+          printf '%s' "$HARN_NOVA_JKS_B64" | base64 -d > "$KEY"
+          mkdir -p delivery
+          java -jar "$JAR" sign --ks "$KEY" --ks-key-alias "$HARN_NOVA_KEY_ALIAS" --ks-pass env:HARN_NOVA_KEYSTORE_PASS --key-pass env:HARN_NOVA_KEY_PASS --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --v4-signing-enabled false --out delivery/Harnese-Nova-2.3.0-Android8Plus-ARM64.apk "$BASE"
+          echo "SIGNER=$JAR" >> "$GITHUB_ENV"
+          echo "SOURCE_COMMIT=$GITHUB_SHA" >> "$GITHUB_ENV"
+      - name: Restore public owner signature transport
+        if: steps.preflight.outputs.ready == 'true' && !inputs.direct_sign
         shell: bash
         run: |
           set -euo pipefail
           command -v zstd >/dev/null || { sudo apt-get update -qq; sudo apt-get install -y zstd; }
           mkdir -p delivery
+          python3 scripts/release/nova_rc6_signature_transport.py apply "$BASE" nova-23-signature.json delivery/Harnese-Nova-2.3.0-Android8Plus-ARM64.apk
+      - name: Verify signed payload, certificate continuity and application identity
+        if: steps.preflight.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
           APK=delivery/Harnese-Nova-2.3.0-Android8Plus-ARM64.apk
-          python3 scripts/release/nova_rc6_signature_transport.py apply "$BASE" nova-23-signature.json "$APK"
+          PREVIOUS=$(mktemp --suffix=.apk)
+          trap 'rm -f "$PREVIOUS"' EXIT
+          curl --fail --location --retry 3 https://github.com/moataz77549-byte/Harnese/releases/download/harnese-nova-v2.1.0/Harnese-Nova-2.1.0-Android8Plus-ARM64.apk -o "$PREVIOUS"
+          echo "b61b94c226f0dd7a87a43d5ba2548f8c6ac214067e3eb06c197fe8542899760d  $PREVIOUS" | sha256sum -c -
+          java -jar "$SIGNER" verify --verbose --print-certs --min-sdk-version 26 "$PREVIOUS" > delivery/previous-certificate.txt
+          grep -F "certificate SHA-256 digest: $EXPECTED_CERT" delivery/previous-certificate.txt
           BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
           java -jar "$SIGNER" verify --verbose --print-certs --min-sdk-version 26 "$APK" > delivery/certificate.txt
           grep -F "certificate SHA-256 digest: $EXPECTED_CERT" delivery/certificate.txt
@@ -79,11 +161,13 @@ jobs:
           pathlib.Path('delivery/harnese-nova-update.json').write_text(json.dumps({'versionCode':27,'versionName':'2.3.0','notes':'Project roots, folder terminals, editor saves, debug APK identification, GitHub permissions, Telegram build reports and scoped MCP reviews.','artifacts':{'online':a,'offline':a}},indent=2)+'\n')
           PY
       - name: Enable KVM for the disposable Android emulator
+        if: steps.preflight.outputs.ready == 'true'
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Upgrade 2.1 in place on Android 11 with ARM64 translation
+        if: steps.preflight.outputs.ready == 'true'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
@@ -92,16 +176,20 @@ jobs:
           disable-animations: true
           script: bash scripts/release/test_nova23_upgrade.sh
       - name: Publish verified, owner-signed 2.3 prerelease
+        if: steps.preflight.outputs.ready == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          SOURCE=$(jq -r .sourceCommit nova-23-signature.json)
+          SOURCE="$SOURCE_COMMIT"
           TAG=harnese-nova-v2.3.0
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release already exists; refusing to replace."
             exit 1
           fi
-          gh release create "$TAG" delivery/*.apk delivery/*.txt delivery/harnese-nova-update.json \
+          git archive --format=zip --prefix=Harnese-Nova-2.3.0/ "$SOURCE" > delivery/Harnese-Nova-2.3.0-source.zip
+          cp docs/NOVA-2.3.md delivery/CHANGELOG.md
+          printf '%s\n' '# Verification report' "Source: $SOURCE" "Actions: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" 'Build, unit tests, generated sample APK, native/ZIP and lint gates: passed.' 'Owner certificate match, APK signature schemes and alignment: passed.' 'Android 11 emulator in-place upgrade and synthetic private-file fixtures: passed.' 'Live Antigravity account/PRoot, physical device, actual authentication retention and interactive command approval: not tested.' > delivery/TEST_REPORT.md
+          gh release create "$TAG" delivery/*.apk delivery/*.txt delivery/*.zip delivery/*.md delivery/harnese-nova-update.json \
             --repo "$GITHUB_REPOSITORY" --target "$SOURCE" \
             --title 'Harnese Nova 2.3.0 — Projects and build tools · Android 8+ ARM64' \
             --notes-file docs/NOVA-2.3.md --prerelease
