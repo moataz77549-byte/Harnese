@@ -4922,7 +4922,9 @@ private fun WorkspaceScreen(
                     showQuickCommands = false,
                     compactHeader = true,
                 )
-                WorkspaceTab.CHANGES -> ChangesTab(
+                WorkspaceTab.CHANGES -> if ((state.changesAgentKind ?: state.agentKind) in setOf(com.jarves.mh.model.AgentKind.ANTIGRAVITY, com.jarves.mh.model.AgentKind.CODEX)) {
+                    com.jarves.mh.telegram.WorkspaceSecureReviewPanel(state.activeProject?.id, state.isRunning || state.androidBuildRunning || state.projectTerminalRunning)
+                } else ChangesTab(
                     state.changes,
                     onUndoChanges,
                     onKeepChanges,

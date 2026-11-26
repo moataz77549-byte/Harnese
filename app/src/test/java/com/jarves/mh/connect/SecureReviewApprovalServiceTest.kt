@@ -69,4 +69,20 @@ class SecureReviewApprovalServiceTest {
             assertEquals("after", File(original, "source.kt").readText())
         } finally { dir.deleteRecursively() }
     }
+    @Test fun `approved new nested files preserve large UTF8 bytes and survive reopening`() {
+        val dir = Files.createTempDirectory("nova-review-utf8").toFile()
+        try {
+            val original = File(dir, "project").apply { mkdirs() }
+            val service = SecureReviewApprovalService(File(dir, "reviews"))
+            val stage = service.stage("project", original)
+            val text = "مرحبا بالعالم\n".repeat(100000)
+            File(stage.workspace, "app/src/source.txt").apply { parentFile.mkdirs(); writeText(text) }
+            assertFalse(File(original, "app/src/source.txt").exists())
+            service.finish(stage.id)
+            val reopened = SecureReviewApprovalService(File(dir, "reviews"))
+            reopened.applyLocally(stage.id)
+            assertEquals(text, File(original, "app/src/source.txt").readText())
+            assertEquals("applied", reopened.read(stage.id).state)
+        } finally { dir.deleteRecursively() }
+    }
 }

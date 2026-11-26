@@ -53,7 +53,7 @@ class AntigravityBridgeTest {
             """{"event":"step_update","step_update":{"state":"DONE","step_type":"tool","tool_name":"write_to_file","tool_info":{"name":"write_to_file","parameters":{"TargetFile":"/workspace/app/main.py"}}}}""",
         )
         assertEquals(
-            AntigravityParsedEvent.ToolCompleted("Write", "/workspace/app/main.py"),
+            AntigravityParsedEvent.ToolCompleted("Write", "/workspace/app/main.py", target = "/workspace/app/main.py"),
             parsed,
         )
     }
@@ -70,12 +70,12 @@ class AntigravityBridgeTest {
     }
 
     @Test
-    fun `shows tool errors as completed activity`() {
+    fun `distinguishes tool errors from successful completion`() {
         val parsed = AntigravityEventParser.parse(
             """{"event":"step_update","step_update":{"state":"ERROR","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"gradle assembleDebug"},"error":{"type":"TOOL_ERROR","message":"context canceled"}}}}""",
         )
         assertEquals(
-            AntigravityParsedEvent.ToolCompleted("Bash", "context canceled"),
+            AntigravityParsedEvent.ToolCompleted("Bash", "context canceled", failed = true),
             parsed,
         )
     }
@@ -196,5 +196,22 @@ class AntigravityBridgeTest {
         assertTrue("/workspace/bold-kalam" in prompt)
         assertTrue("Do not create project output" in prompt)
         assertTrue(prompt.endsWith("Create hello.py"))
+    }
+    @Test fun `write evidence checks actual staged files and rejects scratch paths`() {
+        val root = java.nio.file.Files.createTempDirectory("agy-verify").toFile()
+        try {
+            val file = java.io.File(root, "src/main.txt").apply { parentFile.mkdirs(); writeText("مرحبا\nhello") }
+            val evidence = antigravityStagedFileEvidence(root, "/workspace/app", "/workspace/app/src/main.txt")!!
+            assertTrue(evidence.contains("bytes=${file.length()}"))
+            assertTrue(evidence.contains("SHA-256="))
+            assertNull(antigravityStagedFileEvidence(root, "/workspace/app", "/workspace/app/missing.txt"))
+            assertNull(antigravityStagedFileEvidence(root, "/workspace/app", "/root/.gemini/scratch/main.txt"))
+            assertNull(antigravityStagedFileEvidence(root, "/workspace/app", "../outside.txt"))
+        } finally { root.deleteRecursively() }
+    }
+    @Test fun `nonzero explicit command exit is failure`() {
+        val parsed = AntigravityEventParser.parse("""{"event":"step_update","step_update":{"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":{"exit_code":2,"output":"failed"}}}""") as AntigravityParsedEvent.ToolCompleted
+        assertTrue(parsed.failed)
+        assertEquals(2, parsed.exitCode)
     }
 }

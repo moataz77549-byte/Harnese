@@ -5360,6 +5360,10 @@ class HarneseRuntimeController(private val application: Application) {
 
     fun undoLastChanges() {
         val project = _state.value.activeProject ?: return
+        if ((_state.value.changesAgentKind ?: _state.value.agentKind) in setOf(AgentKind.ANTIGRAVITY, AgentKind.CODEX)) {
+            _state.update { it.copy(toastMessage = "افتح تبويب التغييرات لمراجعة التعديلات واعتمادها على الهاتف.") }
+            return
+        }
         runtimeScope.launch {
             val restored = agentRegistry.require(_state.value.changesAgentKind ?: _state.value.agentKind).runtime.undoLastChanges(project.id)
             _state.update { current ->
@@ -5379,6 +5383,10 @@ class HarneseRuntimeController(private val application: Application) {
 
     fun keepLastChanges() {
         val project = _state.value.activeProject ?: return
+        if ((_state.value.changesAgentKind ?: _state.value.agentKind) in setOf(AgentKind.ANTIGRAVITY, AgentKind.CODEX)) {
+            _state.update { it.copy(toastMessage = "افتح تبويب التغييرات لمراجعة التعديلات واعتمادها على الهاتف.") }
+            return
+        }
         runtimeScope.launch {
             agentRegistry.require(_state.value.changesAgentKind ?: _state.value.agentKind).runtime.acceptLastChanges(project.id)
             _state.update {
@@ -5392,6 +5400,10 @@ class HarneseRuntimeController(private val application: Application) {
 
     fun undoFileChange(path: String) {
         val project = _state.value.activeProject ?: return
+        if ((_state.value.changesAgentKind ?: _state.value.agentKind) in setOf(AgentKind.ANTIGRAVITY, AgentKind.CODEX)) {
+            _state.update { it.copy(toastMessage = "افتح تبويب التغييرات لمراجعة التعديلات واعتمادها على الهاتف.") }
+            return
+        }
         runtimeScope.launch {
             if (agentRegistry.require(_state.value.changesAgentKind ?: _state.value.agentKind).runtime.undoFileChange(project.id, path)) {
                 _state.update { current -> current.copy(changes = current.changes.filterNot { it.path == path }) }
@@ -5402,6 +5414,10 @@ class HarneseRuntimeController(private val application: Application) {
 
     fun keepFileChange(path: String) {
         val project = _state.value.activeProject ?: return
+        if ((_state.value.changesAgentKind ?: _state.value.agentKind) in setOf(AgentKind.ANTIGRAVITY, AgentKind.CODEX)) {
+            _state.update { it.copy(toastMessage = "افتح تبويب التغييرات لمراجعة التعديلات واعتمادها على الهاتف.") }
+            return
+        }
         runtimeScope.launch {
             if (agentRegistry.require(_state.value.changesAgentKind ?: _state.value.agentKind).runtime.acceptFileChange(project.id, path)) {
                 _state.update { current -> current.copy(changes = current.changes.filterNot { it.path == path }) }
@@ -5629,6 +5645,7 @@ class HarneseRuntimeController(private val application: Application) {
                     )
                 }
                 is RuntimeEvent.ToolProgress -> {
+                    val failedTool = event.summary == "Tool failed" || event.summary.startsWith("FAILED") || event.summary.startsWith("UNVERIFIED")
                     val runningIndex = current.liveProcess.indexOfLast {
                         !it.isComplete && it.title == "Running ${event.toolName}"
                     }
@@ -5669,14 +5686,14 @@ class HarneseRuntimeController(private val application: Application) {
                         current.liveProcess.toMutableList().also { items ->
                             val runningItem = items[runningIndex]
                             items[runningIndex] = ActivityItem(
-                                if (event.summary == "Tool failed") str(R.string.md_tool_failed) else "${event.toolName} completed",
-                                if (event.summary == "Tool failed") summary else runningItem.detail.ifBlank { summary },
+                                if (failedTool) str(R.string.md_tool_failed) else "${event.toolName} completed",
+                                if (failedTool || request.agentKind == AgentKind.ANTIGRAVITY) summary else runningItem.detail.ifBlank { summary },
                                 isCommand = event.toolName == "Bash",
                             ).let(::boundedActivityItem)
                         }
                     } else {
                         current.liveProcess + boundedActivityItem(ActivityItem(
-                            if (event.summary == "Tool failed") str(R.string.md_tool_failed) else "${event.toolName} completed",
+                            if (failedTool) str(R.string.md_tool_failed) else "${event.toolName} completed",
                             summary,
                             isCommand = event.toolName == "Bash",
                         ))

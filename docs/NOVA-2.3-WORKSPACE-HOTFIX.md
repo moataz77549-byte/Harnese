@@ -1,0 +1,6 @@
+# Workspace and agent stability correction (2.3.0 candidate)
+
+Baseline: 763768e54233320951c2ec95c9c2ba7ec534804b. Published baseline: 2.1.0 (26). Candidate remains 2.3.0 (27), Android 8+ ARM64 and original package; no new key. Staging is intentional and must not be confused with an applied change. The workspace Changes tab now exposes the credential-gated project review directly. Legacy checkpoint acceptance must not claim isolated changes were applied. Successful local application verifies each destination hash; writes are synced before atomic replacement. Antigravity file events verify the actual staged path, bytes and SHA-256; tool failure and unknown command exit codes are explicit. Build outputs are excluded from source review and need rebuilding in the original project after approval.
+
+## Test status
+Added regression tests for staged file evidence, missing and scratch paths, explicit nonzero exit, large Arabic source and reopening the review store. CI must run them. Device tests A–H (live provider, PRoot and in-place install) are NOT performed by this commit. No claim of complete tool protocol or live command approval support: official headless CLI does not accept control_response; sensitive commands must retain the existing permission checks. Owner signing transport and the upgrade gate are still required before publishing.

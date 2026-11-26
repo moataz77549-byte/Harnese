@@ -37,7 +37,7 @@ internal sealed interface AntigravityParsedEvent {
     data class Initialized(val conversationId: String) : AntigravityParsedEvent
     data class Text(val value: String) : AntigravityParsedEvent
     data class ToolStarted(val name: String, val detail: String) : AntigravityParsedEvent
-    data class ToolCompleted(val name: String, val detail: String) : AntigravityParsedEvent
+    data class ToolCompleted(val name: String, val detail: String, val failed: Boolean = false, val target: String? = null, val exitCode: Int? = null) : AntigravityParsedEvent
     data class Result(
         val conversationId: String?,
         val status: String,
@@ -74,7 +74,14 @@ internal object AntigravityEventParser {
                             ?.optString("message")
                             ?.takeIf(String::isNotBlank)
                             ?.let(::redactToolDetail)
-                        AntigravityParsedEvent.ToolCompleted(name, output ?: error ?: detail)
+                        val info = step.optJSONObject("tool_info")
+                        val parameters = info?.optJSONObject("parameters")
+                        val target = if (name == "Write") listOf("TargetFile", "AbsolutePath", "path", "file")
+                            .firstNotNullOfOrNull { key -> parameters?.optString(key)?.takeIf { it.isNotBlank() } } else null
+                        val exit = info?.opt("exit_code")?.toString()?.toIntOrNull()
+                            ?: info?.opt("exitCode")?.toString()?.toIntOrNull()
+                        AntigravityParsedEvent.ToolCompleted(name, error ?: output ?: detail,
+                            step.optString("state") == "ERROR" || error != null || (exit != null && exit != 0), target, exit)
                     } else {
                         AntigravityParsedEvent.ToolStarted(name, detail)
                     }
@@ -352,7 +359,6 @@ class AntigravityRuntimeBridge(
             val stagedRun = reviews.stage(projectId, originalWorkspace)
             val workspace = stagedRun.workspace
             checkpoints.createCheckpoint(projectId, originalWorkspace)
-            val before = checkpoints.snapshot(workspace)
             val resumedConversation = conversationId(projectId)
             val recent = conversationHistory.recentWithinCharacterBudget(12_000).dropLast(1)
                 .filter { it.text.isNotBlank() }
@@ -387,6 +393,8 @@ class AntigravityRuntimeBridge(
             val pending = StringBuilder()
             var resultSeen = false
             var assistantTextSeen = false
+            val unverifiedWrites = linkedSetOf<String>()
+            var anonymousWrite = false
             var activeToolName: String? = null
             var activeToolDetail = ""
             var activeToolStartedAtMillis = 0L
@@ -412,7 +420,19 @@ class AntigravityRuntimeBridge(
                     is AntigravityParsedEvent.ToolCompleted -> {
                         if (activeToolName == event.name) activeToolName = null
                         pushForegroundProgress(R.string.rt_bridge_working, "Antigravity")
-                        emitEvent(RuntimeEvent.ToolCompleted(sessionId, event.name, event.detail))
+                        val evidence = if (event.name == "Write" && !event.failed) {
+                            if (event.target == null) {
+                                anonymousWrite = true
+                                "UNVERIFIED: write target was not supplied by CLI"
+                            } else {
+                                val verified = antigravityStagedFileEvidence(workspace, "/workspace/$projectSlug", event.target)
+                                if (verified == null) unverifiedWrites.add(event.target) else unverifiedWrites.remove(event.target)
+                                verified ?: "UNVERIFIED: target not found in staged workspace"
+                            }
+                        } else if (event.failed) "FAILED" else if (event.name == "Bash") {
+                            event.exitCode?.let { "exit code=$it" } ?: "UNVERIFIED: CLI did not provide an exit code"
+                        } else "CLI result"
+                        emitEvent(RuntimeEvent.ToolCompleted(sessionId, event.name, "$evidence\n${event.detail}"))
                     }
                     is AntigravityParsedEvent.Result -> {
                         event.conversationId?.let { saveConversationId(projectId, it) }
@@ -478,15 +498,19 @@ class AntigravityRuntimeBridge(
                 }
             }
             val stagedReview = reviews.finish(stagedRun.id)
-                if (stagedReview.entries.isNotEmpty()) journal.publish(
+            if (stagedReview.entries.isNotEmpty()) {
+                journal.publish(
                     id = "review:${stagedRun.id}", project = projectId, chat = "", task = sessionId,
-                    kind = "review.pending", body = "مشروع: ${com.jarves.mh.data.AppPreferences(context).loadProjects().firstOrNull { it.id == projectId }?.name ?: projectId}\nالمخاطر: مراجعة محلية مطلوبة قبل أي تطبيق\nمراجعة تعديلات معزولة: ${stagedRun.id}\n" + stagedReview.entries.joinToString("\n") { it.path } + "\nاعتماد محلي في Agent Hub فقط. الرفض: /reject ${stagedRun.id}",
+                    kind = "review.pending", body = "AWAITING_APPROVAL: ${stagedReview.entries.size} staged files. Local review required.\n" + stagedReview.entries.joinToString("\n") { it.path },
                 )
-                val paths = checkpoints.changedFiles(workspace, before)
-            checkpoints.saveChangedPaths(projectId, paths)
-            if (paths.isNotEmpty()) {
                 emitEvent(RuntimeEvent.FilesChanged(sessionId, stagedReview.entries.map { ChangeItem(it.path, 0, 0) }))
+                emitEvent(RuntimeEvent.AssistantDelta(sessionId, "\n\nAWAITING_APPROVAL — ${stagedReview.entries.size} files are staged, not written to the actual project. Open Changes, review and approve on this device, then build in the project terminal.\nالتعديلات لم تُطبّق بعد؛ افتح تبويب التغييرات واعتمدها على الهاتف."))
             }
+            val missing = unverifiedWrites.filter { antigravityStagedFileEvidence(workspace, "/workspace/$projectSlug", it) == null }
+            check(missing.isEmpty() && (!anonymousWrite || stagedReview.entries.isNotEmpty())) {
+                "UNVERIFIED: CLI reported writes without verified workspace files. Inspect Changes and retry missing paths."
+            }
+            check(!userStopRequested) { "Stopped by user" }
             emitCompleted(sessionId)
             finishForegroundRuntime(true, projectSlug, AppStrings.get(context, R.string.rt_bridge_finished_in, "Antigravity", projectSlug))
         }.onFailure {
@@ -500,6 +524,7 @@ class AntigravityRuntimeBridge(
             if (userStopRequested) cancelForegroundRuntime()
             else finishForegroundRuntime(false, projectSlug, message)
         }
+        activeProcess?.let { if (it.isAlive) stopAfterTerminalResult(it) }
         activeProcess = null
         activeSessionId = null
         activeProjectSlug = ""
@@ -725,6 +750,7 @@ private fun MutableList<String>.addAntigravitySelection(model: String, effort: S
 internal fun antigravityWorkspacePrompt(projectSlug: String, prompt: String): String = """
     <pocketdev_workspace>
     The active project workspace is /workspace/$projectSlug. Create, edit, read, run, and build project files only inside this directory. Do not create project output under ~/.gemini/antigravity-cli/scratch or any other scratch directory.
+    The directory is an isolated staging copy until the phone owner reviews and approves changes. For each write, use the full workspace path and verify the file using read/list tools. For Bash use the project working directory and report actual exit status. Do not claim files were applied to the original project or an APK was delivered before approval; build artifacts must be rebuilt in the original project after approval.
 
     For Android projects, never use plain `gradle build` or start a Gradle daemon. Build only the debug APK. First check whether `app/build/outputs/apk/debug/` already contains an APK.
     - For a first build with no existing debug APK, allow dependency resolution and use:
@@ -742,3 +768,32 @@ internal fun antigravityGradleProgress(command: String, elapsedMillis: Long): St
     val elapsedSeconds = (elapsedMillis.coerceAtLeast(0L) / 1_000L)
     return "Gradle is running · ${elapsedSeconds}s\n$command\nFull output will appear when the command completes."
 }
+
+
+/** Validate the CLI path against the actual mounted staging tree, not a scratch directory. */
+internal fun antigravityStagedFileEvidence(workspace: File, guestRoot: String, target: String): String? = runCatching {
+    val relative = if (target.startsWith("/")) {
+        require(target.startsWith("$guestRoot/")); target.removePrefix("$guestRoot/")
+    } else target
+    require(relative.isNotBlank() && relative.split('/').none { it == ".." })
+    val root = workspace.canonicalFile
+    var file = root
+    relative.split('/').filter { it.isNotEmpty() && it != "." }.forEach { part ->
+        file = File(file, part)
+        require(!java.nio.file.Files.isSymbolicLink(file.toPath()))
+    }
+    require(file.canonicalFile.toPath().startsWith(root.toPath()) && file.isFile)
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    val size = file.inputStream().use { input ->
+        val buffer = ByteArray(65536)
+        var total = 0L
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            digest.update(buffer, 0, count); total += count
+        }
+        total
+    }
+    require(size == file.length())
+    "VERIFIED (staged): $guestRoot/$relative; bytes=$size; SHA-256=" + digest.digest().joinToString("") { "%02x".format(it) }
+}.getOrNull()

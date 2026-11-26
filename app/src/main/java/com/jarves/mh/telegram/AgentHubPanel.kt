@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -71,5 +72,89 @@ fun AgentHubPanel() {
         DevelopmentEnvironmentsPanel(runtime)
         com.jarves.mh.mcp.McpSettingsPanel(state.activeProject?.id, state.agentKind.stableId)
         events.forEach { Text(it) }
+    }
+}
+
+
+/** Project-scoped entry to the same credential-gated review store. */
+@Composable
+fun WorkspaceSecureReviewPanel(projectId: String?, busy: Boolean) {
+    val context = LocalContext.current
+    val runtime = remember { HarneseRuntimeOwner.get(context.applicationContext as Application) }
+    val service = remember { com.jarves.mh.connect.SecureReviewApprovalService.get(java.io.File(context.filesDir, "secure-reviews")) }
+    val scope = rememberCoroutineScope()
+    var records by remember(projectId) { mutableStateOf(emptyList<com.jarves.mh.connect.SecureReviewApprovalService.Review>()) }
+    var selected by remember(projectId) { mutableStateOf<String?>(null) }
+    var preview by remember(projectId) { mutableStateOf("") }
+    var message by remember(projectId) { mutableStateOf("") }
+    var authorizedId by remember { mutableStateOf<String?>(null) }
+    var applying by remember { mutableStateOf(false) }
+    val currentProject by rememberUpdatedState(projectId)
+    val currentBusy by rememberUpdatedState(busy)
+    suspend fun refresh() {
+        records = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { service.records().filter { it.project == currentProject }.sortedByDescending { it.expires } }
+    }
+    LaunchedEffect(projectId, busy) { refresh() }
+    val auth = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val id = authorizedId
+        authorizedId = null
+        if (result.resultCode == Activity.RESULT_OK && id != null) {
+            applying = true
+            scope.launch {
+                try {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        check(!currentBusy && service.read(id).project == currentProject) { "Project changed or busy" }
+                        service.applyLocally(id)
+                    }
+                    message = "VERIFIED — تم تطبيق التعديلات والتحقق من الملفات"
+                    selected = null; preview = ""
+                    runtime.refreshProjectFiles()
+                } catch (error: Exception) { message = "FAILED — " + error.message.orEmpty() }
+                finally { applying = false; refresh() }
+            }
+        } else message = "REJECTED — لم يتم اعتماد التعديلات"
+    }
+    androidx.compose.foundation.lazy.LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Text("مراجعة التعديلات | Project reviews")
+            Text("التعديلات المعزولة لا تظهر في الطرفية قبل الاعتماد. بعد الاعتماد شغّل البناء في المشروع الحقيقي.")
+            OutlinedButton(onClick = { scope.launch { refresh() } }, enabled = !applying) { Text(stringResource(R.string.hub_refresh)) }
+            if (records.isEmpty()) Text("لا توجد مراجعات لهذا المشروع")
+            if (message.isNotBlank()) Text(message)
+        }
+        items(records.size) { index ->
+            val review = records[index]
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text((if (review.state == "pending") "AWAITING_APPROVAL" else review.state.uppercase()) + " — ${review.entries.size} files")
+                Text(review.entries.take(40).joinToString("\n") { it.path })
+                if (review.state == "pending") {
+                    OutlinedButton(enabled = !applying && authorizedId == null, onClick = {
+                        selected = review.id; preview = ""
+                        scope.launch {
+                            runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { service.preview(review.id) } }
+                                .onSuccess { if (selected == review.id) preview = it }
+                                .onFailure { message = it.message.orEmpty() }
+                        }
+                    }) { Text("عرض التغييرات") }
+                    if (selected == review.id && preview.isNotBlank()) {
+                        Text(preview)
+                        OutlinedButton(enabled = !busy && !applying && authorizedId == null, onClick = {
+                            val manager = context.getSystemService(KeyguardManager::class.java)
+                            val intent = manager.createConfirmDeviceCredentialIntent("Harnese Nova", review.id)
+                            if (intent == null) message = context.getString(R.string.hub_lock_required)
+                            else { authorizedId = review.id; auth.launch(intent) }
+                        }) { Text("قبول التعديلات — اعتماد محلي") }
+                        OutlinedButton(enabled = !busy && !applying && authorizedId == null, onClick = {
+                            applying = true
+                            scope.launch {
+                                try { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { service.reject(review.id) }; message = "REJECTED"; selected = null; preview = "" }
+                                catch (error: Exception) { message = error.message.orEmpty() }
+                                finally { applying = false; refresh() }
+                            }
+                        }) { Text("رفض التعديلات") }
+                    }
+                }
+            }
+        }
     }
 }

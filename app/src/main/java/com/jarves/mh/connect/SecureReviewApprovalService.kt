@@ -150,10 +150,20 @@ class SecureReviewApprovalService(private val directory: File) {
                 else {
                     dest.parentFile.mkdirs()
                     val temp = File(dest.parentFile, ".nova-${UUID.randomUUID()}.tmp")
-                    val source = safe(staged, e.path); source.copyTo(temp)
-                    temp.setExecutable(source.canExecute(), true)
-                    Files.move(temp.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+                    val source = safe(staged, e.path)
+                    try {
+                        java.io.FileOutputStream(temp).use { output ->
+                            source.inputStream().use { it.copyTo(output) }
+                            output.fd.sync()
+                        }
+                        temp.setExecutable(source.canExecute(), true)
+                        require(hash(temp) == e.after) { "Staged copy verification failed: ${e.path}" }
+                        Files.move(temp.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+                    } finally { temp.delete() }
                 }
+            }
+            review.entries.forEach { e ->
+                require(hash(safe(original, e.path)) == e.after) { "Applied file verification failed: ${e.path}" }
             }
             save(id, json.put("state", "applied").put("appliedAt", System.currentTimeMillis()))
         } catch (error: Exception) {
