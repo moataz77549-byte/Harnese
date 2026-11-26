@@ -57,5 +57,15 @@ class ProjectWorkspaceInspectorTest {
         assertNull(ProjectWorkspaceInspector.githubRepositoryFromUrl("https://user@example.github.com/owner/repo"))
         assertNull(ProjectWorkspaceInspector.githubRepositoryFromUrl("https://user@github.com/owner/repo"))
         assertEquals("owner/repo", ProjectWorkspaceInspector.githubRepositoryFromUrl("git@github.com:owner/repo.git"))
+        File(git, "HEAD").writeText("a".repeat(64))
+        assertNull(ProjectWorkspaceInspector.inspect(root).branch)
+    }
+
+    @Test fun ArabicDirectoryNamesAreRecognized() {
+        val root = temp.newFolder("arabic")
+        val nested = File(root, "مشروع اللعبة").apply { mkdir() }
+        File(nested, "settings.gradle.kts").writeText("")
+        assertEquals("مشروع اللعبة", ProjectWorkspaceInspector.uniqueProjectRoot(root))
+        assertEquals("مشروع اللعبة", ProjectWorkspaceInspector.uniqueGradleRoot(root))
     }
 }

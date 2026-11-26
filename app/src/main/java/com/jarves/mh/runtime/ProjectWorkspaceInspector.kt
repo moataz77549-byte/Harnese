@@ -32,7 +32,7 @@ internal object ProjectWorkspaceInspector {
     )
     private val skipped = setOf("node_modules", "build", "target", "dist", "vendor", "out",
         ".git", ".gradle", ".idea", ".pocketdev", ".claude", ".gemini", ".codex")
-    private val safeName = Regex("[A-Za-z0-9._-]{1,100}")
+    private val safeName = Regex("[\\p{L}\\p{N}._ -]{1,100}")
     private fun visible(file: File): Boolean =
         !file.name.startsWith(".") && file.name !in skipped &&
             safeName.matches(file.name) && !Files.isSymbolicLink(file.toPath()) &&
@@ -126,8 +126,10 @@ internal object ProjectWorkspaceInspector {
             origin && line.substringBefore('=').trim() == "url" && '=' in line
         }?.substringAfter('=')?.trim()
         val repo = url?.let(::githubRepositoryFromUrl)
-        val branch = strictGitMetadata(projectRoot, "HEAD")?.trim()?.removePrefix("ref: refs/heads/")
-            ?.takeIf { it.matches(Regex("[A-Za-z0-9._/-]{1,120}")) && ".." !in it && !it.matches(Regex("[a-f0-9]{40}")) }
+        val branch = strictGitMetadata(projectRoot, "HEAD")?.trim()
+            ?.takeIf { it.startsWith("ref: refs/heads/") }
+            ?.removePrefix("ref: refs/heads/")
+            ?.takeIf { it.matches(Regex("[A-Za-z0-9._/-]{1,120}")) && ".." !in it }
         val gradle = uniqueGradleRoot(canonical)
         val entries = canonical.listFiles().orEmpty().filter(::visible).sortedBy { it.name }.take(36)
             .map { it.name + if (it.isDirectory) "/" else "" }
