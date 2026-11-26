@@ -214,4 +214,11 @@ class AntigravityBridgeTest {
         assertTrue(parsed.failed)
         assertEquals(2, parsed.exitCode)
     }
+    @Test fun `headless denied permissions are not successful tools`() {
+        val notice = AntigravityEventParser.parse("Tool permission denied in headless mode; add a permissions.allow rule")
+        assertTrue(notice is AntigravityParsedEvent.PermissionNotice)
+        val event = AntigravityEventParser.parse("""{"event":"step_update","step_update":{"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":{"output":"Permission denied in headless mode"}}}""") as AntigravityParsedEvent.ToolCompleted
+        assertTrue(event.failed)
+        assertTrue(!antigravityPermissionNotice("BUILD SUCCESSFUL"))
+    }
 }

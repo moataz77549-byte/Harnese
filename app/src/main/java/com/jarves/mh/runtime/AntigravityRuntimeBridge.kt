@@ -36,6 +36,7 @@ data class AntigravityAuthState(
 internal sealed interface AntigravityParsedEvent {
     data class Initialized(val conversationId: String) : AntigravityParsedEvent
     data class Text(val value: String) : AntigravityParsedEvent
+    data class PermissionNotice(val detail: String) : AntigravityParsedEvent
     data class ToolStarted(val name: String, val detail: String) : AntigravityParsedEvent
     data class ToolCompleted(val name: String, val detail: String, val failed: Boolean = false, val target: String? = null, val exitCode: Int? = null) : AntigravityParsedEvent
     data class Result(
@@ -48,7 +49,7 @@ internal sealed interface AntigravityParsedEvent {
 
 internal object AntigravityEventParser {
     fun parse(line: String): AntigravityParsedEvent? {
-        val root = runCatching { JSONObject(line) }.getOrNull() ?: return null
+        val root = runCatching { JSONObject(line) }.getOrNull() ?: return if (antigravityPermissionNotice(line)) AntigravityParsedEvent.PermissionNotice(redactToolDetail(line)) else null
         return when (root.optString("event")) {
             "init" -> root.optString("conversation_id")
                 .takeIf(String::isNotBlank)
@@ -81,7 +82,7 @@ internal object AntigravityEventParser {
                         val exit = info?.opt("exit_code")?.toString()?.toIntOrNull()
                             ?: info?.opt("exitCode")?.toString()?.toIntOrNull()
                         AntigravityParsedEvent.ToolCompleted(name, error ?: output ?: detail,
-                            step.optString("state") == "ERROR" || error != null || (exit != null && exit != 0), target, exit)
+                            step.optString("state") == "ERROR" || error != null || (exit != null && exit != 0) || antigravityPermissionNotice(output.orEmpty()), target, exit)
                     } else {
                         AntigravityParsedEvent.ToolStarted(name, detail)
                     }
@@ -395,6 +396,7 @@ class AntigravityRuntimeBridge(
             var assistantTextSeen = false
             val unverifiedWrites = linkedSetOf<String>()
             var anonymousWrite = false
+            var permissionBlocked = false
             var activeToolName: String? = null
             var activeToolDetail = ""
             var activeToolStartedAtMillis = 0L
@@ -402,6 +404,10 @@ class AntigravityRuntimeBridge(
             suspend fun handleLine(line: String) {
                 when (val event = AntigravityEventParser.parse(line)) {
                     is AntigravityParsedEvent.Initialized -> saveConversationId(projectId, event.conversationId)
+                    is AntigravityParsedEvent.PermissionNotice -> {
+                        permissionBlocked = true
+                        emitEvent(RuntimeEvent.ToolCompleted(sessionId, "Bash", "FAILED — permission review required: ${event.detail}"))
+                    }
                     is AntigravityParsedEvent.Text -> {
                         assistantTextSeen = true
                         pushForegroundProgress(R.string.rt_bridge_working, "Antigravity")
@@ -420,6 +426,7 @@ class AntigravityRuntimeBridge(
                     is AntigravityParsedEvent.ToolCompleted -> {
                         if (activeToolName == event.name) activeToolName = null
                         pushForegroundProgress(R.string.rt_bridge_working, "Antigravity")
+                        if (event.failed && antigravityPermissionNotice(event.detail)) permissionBlocked = true
                         val evidence = if (event.name == "Write" && !event.failed) {
                             if (event.target == null) {
                                 anonymousWrite = true
@@ -511,6 +518,9 @@ class AntigravityRuntimeBridge(
                 "UNVERIFIED: CLI reported writes without verified workspace files. Inspect Changes and retry missing paths."
             }
             check(!userStopRequested) { "Stopped by user" }
+            check(!permissionBlocked) {
+                "Permission review required. Approve staged source changes, then inspect and run the blocked command manually in the project terminal. Continue the conversation with its actual result. No automatic permission bypass."
+            }
             emitCompleted(sessionId)
             finishForegroundRuntime(true, projectSlug, AppStrings.get(context, R.string.rt_bridge_finished_in, "Antigravity", projectSlug))
         }.onFailure {
@@ -750,6 +760,7 @@ private fun MutableList<String>.addAntigravitySelection(model: String, effort: S
 internal fun antigravityWorkspacePrompt(projectSlug: String, prompt: String): String = """
     <pocketdev_workspace>
     The active project workspace is /workspace/$projectSlug. Create, edit, read, run, and build project files only inside this directory. Do not create project output under ~/.gemini/antigravity-cli/scratch or any other scratch directory.
+    If headless permission policy declines a command, report it as not executed, show the exact command for the owner to inspect, and stop trying that command. Never grant yourself permissions or edit permission settings. The owner can run the reviewed command in the project terminal and continue this conversation with the actual result.
     The directory is an isolated staging copy until the phone owner reviews and approves changes. For each write, use the full workspace path and verify the file using read/list tools. For Bash use the project working directory and report actual exit status. Do not claim files were applied to the original project or an APK was delivered before approval; build artifacts must be rebuilt in the original project after approval.
 
     For Android projects, never use plain `gradle build` or start a Gradle daemon. Build only the debug APK. First check whether `app/build/outputs/apk/debug/` already contains an APK.
@@ -797,3 +808,13 @@ internal fun antigravityStagedFileEvidence(workspace: File, guestRoot: String, t
     require(size == file.length())
     "VERIFIED (staged): $guestRoot/$relative; bytes=$size; SHA-256=" + digest.digest().joinToString("") { "%02x".format(it) }
 }.getOrNull()
+
+
+/** Headless agy may soft-deny a tool yet return SUCCESS; do not confuse a response with execution. */
+internal fun antigravityPermissionNotice(value: String): Boolean {
+    val text = value.lowercase()
+    return "soft-denied" in text || "soft denied" in text ||
+        ("headless" in text && ("permission denied" in text || "requires approval" in text || "requires permission" in text || "cannot prompt" in text || "approval required" in text)) ||
+        ("permissions.allow" in text && ("denied" in text || "approval" in text)) ||
+        ("tool permission" in text && ("denied" in text || "not granted" in text))
+}

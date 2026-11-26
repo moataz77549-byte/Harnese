@@ -4,3 +4,7 @@ Baseline: 763768e54233320951c2ec95c9c2ba7ec534804b. Published baseline: 2.1.0 (2
 
 ## Test status
 Added regression tests for staged file evidence, missing and scratch paths, explicit nonzero exit, large Arabic source and reopening the review store. CI must run them. Device tests A–H (live provider, PRoot and in-place install) are NOT performed by this commit. No claim of complete tool protocol or live command approval support: official headless CLI does not accept control_response; sensitive commands must retain the existing permission checks. Owner signing transport and the upgrade gate are still required before publishing.
+
+## Final release handoff
+Headless mode cannot obtain interactive approval: the supported fallback is to display the declined command, leave permission policy intact, and let the user inspect and execute it manually in the selected project terminal. Detect common headless denial notices and mark the task incomplete instead of claiming success. Source changes remain credential-gated. See https://antigravity.google/docs/cli/headless/ . Exact live provider wording and behavior still need device testing.
+The install gate calls the existing publish workflow only after its build succeeds. The original authorized signing secrets are optional; if missing, the existing local owner signature transport remains necessary. Both paths must verify the old and new certificate and pass the Android 11 synthetic upgrade gate before release.
