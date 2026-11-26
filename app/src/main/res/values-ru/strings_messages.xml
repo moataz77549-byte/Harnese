@@ -202,4 +202,5 @@
     <string name="ws_agent_installed_version">Установлен · %1$s</string>
     <string name="ws_agent_install">Нажмите для установки</string>
     <string name="vm_agent_not_installed">Установите %1$s перед отправкой задачи.</string>
+    <string name="vm_agent_proposed_changes">Предложенные изменения — проверьте их в центре агентов</string>
 </resources>

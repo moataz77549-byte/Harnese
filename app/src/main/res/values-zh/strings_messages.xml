@@ -193,4 +193,5 @@
     <string name="ws_agent_installed_version">已安装 · %1$s</string>
     <string name="ws_agent_install">点击安装</string>
     <string name="vm_agent_not_installed">发送任务前请安装 %1$s。</string>
+    <string name="vm_agent_proposed_changes">建议的更改 — 在代理中心审核</string>
 </resources>

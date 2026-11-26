@@ -196,4 +196,5 @@
     <string name="ws_agent_installed_version">Installed · %1$s</string>
     <string name="ws_agent_install">Tap to install</string>
     <string name="vm_agent_not_installed">Install %1$s before sending a task.</string>
+    <string name="vm_agent_proposed_changes">Proposed changes — review in Agent Hub</string>
 </resources>

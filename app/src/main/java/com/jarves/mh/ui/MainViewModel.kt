@@ -5512,7 +5512,7 @@ class HarneseRuntimeController(private val application: Application) {
                     liveThinking = false,
                     liveProcess = if (event.paths.isEmpty()) current.liveProcess else current.liveProcess +
                         ActivityItem(
-                            str(R.string.vm_files_changed),
+                            str(R.string.vm_agent_proposed_changes),
                             event.paths.take(4).joinToString(", ") + if (event.paths.size > 4) " " + str(R.string.vm_files_more, event.paths.size - 4) else "",
                         ),
                     workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),

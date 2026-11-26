@@ -208,4 +208,5 @@
     <string name="ws_agent_installed_version">مثبّت · %1$s</string>
     <string name="ws_agent_install">اضغط للتثبيت</string>
     <string name="vm_agent_not_installed">ثبّت %1$s قبل إرسال المهمة.</string>
+    <string name="vm_agent_proposed_changes">تعديلات مقترحة — راجعها في مركز الوكلاء</string>
 </resources>

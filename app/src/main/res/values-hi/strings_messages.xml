@@ -196,4 +196,5 @@
     <string name="ws_agent_installed_version">इंस्टॉल किया गया · %1$s</string>
     <string name="ws_agent_install">इंस्टॉल करने के लिए टैप करें</string>
     <string name="vm_agent_not_installed">कार्य भेजने से पहले %1$s इंस्टॉल करें।</string>
+    <string name="vm_agent_proposed_changes">प्रस्तावित बदलाव — एजेंट हब में समीक्षा करें</string>
 </resources>

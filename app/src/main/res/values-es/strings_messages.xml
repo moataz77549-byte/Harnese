@@ -199,4 +199,5 @@
     <string name="ws_agent_installed_version">Instalado · %1$s</string>
     <string name="ws_agent_install">Toca para instalar</string>
     <string name="vm_agent_not_installed">Instala %1$s antes de enviar una tarea.</string>
+    <string name="vm_agent_proposed_changes">Cambios propuestos — revísalos en el centro de agentes</string>
 </resources>
