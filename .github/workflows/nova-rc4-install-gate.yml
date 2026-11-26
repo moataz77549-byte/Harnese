@@ -12,6 +12,7 @@ permissions:
   contents: read
 jobs:
   build:
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[nova-rc4-signed]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     outputs:
@@ -81,8 +82,34 @@ jobs:
                   report.write(n+' AArch64 ELF; ZIP compression='+str(z.getinfo(n).compress_type)+'\n')
               assert 'assets/engine/codex-arm64.bundle' not in z.namelist()
           PY
-      - name: Lint release gate (required before signing)
+          cp "$BT/lib/apksigner.jar" delivery/apksigner.jar
+          (cd delivery && sha256sum nova-rc4-unsigned.apk apksigner.jar > UNSIGNED-SHA256SUMS.txt)
+      - name: Run full lint and retain its report
+        id: lint
+        continue-on-error: true
         run: ./gradlew :app:lintOnlineRelease -PmhParallelInstall=true --no-daemon --stacktrace
+      - name: Reject any new lint errors (including Android API compatibility)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/release/check_rc4_lint_regressions.py app/build/reports/lint-results-onlineRelease.xml scripts/release/nova_rc4_known_lint.json | tee delivery/lint-regressions.txt
+      - name: Upload verified unsigned APK for local owner signing
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-rc4-unsigned-arm64
+          path: |
+            delivery/nova-rc4-unsigned.apk
+            delivery/apksigner.jar
+            delivery/UNSIGNED-SHA256SUMS.txt
+            delivery/package.txt
+            delivery/native-audit.txt
+            delivery/apk-integrity.txt
+            delivery/zstd-jni-check.txt
+            delivery/lint-regressions.txt
+            app/build/reports/lint-results-onlineRelease.xml
+            app/build/test-results/testOnlineDebugUnitTest/
+          if-no-files-found: error
+          retention-days: 14
       - name: Preserve build and lint evidence
         if: always()
         uses: actions/upload-artifact@v4

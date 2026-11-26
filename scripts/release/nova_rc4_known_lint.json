@@ -1,0 +1,447 @@
+[
+  {
+    "id": "SuspiciousIndentation",
+    "file": "app/src/main/java/com/jarves/mh/runtime/AntigravityRuntimeBridge.kt",
+    "message": "Suspicious indentation: This is indented but is not continuing the previous expression (`val stagedReview = r`...)"
+  },
+  {
+    "id": "SuspiciousIndentation",
+    "file": "app/src/main/java/com/jarves/mh/runtime/DshRuntimeBridge.kt",
+    "message": "Suspicious indentation: This is indented but is not continuing the previous expression (`val stagedReview = r`...)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"agent_agy_installed_cli_version\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"agent_agy_update_cli_button\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"agent_agy_argon_eligibility_hint\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_section_title\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_section_subtitle\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_intro\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_bot_token\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_save_token\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_token_saved\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_token_configured\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_token_missing\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_linked_account\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_pair_code_button\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_unlink\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_unlinked\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_pair_instructions\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_pair_code_display\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_copy_pair\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_allow_prompts\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_security_notice\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_start\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_stop\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_stopped\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_connection_status\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"tg_refresh_link\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_sync_content\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_mute\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_tasks\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_pending\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_subscribe\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_unsubscribe\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_refresh\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_review_preview\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_review_apply\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_review_rollback\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_review_reject\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_lock_required\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_uncertain\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_environments\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_probe\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_optional_install\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_confirm_download\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_repair\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"hub_stream\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_settings_subtitle\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_installed_version\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_missing\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_install\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_update\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_check_updates\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_available_version\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_ready\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_account_status\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_signed_in\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_signed_out\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_device_failed\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_sign_in\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_sign_out\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_check_sandbox\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_sandbox_available\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_sandbox_blocked\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_operation_failed\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_operation_timed_out\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_device_code\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_open_browser\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_browser_missing\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_remove_title\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_remove_detail\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"harnese_developer_credit\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_review_title\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_review_detail\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_select_project\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_start_review\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_review_confirm\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_review_running\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_review_complete\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"agent_title_codex\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"agent_subtitle_codex\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_chat_ready\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_chat_description\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_continue_workspace\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_refresh_models\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_default_model\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"codex_model_catalog_hint\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"setup_download_codex\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"setup_download_codex_note\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  },
+  {
+    "id": "MissingTranslation",
+    "file": "app/src/main/res/values/strings.xml",
+    "message": "\"rt_install_preparing_agent\" is not translated in \"hi\" (Hindi), \"ru\" (Russian), \"es\" (Spanish), \"zh\" (Chinese)"
+  }
+]
