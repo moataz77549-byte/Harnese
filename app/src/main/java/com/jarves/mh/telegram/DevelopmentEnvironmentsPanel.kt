@@ -27,8 +27,6 @@ fun DevelopmentEnvironmentsPanel(runtime: HarneseRuntimeController) {
     var refresh by remember { mutableStateOf(0) }
     LaunchedEffect(refresh, state.devStackInstalling) {
         report = withContext(Dispatchers.IO) {
-            val root = java.io.File(context.filesDir, "runtime/ubuntu")
-            val size = root.walkTopDown().onEnter { !java.nio.file.Files.isSymbolicLink(it.toPath()) }.filter { it.isFile && !java.nio.file.Files.isSymbolicLink(it.toPath()) }.sumOf { it.length() }
             val installer = RuntimeInstaller(context)
             val embedded = if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) runCatching {
                 val bundles = JSONObject(context.assets.open("runtime/offline-manifest.json").bufferedReader().use { it.readText() }).getJSONObject("bundles")
@@ -37,7 +35,10 @@ fun DevelopmentEnvironmentsPanel(runtime: HarneseRuntimeController) {
                     "$key ${item.getString("version")}: ${item.getLong("compressedBytes")} / ${item.getLong("uncompressedBytes")} bytes"
                 }
             }.getOrElse { "Embedded manifest missing" } else "Online edition / تنزيل عند الطلب"
-            "$embedded\nInstalled: $size bytes\nAvailable: ${root.usableSpace} bytes\nPython marker: ${installer.isStackInstalled(DevStack.PYTHON)}\nAndroid marker: ${installer.isStackInstalled(DevStack.ANDROID)}"
+            val free = android.text.format.Formatter.formatFileSize(context, context.filesDir.usableSpace)
+            val stacks = installer.installedStacks().joinToString(", ") { it.name }.ifBlank { "—" }
+            val runtimeStatus = context.getString(if (installer.isInstalled()) R.string.runtime_setup_status_ready else R.string.vm_linux_not_ready)
+            "$embedded\nUbuntu / PRoot · $runtimeStatus\n${context.getString(R.string.nova_free_space, free)}\n$stacks"
         }
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

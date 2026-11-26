@@ -34,6 +34,7 @@ data class AndroidApkInfo(
     val stale: Boolean = false,
     val installed: Boolean = false,
     val installedMatches: Boolean = false,
+    val sha256: String = "",
 )
 
 enum class AndroidHealthStatus { RUNNING, PASSED, WARNING, FAILED }
@@ -93,34 +94,46 @@ internal fun androidGradleCommand(root: File, task: String): String {
 }
 
 internal fun findAndroidProjectRoot(workspace: File): File? {
-    val settingsNames = setOf("settings.gradle", "settings.gradle.kts", "settings.gradle.dcl")
-    return workspace.walkTopDown().maxDepth(4)
-        .filter { it.isFile && it.name in settingsNames }
-        .mapNotNull(File::getParentFile)
-        .sortedBy { it.absolutePath.length }
-        .firstOrNull { root ->
-            root.walkTopDown().maxDepth(5)
-                .any { it.isFile && it.invariantSeparatorsPath.endsWith("src/main/AndroidManifest.xml") }
-        }
+    val path = ProjectWorkspaceInspector.uniqueGradleRoot(workspace) ?: return null
+    val root = File(workspace.canonicalFile, path)
+    return root.takeIf {
+        it.walkTopDown().maxDepth(6)
+            .onEnter { dir -> dir == root || (!java.nio.file.Files.isSymbolicLink(dir.toPath()) &&
+                dir.name !in setOf("build", ".git", ".gradle", "node_modules")) }
+            .any { file -> file.isFile && !java.nio.file.Files.isSymbolicLink(file.toPath()) &&
+                file.invariantSeparatorsPath.endsWith("/src/main/AndroidManifest.xml") }
+    }
 }
 
 internal fun findDebugApk(projectRoot: File): File? {
-    val metadata = projectRoot.walkTopDown().maxDepth(8)
-        .filter { it.isFile && it.name == "output-metadata.json" && "/outputs/apk/" in it.invariantSeparatorsPath }
-        .maxByOrNull(File::lastModified)
-    if (metadata != null) {
-        runCatching {
-            val json = JSONObject(metadata.readText())
-            val elements = json.optJSONArray("elements") ?: return@runCatching null
-            (0 until elements.length()).asSequence()
-                .mapNotNull { elements.optJSONObject(it)?.optString("outputFile") }
-                .map { File(metadata.parentFile, it) }
-                .firstOrNull { it.isFile && it.length() > 0L }
-        }.getOrNull()?.let { return it }
-    }
-    return projectRoot.walkTopDown().maxDepth(10)
-        .filter { it.isFile && it.extension.equals("apk", true) && "/outputs/apk/debug/" in it.invariantSeparatorsPath }
-        .maxByOrNull(File::lastModified)
+    val root = projectRoot.canonicalFile
+    val ignored = setOf(".git", ".gradle", "node_modules", ".idea", "intermediates", "generated", "tmp")
+    val outputs = root.walkTopDown().maxDepth(12)
+        .onEnter { dir -> dir == root || (dir.name !in ignored && !java.nio.file.Files.isSymbolicLink(dir.toPath())) }
+        .filter { dir -> dir.isDirectory && dir.name.equals("debug", true) &&
+            "/build/outputs/apk/" in dir.invariantSeparatorsPath && dir.parentFile?.name != "androidTest" &&
+            "/outputs/apk/androidTest/" !in dir.invariantSeparatorsPath }
+    return outputs.flatMap { dir ->
+        val metadata = File(dir, "output-metadata.json")
+        val files = if (metadata.exists()) {
+            if (java.nio.file.Files.isSymbolicLink(metadata.toPath()) || metadata.length() !in 1..1_048_576L) return@flatMap emptySequence<File>()
+            runCatching {
+                val elements = JSONObject(metadata.readText()).getJSONArray("elements")
+                (0 until elements.length()).mapNotNull { index ->
+                    val entry = elements.getJSONObject(index)
+                    val fileName = entry.optString("outputFile")
+                    if (entry.optJSONArray("filters")?.length()?.let { it > 0 } == true ||
+                        entry.optString("type").equals("ONE_OF_MANY", true) || '/' in fileName || '\\' in fileName) null
+                    else File(dir, fileName)
+                }
+            }.getOrDefault(emptyList())
+        } else {
+            // Without metadata only an unambiguous conventional debug APK can be identified.
+            dir.listFiles().orEmpty().filter { it.name.endsWith("-debug.apk", true) }.singleOrNull()?.let(::listOf).orEmpty()
+        }
+        files.asSequence().filter { it.isFile && !java.nio.file.Files.isSymbolicLink(it.toPath()) &&
+            it.extension.equals("apk", true) && it.length() > 0 }
+    }.maxWithOrNull(compareBy<File> { it.lastModified() }.thenBy { it.path })
 }
 
 /** Returns the last debug APK only when every build input is older than it. */
@@ -131,7 +144,7 @@ internal fun findReusableDebugApk(projectRoot: File): File? {
         "kt", "java", "xml", "gradle", "kts", "properties", "toml", "pro", "json", "jar", "aar",
     )
     val changedAfterApk = projectRoot.walkTopDown()
-        .onEnter { directory -> directory == projectRoot || directory.name !in ignoredDirectories }
+        .onEnter { directory -> directory == projectRoot || (directory.name !in ignoredDirectories && !java.nio.file.Files.isSymbolicLink(directory.toPath())) }
         .filter { file ->
             if (!file.isFile) return@filter false
             val relative = file.relativeTo(projectRoot).invariantSeparatorsPath

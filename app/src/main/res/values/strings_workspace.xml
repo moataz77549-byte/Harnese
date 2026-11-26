@@ -158,4 +158,10 @@
     <string name="ws_preview_external_blocked">External navigation is blocked in project preview</string>
     <string name="ws_open_url">Open URL</string>
     <string name="ws_refresh_preview">Refresh preview</string>
+    <string name="nova_terminal_here">Open terminal here</string>
+    <string name="nova_restore_workspace">Restore full workspace</string>
+    <string name="nova_free_space">Available storage: %1$s</string>
+    <string name="nova_repo_archived">Archived</string>
+    <string name="nova_repo_writable">Push permission granted</string>
+    <string name="nova_repo_readonly">Read access only</string>
 </resources>

@@ -8,6 +8,11 @@ import org.json.JSONObject
 /** Header mirroring never grants a server permission to call a tool. */
 object McpProtocolPolicy {
     const val MODERN = "2026-07-28"
+    fun selectLegacyVersion(offered: JSONArray): String? {
+        val versions = (0 until offered.length()).map { offered.optString(it) }.toSet()
+        return listOf("2025-11-25", "2025-06-18", "2025-03-26").firstOrNull { it in versions }
+    }
+
     fun headerValue(value: String): String = if (
         value == value.trim() && value.all { it.code in 32..126 || it == '\t' } &&
         !(value.startsWith("=?base64?") && value.endsWith("?="))

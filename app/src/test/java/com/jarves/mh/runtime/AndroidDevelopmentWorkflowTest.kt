@@ -32,6 +32,9 @@ class AndroidDevelopmentWorkflowTest {
         val project = File(root, "xml")
         AndroidProjectTemplateGenerator.generate(project, "Views Demo", AndroidTemplate.XML)
 
+        System.getenv("NOVA_SAMPLE_PROJECT")?.let { destination ->
+            check(project.copyRecursively(File(destination)))
+        }
         assertTrue(File(project, "app/src/main/res/layout/activity_main.xml").isFile)
         assertTrue(File(project, "app/src/main/java/com/pocketdev/views_demo/MainActivity.kt").readText().contains("setContentView"))
         assertTrue(File(project, "app/build.gradle.kts").readText().contains("appcompat:1.6.1"))
@@ -58,6 +61,34 @@ class AndroidDevelopmentWorkflowTest {
         assertTrue(diagnoseAndroidBuildFailure("No space left on device", 1).contains("storage"))
         assertTrue(diagnoseAndroidBuildFailure("Manifest merger failed", 1).contains("manifest", ignoreCase = true))
         assertNotNull(diagnoseAndroidBuildFailure("unknown", 7))
+    }
+
+    @Test fun nestedGradleProjectsRequireExplicitRootWhenAmbiguous() = withTempDirectory { root ->
+        val one = File(root, "one")
+        AndroidProjectTemplateGenerator.generate(one, "One", AndroidTemplate.XML)
+        assertEquals(one, findAndroidProjectRoot(root))
+        AndroidProjectTemplateGenerator.generate(File(root, "two"), "Two", AndroidTemplate.XML)
+        assertEquals(null, findAndroidProjectRoot(root))
+        assertEquals(one, findAndroidProjectRoot(one))
+    }
+
+    @Test fun releaseAndSplitOutputsCannotReplaceStandaloneDebugApk() = withTempDirectory { root ->
+        val debug = File(root, "app/build/outputs/apk/demo/debug").apply { mkdirs() }
+        val apk = File(debug, "sample-debug.apk").apply { writeText("apk") }
+        File(debug, "output-metadata.json").writeText("""{"elements":[{"filters":[],"outputFile":"sample-debug.apk"}]}""")
+        val release = File(root, "app/build/outputs/apk/release").apply { mkdirs() }
+        File(release, "release.apk").writeText("release")
+        File(release, "output-metadata.json").writeText("""{"elements":[{"outputFile":"release.apk"}]}""")
+        assertEquals(apk, findDebugApk(root))
+        File(debug, "output-metadata.json").writeText("""{"elements":[{"filters":[{"filterType":"ABI"}],"outputFile":"sample-debug.apk"}]}""")
+        assertEquals(null, findDebugApk(root))
+    }
+
+    @Test fun metadataMustPointInsideItsOutputDirectory() = withTempDirectory { root ->
+        val debug = File(root, "app/build/outputs/apk/debug").apply { mkdirs() }
+        File(debug.parentFile, "outside.apk").writeText("apk")
+        File(debug, "output-metadata.json").writeText("""{"elements":[{"outputFile":"../outside.apk"}]}""")
+        assertEquals(null, findDebugApk(root))
     }
 
     private fun withTempDirectory(block: (File) -> Unit) {

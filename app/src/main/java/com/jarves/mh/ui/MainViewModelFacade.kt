@@ -142,6 +142,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun requestProjectTerminalCommand(command: String) = runtime.requestProjectTerminalCommand(command)
     fun prepareProjectTerminalCommand(command: String) = runtime.prepareProjectTerminalCommand(command)
     fun consumeProjectTerminalDraft() = runtime.consumeProjectTerminalDraft()
+    fun openTerminalAtFolder(path: String) = runtime.openTerminalAtFolder(path)
+    fun selectProjectRoot(path: String?) = runtime.selectProjectRoot(path)
     fun openProjectTerminal() = runtime.openProjectTerminal()
     fun confirmProjectTerminalCommand() = runtime.confirmProjectTerminalCommand()
     fun cancelProjectTerminalCommand() = runtime.cancelProjectTerminalCommand()

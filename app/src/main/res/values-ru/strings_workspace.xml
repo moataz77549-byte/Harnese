@@ -158,4 +158,10 @@
     <string name="ws_preview_external_blocked">Переход на внешние сайты в предпросмотре проекта заблокирован</string>
     <string name="ws_open_url">Открыть URL</string>
     <string name="ws_refresh_preview">Обновить предпросмотр</string>
+    <string name="nova_terminal_here">Открыть терминал здесь</string>
+    <string name="nova_restore_workspace">Открыть рабочую область целиком</string>
+    <string name="nova_free_space">Свободное место: %1$s</string>
+    <string name="nova_repo_archived">В архиве</string>
+    <string name="nova_repo_writable">Доступна отправка изменений</string>
+    <string name="nova_repo_readonly">Только чтение</string>
 </resources>

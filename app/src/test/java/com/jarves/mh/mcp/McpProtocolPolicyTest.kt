@@ -5,6 +5,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class McpProtocolPolicyTest {
+    @org.junit.Test fun choosesNewestMutuallySupportedLegacyVersion() {
+        val offers = org.json.JSONArray().put("2025-03-26").put("2025-06-18")
+        org.junit.Assert.assertEquals("2025-06-18", McpProtocolPolicy.selectLegacyVersion(offers))
+        org.junit.Assert.assertNull(McpProtocolPolicy.selectLegacyVersion(org.json.JSONArray().put("unknown")))
+    }
+
     @Test fun headerValuesCannotInjectHeaders() {
         for (value in listOf("value\r\nAuthorization: secret", "نص عربي", " padded ", "=?base64?YWJj?=")) {
             val encoded=McpProtocolPolicy.headerValue(value)

@@ -171,14 +171,17 @@ class TelegramPollingService : Service() {
             return
         }
         if (instruction is TelegramInstruction.Control && instruction.name == "apk" && instruction.argument == "send") {
-            val result = HarneseCommandBus.dispatch(HarneseCommand.HubOperation(store.lastProjectId(), "apk", "send"))
+            val projectId = store.lastProjectId()
+            if (projectId == null) { reply(token, chatId, "اختر المشروع أولًا عبر /open."); return }
+            val selectedChat = store.lastChatId().orEmpty()
+            val result = HarneseCommandBus.dispatch(HarneseCommand.HubOperation(projectId, "apk", "send"))
             reply(token, chatId, result.text)
             result.filePath?.let { path ->
                 scope.launch {
                     val journal = com.jarves.mh.connect.HarneseEventBus.get(applicationContext)
                     val task = java.util.UUID.randomUUID().toString()
-                    val outcome = runCatching { sendDocument(token, chatId, java.io.File(path)) }
-                    journal.publish(id = "apk:$task", project = store.lastProjectId().orEmpty(), chat = store.lastChatId().orEmpty(), task = task,
+                    val outcome = runCatching { sendDocument(token, chatId, projectId, java.io.File(path)) }
+                    journal.publish(id = "apk:$task", project = projectId, chat = selectedChat, task = task,
                         kind = "apk.upload", body = if (outcome.isSuccess) "اكتمل إرسال APK" else "تعذر رفع APK أو لم يتأكد الإرسال. استخدم مشاركة الملف من الهاتف أو أعد الطلب يدويًا.")
                 }
             }
@@ -348,9 +351,9 @@ class TelegramPollingService : Service() {
         } finally { sendMutex.unlock() }
     }
 
-    private suspend fun sendDocument(token: String, chatId: Long, file: java.io.File) {
+    private suspend fun sendDocument(token: String, chatId: Long, projectId: String, file: java.io.File) {
         require(store.linkedChatId() == chatId && file.length() in 1..49_000_000L)
-        val project = preferences.loadProjects().firstOrNull { it.id == store.lastProjectId() } ?: error("Project unavailable")
+        val project = preferences.loadProjects().firstOrNull { it.id == projectId } ?: error("Project unavailable")
         val root = java.io.File(applicationContext.filesDir, "workspaces/${project.id}")
         com.jarves.mh.connect.ProjectFilePolicy.allowedApk(root, file.path)
         val boundary = "Nova${java.util.UUID.randomUUID()}"

@@ -17,6 +17,11 @@ import org.json.JSONObject
 
 @Composable
 fun McpSettingsPanel(project: String?, agent: String) {
+    key(project, agent) { ScopedMcpSettings(project, agent) }
+}
+
+@Composable
+private fun ScopedMcpSettings(project: String?, agent: String) {
     val context=LocalContext.current
     val manager=remember { McpConnectionManager(context) }
     val scope=rememberCoroutineScope()
@@ -25,8 +30,12 @@ fun McpSettingsPanel(project: String?, agent: String) {
     var selected by remember { mutableStateOf<String?>(null) };var tools by remember { mutableStateOf<List<String>>(emptyList()) }
     var tool by remember { mutableStateOf("") };var arguments by remember { mutableStateOf("{}") }
     var pending by remember { mutableStateOf<String?>(null) };var preview by remember { mutableStateOf("") };var status by remember { mutableStateOf("") }
+    var connectGeneration by remember { mutableStateOf(0L) }
+    var confirming by remember { mutableStateOf<String?>(null) }
     val auth=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if(result.resultCode==Activity.RESULT_OK) pending?.let { id -> scope.launch {
+        val approved = confirming
+        confirming = null
+        if(result.resultCode==Activity.RESULT_OK && approved != null && approved == pending) approved.let { id -> scope.launch {
             status=withContext(Dispatchers.IO) { runCatching { manager.executeLocally(id).toString() }.getOrElse { it.message ?: "MCP failed" } }
             pending=null
         } }
@@ -42,9 +51,28 @@ fun McpSettingsPanel(project: String?, agent: String) {
                 var enabled by remember(server.id,project,agent) { mutableStateOf(manager.enabled(server.id,project,agent)) }
                 Row { Text("$project / $agent",modifier=androidx.compose.ui.Modifier.weight(1f));Switch(checked=enabled,onCheckedChange={enabled=it;manager.enable(server.id,project,agent,it)}) }
             }
-            OutlinedButton(onClick={ selected=server.id;scope.launch { status="…";status=withContext(Dispatchers.IO) {runCatching {
-                val list=manager.tools(server.id);tools=(0 until list.length()).map {list.getJSONObject(it).getString("name")};tools.joinToString("\n")
-            }.getOrElse {it.message ?: "MCP connection failed"}} } }) {Text("Connect / Tools — اتصال / الأدوات")}
+            OutlinedButton(onClick={
+                val generation = ++connectGeneration
+                selected = server.id
+                tools = emptyList()
+                tool = ""
+                arguments = "{}"
+                pending = null
+                preview = ""
+                status = "…"
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching {
+                            val list = manager.tools(server.id)
+                            (0 until list.length()).map { list.getJSONObject(it).getString("name") }
+                        }
+                    }
+                    if (connectGeneration == generation) {
+                        tools = result.getOrDefault(emptyList())
+                        status = result.fold({ it.joinToString("\n") }, { it.message ?: "MCP connection failed" })
+                    }
+                }
+            }) {Text("Connect / Tools — اتصال / الأدوات")}
         }
         if(selected!=null && project!=null && tools.isNotEmpty()) {
             OutlinedTextField(value=tool,onValueChange={tool=it},label={Text("Tool name / اسم الأداة")})
@@ -52,7 +80,7 @@ fun McpSettingsPanel(project: String?, agent: String) {
             OutlinedButton(onClick={runCatching {require(tool in tools);pending=manager.propose(selected!!,project,agent,tool,JSONObject(arguments));preview=manager.review(pending!!)}.onFailure{status=it.message.orEmpty()}}) {Text("Review / مراجعة")}
             if(pending!=null) {
                 Text(preview)
-                OutlinedButton(onClick={val intent=context.getSystemService(KeyguardManager::class.java).createConfirmDeviceCredentialIntent("Harnese Nova MCP",tool);if(intent!=null)auth.launch(intent) else status="Set a phone screen lock / فعّل قفل الهاتف"}) {Text("Authenticate and execute / تأكيد الهوية والتنفيذ")}
+                OutlinedButton(onClick={val intent=context.getSystemService(KeyguardManager::class.java).createConfirmDeviceCredentialIntent("Harnese Nova MCP",tool);if(intent!=null){confirming=pending;auth.launch(intent)} else status="Set a phone screen lock / فعّل قفل الهاتف"}) {Text("Authenticate and execute / تأكيد الهوية والتنفيذ")}
             }
         }
         Text(status)

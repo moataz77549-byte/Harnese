@@ -158,4 +158,10 @@
     <string name="ws_preview_external_blocked">La navegación externa está bloqueada en la vista previa del proyecto</string>
     <string name="ws_open_url">Abrir URL</string>
     <string name="ws_refresh_preview">Actualizar vista previa</string>
+    <string name="nova_terminal_here">Abrir terminal aquí</string>
+    <string name="nova_restore_workspace">Restaurar el espacio de trabajo</string>
+    <string name="nova_free_space">Espacio disponible: %1$s</string>
+    <string name="nova_repo_archived">Archivado</string>
+    <string name="nova_repo_writable">Permiso de escritura</string>
+    <string name="nova_repo_readonly">Solo lectura</string>
 </resources>

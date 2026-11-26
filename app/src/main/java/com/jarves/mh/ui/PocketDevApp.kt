@@ -452,6 +452,8 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onTerminalPrepare = viewModel::prepareProjectTerminalCommand,
             onTerminalDraftConsumed = viewModel::consumeProjectTerminalDraft,
             onTerminalOpened = viewModel::openProjectTerminal,
+            onTerminalAtFolder = viewModel::openTerminalAtFolder,
+            onSelectRoot = viewModel::selectProjectRoot,
             onTerminalStop = viewModel::stopProjectTerminalCommand,
             onTerminalClear = viewModel::clearProjectTerminal,
             onTerminalConfirm = viewModel::confirmProjectTerminalCommand,
@@ -4452,6 +4454,8 @@ private fun WorkspaceScreen(
     onTerminalPrepare: (String) -> Unit,
     onTerminalDraftConsumed: () -> Unit,
     onTerminalOpened: () -> Unit,
+    onTerminalAtFolder: (String) -> Boolean,
+    onSelectRoot: (String?) -> Unit,
     onTerminalStop: () -> Unit,
     onTerminalClear: () -> Unit,
     onTerminalConfirm: () -> Unit,
@@ -4855,6 +4859,9 @@ private fun WorkspaceScreen(
                     onRemoveFollowUp = onRemoveFollowUp,
                 )
                 WorkspaceTab.FILES -> FilesTab(
+                    selectedRoot = state.activeProject?.rootPath.orEmpty(),
+                    onSelectRoot = onSelectRoot,
+                    onTerminalAtFolder = { if (onTerminalAtFolder(it)) selectedTab = WorkspaceTab.TERMINAL },
                     files = state.workspaceFiles,
                     loading = state.filesLoading,
                     suggestedProjectRoot = state.suggestedProjectRoot,
@@ -5245,6 +5252,12 @@ private fun AndroidDashboardScreen(
                                                 Text("${formatFileSize(apk.sizeBytes)} · ${apk.packageName ?: stringResource(R.string.unknown_package)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                             Text(if (apk.installedMatches) stringResource(R.string.installed) else stringResource(R.string.not_installed), fontSize = 10.sp)
+                                        }
+                                        if (apk.sha256.isNotBlank()) {
+                                            TextButton(onClick = { clipboard.setText(AnnotatedString(apk.sha256)) }) {
+                                                Icon(Icons.Default.ContentCopy, null)
+                                                Text("SHA-256 · ${apk.sha256.take(12)}…")
+                                            }
                                         }
                                         if (apk.stale) {
                                             Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(8.dp)) {
@@ -5953,6 +5966,9 @@ private fun FileViewerScreen(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FilesTab(
+    selectedRoot: String,
+    onSelectRoot: (String?) -> Unit,
+    onTerminalAtFolder: (String) -> Unit,
     files: List<WorkspaceEntry>,
     loading: Boolean,
     suggestedProjectRoot: String?,
@@ -5977,7 +5993,7 @@ private fun FilesTab(
     onShareFile: (path: String) -> Unit = {},
     onSaveFileCopy: (path: String) -> Unit = {},
 ) {
-    var expandedDirectories by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var expandedDirectories by rememberSaveable(selectedRoot) { mutableStateOf(emptyList<String>()) }
     var nameDialog by remember { mutableStateOf<FileNameDialog?>(null) }
     var deleteTarget by remember { mutableStateOf<WorkspaceEntry?>(null) }
     var rootMenuOpen by remember { mutableStateOf(false) }
@@ -6042,6 +6058,10 @@ private fun FilesTab(
                                 Icon(Icons.Default.Add, stringResource(R.string.fm_new))
                             }
                             DropdownMenu(expanded = rootMenuOpen, onDismissRequest = { rootMenuOpen = false }) {
+                                DropdownMenuItem(text = { Text(stringResource(R.string.nova_terminal_here)) },
+                                    onClick = { rootMenuOpen = false; onTerminalAtFolder("") })
+                                if (selectedRoot.isNotBlank()) DropdownMenuItem(text = { Text(stringResource(R.string.nova_restore_workspace)) },
+                                    onClick = { rootMenuOpen = false; onSelectRoot(null) })
                                 FolderActionItems(
                                     onNewFile = { rootMenuOpen = false; nameDialog = FileNameDialog.Create("", isDirectory = false) },
                                     onNewFolder = { rootMenuOpen = false; nameDialog = FileNameDialog.Create("", isDirectory = true) },
@@ -6167,6 +6187,10 @@ private fun FilesTab(
                         }
                         DropdownMenu(expanded = entryMenuOpen, onDismissRequest = { entryMenuOpen = false }) {
                             if (entry.isDirectory) {
+                                DropdownMenuItem(text = { Text(stringResource(R.string.nova_terminal_here)) },
+                                    onClick = { entryMenuOpen = false; onTerminalAtFolder(entry.path) })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.ws_use_project_root, entry.name)) },
+                                    onClick = { entryMenuOpen = false; onSelectRoot(entry.path) })
                                 FolderActionItems(
                                     onNewFile = { entryMenuOpen = false; nameDialog = FileNameDialog.Create(entry.path, isDirectory = false) },
                                     onNewFolder = { entryMenuOpen = false; nameDialog = FileNameDialog.Create(entry.path, isDirectory = true) },

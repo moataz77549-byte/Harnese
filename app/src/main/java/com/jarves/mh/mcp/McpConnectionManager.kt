@@ -12,7 +12,7 @@ import org.json.JSONObject
 class McpConnectionManager(context: Context) {
     private val prefs = context.getSharedPreferences("nova_mcp", Context.MODE_PRIVATE)
     private val vault = TelegramSecretStore(context)
-    private val definitions = mutableMapOf<String, Map<String, JSONObject>>()
+    private val definitions = java.util.concurrent.ConcurrentHashMap<String, Map<String, JSONObject>>()
     private val journal = com.jarves.mh.connect.HarneseEventBus.get(context)
     data class Server(val id: String, val name: String, val endpoint: String)
     private fun profiles(): JSONObject = prefs.getString("profiles", null)?.let { JSONObject(vault.openContent(it)) } ?: JSONObject()
@@ -31,7 +31,7 @@ class McpConnectionManager(context: Context) {
         val id=UUID.randomUUID().toString()
         if (session.version == McpProtocolPolicy.MODERN) params.put("_meta",JSONObject()
             .put("io.modelcontextprotocol/protocolVersion",session.version)
-            .put("io.modelcontextprotocol/clientInfo",JSONObject().put("name","Harnese Nova").put("version","1.3.2"))
+            .put("io.modelcontextprotocol/clientInfo",JSONObject().put("name","Harnese Nova").put("version",com.jarves.mh.BuildConfig.VERSION_NAME))
             .put("io.modelcontextprotocol/clientCapabilities",JSONObject()))
         val body=JSONObject().put("jsonrpc","2.0").put("method",method).put("params",params)
         if(!notification) body.put("id",id)
@@ -51,7 +51,11 @@ class McpConnectionManager(context: Context) {
             session.id?.let { connection.setRequestProperty("Mcp-Session-Id",it) }
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             if (connection.responseCode !in 200..299) {
-                val error = runCatching { JSONObject(connection.errorStream.bufferedReader().use { it.readText().take(16000) }).optJSONObject("error") }.getOrNull()
+                val error = runCatching { JSONObject(connection.errorStream.bufferedReader().use { reader ->
+                    val buffer = CharArray(16_000)
+                    val count = reader.read(buffer)
+                    if (count <= 0) "" else String(buffer, 0, count)
+                }).optJSONObject("error") }.getOrNull()
                 throw RemoteFailure(connection.responseCode,error?.optInt("code"),error?.optJSONObject("data")?.optJSONArray("supported"))
             }
             connection.getHeaderField("Mcp-Session-Id")?.let { session.id=it }
@@ -85,19 +89,20 @@ class McpConnectionManager(context: Context) {
     private fun connect(server: String): Session {
         val json=profiles().getJSONObject(server)
         val session=Session(json.getString("endpoint"),json.optString("bearer"))
+        var legacyVersion = "2025-11-25"
         try {
             request(session,"server/discover",JSONObject())
             return session
         } catch (failure: RemoteFailure) {
             if (failure.code == -32022) {
                 val offered = failure.supported ?: throw failure
-                require((0 until offered.length()).any { offered.optString(it) in setOf("2025-11-25","2025-06-18","2025-03-26") }) { "No compatible MCP version" }
+                legacyVersion = McpProtocolPolicy.selectLegacyVersion(offered) ?: error("No compatible MCP version")
             } else if (failure.http !in setOf(400,404) && failure.code != -32601) throw failure
         }
-        session.version="2025-11-25"
+        session.version=legacyVersion
         session.id=null
         val result=request(session,"initialize",JSONObject().put("protocolVersion",session.version).put("capabilities",JSONObject())
-            .put("clientInfo",JSONObject().put("name","Harnese Nova").put("version","1.3.2")))
+            .put("clientInfo",JSONObject().put("name","Harnese Nova").put("version",com.jarves.mh.BuildConfig.VERSION_NAME)))
         val version=result.getString("protocolVersion")
         require(version in setOf("2025-03-26","2025-06-18","2025-11-25")) { "MCP protocol $version requires a newer transport" }
         session.version=version
@@ -107,14 +112,18 @@ class McpConnectionManager(context: Context) {
     fun tools(server: String): JSONArray = listTools(server,connect(server))
     private fun listTools(server: String, session: Session): JSONArray {
         val tools=JSONArray();var cursor: String?=null
+        val cursors = mutableSetOf<String>()
+        val names = mutableSetOf<String>()
         repeat(10) {
             val params=JSONObject();cursor?.let { params.put("cursor",it) }
             val result=request(session,"tools/list",params);val page=result.getJSONArray("tools")
             for(i in 0 until page.length()) {
                 val tool=page.getJSONObject(i)
+                require(names.add(tool.getString("name"))) { "Duplicate MCP tool name" }
                 if (runCatching { McpProtocolPolicy.mirroredHeaders(tool.getJSONObject("inputSchema"),JSONObject()) }.isSuccess) tools.put(tool)
             }
-            cursor=result.optString("nextCursor").takeIf { it.isNotBlank() }
+            cursor=if (result.isNull("nextCursor")) null else result.getString("nextCursor").takeIf { it.isNotBlank() }
+            cursor?.let { check(cursors.add(it)) { "Repeated MCP pagination cursor" } }
             if(cursor==null) {
                 definitions[server]=(0 until tools.length()).map { tools.getJSONObject(it) }.associateBy { it.getString("name") }
                 return tools
@@ -147,7 +156,8 @@ class McpConnectionManager(context: Context) {
             require(McpProtocolPolicy.fingerprint(definition)==json.getString("toolDefinitionHash")) { "Tool definition changed; review again" }
             val headers=McpProtocolPolicy.mirroredHeaders(definition.getJSONObject("inputSchema"),json.getJSONObject("arguments"))
             val result=request(session,"tools/call",JSONObject().put("name",json.getString("tool")).put("arguments",json.getJSONObject("arguments")),extraHeaders=headers)
-            prefs.edit().putString("audit:$id","completed").commit();return result
+            prefs.edit().putString("audit:$id", if (result.optBoolean("isError")) "tool_error" else "completed").commit()
+            return result
         } catch(error: Exception) { prefs.edit().putString("audit:$id","failed_or_uncertain").commit();throw error }
     }
 }

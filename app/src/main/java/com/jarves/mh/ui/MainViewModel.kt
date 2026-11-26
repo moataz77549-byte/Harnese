@@ -827,6 +827,18 @@ class HarneseRuntimeController(private val application: Application) {
         _state.update { it.copy(projectTerminalCwd = cwd) }
     }
 
+    fun openTerminalAtFolder(relative: String): Boolean {
+        val current = _state.value
+        val project = current.activeProject ?: return false
+        if (current.projectTerminalRunning || current.androidBuildRunning) return false
+        val dir = safeWorkspaceDirectory(project, relative) ?: return false
+        val path = dir.relativeTo(projectWorkspaceRoot(project)).invariantSeparatorsPath
+        val cwd = projectGuestRoot(project) + if (path.isEmpty()) "" else "/$path"
+        _state.update { it.copy(projectTerminalCwd = cwd, projectTerminalDraft = null, pendingTerminalCommand = null) }
+        saveProjectTerminal(project.id, cwd, current.projectTerminalLines)
+        return true
+    }
+
     fun confirmProjectTerminalCommand() {
         val command = _state.value.pendingTerminalCommand ?: return
         _state.update { it.copy(pendingTerminalCommand = null) }
@@ -1758,6 +1770,7 @@ class HarneseRuntimeController(private val application: Application) {
                     path = apk.absolutePath,
                     fileName = apk.name,
                     sizeBytes = apk.length(),
+                    sha256 = fingerprint(apk),
                     builtAtMillis = apk.lastModified(),
                     packageName = packageName,
                     versionName = archive?.versionName,
@@ -1771,7 +1784,10 @@ class HarneseRuntimeController(private val application: Application) {
                     installedMatches = AndroidAppInstaller.installedMatches(app, apk),
                 )
             }.getOrNull()
-            _state.update { it.copy(androidApkInfo = info) }
+            _state.update { current ->
+                if (current.activeProject?.id == project.id && current.activeProject.rootPath == project.rootPath)
+                    current.copy(androidApkInfo = info) else current
+            }
         }
     }
 
@@ -1913,7 +1929,10 @@ class HarneseRuntimeController(private val application: Application) {
                 when { apk == null -> str(R.string.an_health_apk_missing); isDebugApkStale(root, apk) -> str(R.string.an_health_apk_stale); else -> str(R.string.an_health_apk_ok) },
                 when { apk == null -> AndroidHealthStatus.WARNING; isDebugApkStale(root, apk) -> AndroidHealthStatus.WARNING; else -> AndroidHealthStatus.PASSED },
             )
-            _state.update { it.copy(androidHealthRunning = false, androidHealthChecks = checks) }
+            _state.update { current ->
+                if (current.activeProject?.id == project.id && current.activeProject.rootPath == project.rootPath)
+                    current.copy(androidHealthRunning = false, androidHealthChecks = checks) else current
+            }
         }
     }
 
@@ -3328,6 +3347,9 @@ class HarneseRuntimeController(private val application: Application) {
                 previewUrl = null,
                 pendingAttachments = emptyList(),
                 androidBuildRunning = false,
+                androidApkInfo = null,
+                androidHealthRunning = false,
+                androidHealthChecks = emptyList(),
                 androidBuildPhase = androidBuild.phase,
                 androidBuildAction = androidBuild.action,
                 androidBuildStage = androidBuild.stage,
@@ -4179,10 +4201,18 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     fun useSuggestedProjectRoot() {
+        selectProjectRoot(_state.value.suggestedProjectRoot ?: return)
+    }
+
+    fun selectProjectRoot(relative: String?) {
         val current = _state.value
         val project = current.activeProject ?: return
-        val root = current.suggestedProjectRoot ?: return
-        if (current.isRunning || current.projectTerminalRunning) return
+        if (current.isRunning || runtimeRequestInFlight || current.projectTerminalRunning ||
+            current.androidBuildRunning || current.runtimeProbeRunning || current.openedFile?.dirty == true) return
+        val original = File(getApplication<Application>().filesDir, "workspaces/${project.id}").canonicalFile
+        val folder = if (relative == null) original else safeWorkspaceDirectory(project, relative) ?: return
+        val root = folder.relativeTo(original).invariantSeparatorsPath
+        if (root == project.rootPath) return
         val updated = project.copy(rootPath = root)
         configureBridgeRoots(updated.id, updated.rootPath)
         val projects = current.projects.map { if (it.id == updated.id) updated else it }
@@ -4193,13 +4223,21 @@ class HarneseRuntimeController(private val application: Application) {
             it.copy(
                 projects = projects,
                 activeProject = updated,
+                openedFile = null,
+                workspaceFiles = emptyList(),
+                androidApkInfo = null,
+                androidProjectDetected = false,
+                androidHealthChecks = emptyList(),
+                androidHealthRunning = false,
+                pendingTerminalCommand = null,
+                projectTerminalDraft = null,
                 suggestedProjectRoot = null,
                 projectFacts = null,
                 projectRepositoryStatus = null,
                 projectRepositoryChecking = false,
                 projectTerminalCwd = guestRoot,
                 changes = emptyList(),
-                toastMessage = str(R.string.vm_project_root_set, root),
+                toastMessage = str(R.string.vm_project_root_set, root.ifBlank { "." }),
             )
         }
         refreshProjectFiles()
@@ -4376,13 +4414,19 @@ class HarneseRuntimeController(private val application: Application) {
         runtimeScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val response = runGitHubCli(listOf("api", "repos/$repo", "--jq", "{full_name: .full_name, default_branch: .default_branch, archived: .archived}"))
-                    if (response.exitCode != 0) error(githubLoadError(response.failure()))
+                    val response = runGitHubCli(listOf("api", "repos/$repo", "--jq", "{full_name: .full_name, default_branch: .default_branch, archived: .archived, push: .permissions.push}"))
+                    if (response.exitCode != 0 || response.timedOut) error(githubLoadError(response.failure()))
                     val metadata = JSONObject(response.stdout)
                     val name = metadata.getString("full_name")
                     val branch = metadata.getString("default_branch")
                     check(name.equals(repo, ignoreCase = true)) { str(R.string.vm_github_invalid_response) }
-                    str(R.string.vm_project_repo_verified, name, branch)
+                    val access = when {
+                        metadata.optBoolean("archived") -> str(R.string.nova_repo_archived)
+                        metadata.isNull("push") -> null
+                        metadata.optBoolean("push") -> str(R.string.nova_repo_writable)
+                        else -> str(R.string.nova_repo_readonly)
+                    }
+                    listOfNotNull(str(R.string.vm_project_repo_verified, name, branch), access).joinToString(" · ")
                 }
             }
             if (_state.value.activeProject?.id == project.id &&
@@ -4390,7 +4434,7 @@ class HarneseRuntimeController(private val application: Application) {
                 _state.value.githubLogin == snapshot.githubLogin && _state.value.githubAuthStatus == GitHubAuthStatus.CONNECTED
             ) {
                 _state.update {
-                    it.copy(projectRepositoryChecking = false, projectRepositoryStatus = result.getOrElse { str(R.string.vm_project_repo_check_failed) })
+                    it.copy(projectRepositoryChecking = false, projectRepositoryStatus = result.getOrElse { if (it is IllegalStateException) it.message ?: str(R.string.vm_project_repo_check_failed) else str(R.string.vm_project_repo_check_failed) })
                 }
             }
         }
@@ -4398,21 +4442,19 @@ class HarneseRuntimeController(private val application: Application) {
 
     fun loadProjectDirectory(relativePath: String) {
         val project = _state.value.activeProject ?: return
-        val existingEntries = _state.value.workspaceFiles
         runtimeScope.launch {
-            val (children, updatedEntries) = withContext(Dispatchers.IO) {
-                val loadedChildren = readWorkspaceDirectory(project, relativePath)
-                val prefix = relativePath.trim('/').let { if (it.isBlank()) "" else "$it/" }
-                val retained = existingEntries.filterNot { entry ->
-                    entry.path.startsWith(prefix) && entry.path.removePrefix(prefix).let { !it.contains('/') }
+            val children = withContext(Dispatchers.IO) { readWorkspaceDirectory(project, relativePath) }
+            if (_state.value.activeProject?.id != project.id || _state.value.activeProject?.rootPath != project.rootPath) return@launch
+            val prefix = relativePath.trim('/').let { if (it.isBlank()) "" else "$it/" }
+            _state.update { current ->
+                val retained = current.workspaceFiles.filterNot { entry ->
+                    entry.path.startsWith(prefix) && '/' !in entry.path.removePrefix(prefix)
                 }
-                val sorted = sortWorkspaceEntries((retained + loadedChildren).distinctBy { it.path }).map { entry ->
-                    if (entry.path == relativePath) entry.copy(childCount = loadedChildren.size) else entry
+                val merged = sortWorkspaceEntries((retained + children).distinctBy { it.path }).map { entry ->
+                    if (entry.path == relativePath) entry.copy(childCount = children.size) else entry
                 }
-                loadedChildren to sorted
+                current.copy(workspaceFiles = merged)
             }
-            if (_state.value.activeProject?.id != project.id) return@launch
-            _state.update { current -> current.copy(workspaceFiles = updatedEntries) }
             updateFolderMetadata(project, relativePath, children.size)
             loadMissingFolderCounts(project, children)
         }
@@ -4450,7 +4492,7 @@ class HarneseRuntimeController(private val application: Application) {
                                 draft = content,
                                 loading = false,
                                 readOnlyReason = FileReadOnlyReason.TOO_LARGE.takeIf { tooLarge },
-                                originalFingerprint = if (tooLarge) null else fingerprint(file),
+                                originalFingerprint = if (tooLarge) null else MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) },
                                 lineEnding = if (decoded.contains("\r\n")) "\r\n" else "\n",
                                 hadTrailingNewline = decoded.endsWith("\n") || decoded.endsWith("\r"),
                             )
@@ -4460,7 +4502,8 @@ class HarneseRuntimeController(private val application: Application) {
                     OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.READ_ERROR)
                 }
             }
-            if (_state.value.openedFile?.path == path) {
+            if (_state.value.activeProject?.id == project.id && _state.value.activeProject?.rootPath == project.rootPath &&
+                _state.value.openedFile?.path == path && _state.value.openedFile?.editing == false) {
                 _state.update { it.copy(openedFile = loaded.copy(targetLine = targetLine, targetColumn = targetColumn)) }
             }
         }
@@ -4518,7 +4561,6 @@ class HarneseRuntimeController(private val application: Application) {
                         return@runCatching false
                     }
                     var normalized = opened.draft.replace("\r\n", "\n").replace('\r', '\n')
-                    normalized = normalized.trimEnd('\n') + if (opened.hadTrailingNewline) "\n" else ""
                     if (opened.lineEnding == "\r\n") normalized = normalized.replace("\n", "\r\n")
                     val temporary = File(file.parentFile, ".${file.name}.${UUID.randomUUID()}.tmp")
                     try {
@@ -4538,6 +4580,9 @@ class HarneseRuntimeController(private val application: Application) {
                     true
                 }
             }
+            val visible = _state.value
+            if (visible.activeProject?.id != project.id || visible.activeProject?.rootPath != project.rootPath ||
+                visible.openedFile?.path != opened.path || visible.openedFile?.saving != true) return@launch
             when {
                 result.getOrNull() == false -> _state.update {
                     it.copy(openedFile = it.openedFile?.copy(saving = false, conflict = true))
@@ -4545,6 +4590,7 @@ class HarneseRuntimeController(private val application: Application) {
                 result.isSuccess -> {
                     _state.update { it.copy(toastMessage = str(R.string.file_saved)) }
                     invalidateFolderMetadata(project.id, listOf(opened.path))
+                    _state.update { it.copy(openedFile = OpenedFileState(path = opened.path)) }
                     refreshProjectFiles()
                     loadOpenedFile(project, opened.path)
                 }
@@ -5854,7 +5900,7 @@ class HarneseRuntimeController(private val application: Application) {
      * Centralized command processing: all project/chat mutations run on the
      * Main dispatcher and use the same rules as the Android UI.
      */
-    private fun executeIntegrationCommand(command: HarneseCommand): HarneseCommandResult {
+    private suspend fun executeIntegrationCommand(command: HarneseCommand): HarneseCommandResult {
         fun findProject(projectId: String): Project? =
             _state.value.projects.firstOrNull { it.id == projectId }
         fun busy(): Boolean = _state.value.runtimeProbeRunning || _state.value.isRunning || runtimeRequestInFlight ||
@@ -5914,16 +5960,23 @@ class HarneseRuntimeController(private val application: Application) {
                     }
                     "buildlog" -> {
                         if (project == null) return HarneseCommandResult.error("اختر مشروعًا أولًا.")
-                        val file = androidBuildRecordFile(project.id)
-                        if (!file.isFile) "لا يوجد سجل بناء" else JSONObject(file.readText()).optString("log").takeLast(14000)
+                        val log = if (s.activeProject?.id == project.id && s.androidBuildRunning) s.androidBuildLog
+                            else withContext(Dispatchers.IO) { loadAndroidBuildRecord(project.id).log }
+                        log.takeLast(14000).ifBlank { "لا يوجد سجل بناء لهذا المشروع." }
                     }
                     "apk" -> {
                         if (project == null) return HarneseCommandResult.error("اختر مشروعًا أولًا.")
                         val record = loadAndroidBuildRecord(project.id)
                         if (command.argument == "send") {
+                            if ((s.activeProject?.id == project.id && s.androidBuildRunning) || record.phase != AndroidBuildPhase.SUCCEEDED)
+                                return HarneseCommandResult.error("لم يكتمل بناء ناجح لهذا المشروع.")
                             val path = record.apkPath ?: return HarneseCommandResult.error("لا يوجد APK محفوظ.")
                             val apk = com.jarves.mh.connect.ProjectFilePolicy.allowedApk(projectWorkspaceRoot(project), path)
-                            return HarneseCommandResult(true, "APK: ${apk.name} (${apk.length()} bytes)", apk.path)
+                            val digest = withContext(Dispatchers.IO) {
+                                val root = findAndroidProjectRoot(projectWorkspaceRoot(project))
+                                if (root == null || findReusableDebugApk(root)?.canonicalFile != apk.canonicalFile) null else fingerprint(apk)
+                            } ?: return HarneseCommandResult.error("تغيرت ملفات المشروع أو مخرجاته. أعد البناء قبل الإرسال.")
+                            return HarneseCommandResult(true, "${project.name} · ${apk.name} (${apk.length()} bytes)\nSHA-256: $digest", apk.path)
                         }
                         "آخر بناء: ${record.phase}\n${record.message.orEmpty()}\n/apk send — إرسال الملف إن سمح حجمه."
                     }

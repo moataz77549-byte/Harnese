@@ -158,4 +158,10 @@
     <string name="ws_preview_external_blocked">项目预览中已阻止外部导航</string>
     <string name="ws_open_url">打开网址</string>
     <string name="ws_refresh_preview">刷新预览</string>
+    <string name="nova_terminal_here">在此处打开终端</string>
+    <string name="nova_restore_workspace">恢复完整工作区</string>
+    <string name="nova_free_space">可用空间：%1$s</string>
+    <string name="nova_repo_archived">已归档</string>
+    <string name="nova_repo_writable">有推送权限</string>
+    <string name="nova_repo_readonly">只读权限</string>
 </resources>

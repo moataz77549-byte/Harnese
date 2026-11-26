@@ -158,4 +158,10 @@
     <string name="ws_preview_external_blocked">التنقل الخارجي محظور في معاينة المشروع</string>
     <string name="ws_open_url">فتح الرابط</string>
     <string name="ws_refresh_preview">تحديث المعاينة</string>
+    <string name="nova_terminal_here">فتح الطرفية هنا</string>
+    <string name="nova_restore_workspace">العودة إلى مجلد المشروع الكامل</string>
+    <string name="nova_free_space">المساحة المتاحة %1$s</string>
+    <string name="nova_repo_archived">مستودع مؤرشف</string>
+    <string name="nova_repo_writable">الحساب يملك صلاحية الدفع</string>
+    <string name="nova_repo_readonly">صلاحية قراءة فقط</string>
 </resources>

@@ -158,4 +158,10 @@
     <string name="ws_preview_external_blocked">प्रोजेक्ट प्रीव्यू में बाहरी नेविगेशन अवरुद्ध है</string>
     <string name="ws_open_url">URL खोलें</string>
     <string name="ws_refresh_preview">प्रीव्यू रीफ़्रेश करें</string>
+    <string name="nova_terminal_here">यहाँ टर्मिनल खोलें</string>
+    <string name="nova_restore_workspace">पूरा कार्यक्षेत्र खोलें</string>
+    <string name="nova_free_space">उपलब्ध स्थान: %1$s</string>
+    <string name="nova_repo_archived">संग्रहित</string>
+    <string name="nova_repo_writable">पुश की अनुमति है</string>
+    <string name="nova_repo_readonly">केवल पढ़ने की अनुमति</string>
 </resources>
