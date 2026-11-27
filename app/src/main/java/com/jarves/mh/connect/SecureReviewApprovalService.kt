@@ -116,6 +116,10 @@ class SecureReviewApprovalService(private val directory: File) {
     }
     fun records(): List<Review> = directory.listFiles().orEmpty().mapNotNull { runCatching { read(it.name) }.getOrNull() }
     fun pending(): List<Review> = records().filter { it.state == "pending" }
+    fun matchesWorkspace(id: String, project: String, original: File): Boolean = runCatching {
+        val json = JSONObject(metadata(id).readText())
+        json.getString("project") == project && File(json.getString("original")).canonicalFile == original.canonicalFile && original.isDirectory
+    }.getOrDefault(false)
     fun preview(id: String): String {
         val json = JSONObject(metadata(id).readText())
         val original = File(json.getString("original"))

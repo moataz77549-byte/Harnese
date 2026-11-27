@@ -348,6 +348,7 @@ class AntigravityRuntimeBridge(
             return@withContext sessionId
         }
 
+        var unfinishedStage: String? = null
         runCatching {
             RuntimeTaskController.stopAction = {
                 userStopRequested = true
@@ -357,7 +358,8 @@ class AntigravityRuntimeBridge(
             pushForegroundProgress(R.string.rt_bridge_starting, "Antigravity")
             val installed = installer.installedRuntime()
             val originalWorkspace = checkpoints.ensureWorkspace(projectId)
-            val stagedRun = reviews.stage(projectId, originalWorkspace)
+            val stagedRun = reviews.stage(projectId, originalWorkspace, protectSensitive = true)
+            unfinishedStage = stagedRun.id
             val workspace = stagedRun.workspace
             checkpoints.createCheckpoint(projectId, originalWorkspace)
             val resumedConversation = conversationId(projectId)
@@ -455,6 +457,9 @@ class AntigravityRuntimeBridge(
                 }
             }
             outputLoop@ while (process.isAlive || native.outputFile.length() > offset) {
+                check(!userStopRequested) { "Stopped by user" }
+                check(native.outputFile.length() <= 32L * 1024 * 1024) { "Antigravity output exceeded its safe limit" }
+                check(System.currentTimeMillis() - sessionStartedAtMillis < 45L * 60 * 1000) { "Antigravity task timed out" }
                 val available = native.outputFile.length() - offset
                 if (available <= 0) {
                     val now = System.currentTimeMillis()
@@ -505,6 +510,7 @@ class AntigravityRuntimeBridge(
                 }
             }
             val stagedReview = reviews.finish(stagedRun.id)
+            unfinishedStage = null
             if (stagedReview.entries.isNotEmpty()) {
                 journal.publish(
                     id = "review:${stagedRun.id}", project = projectId, chat = "", task = sessionId,
@@ -524,6 +530,15 @@ class AntigravityRuntimeBridge(
             emitCompleted(sessionId)
             finishForegroundRuntime(true, projectSlug, AppStrings.get(context, R.string.rt_bridge_finished_in, "Antigravity", projectSlug))
         }.onFailure {
+            activeProcess?.let { if (it.isAlive) stopAfterTerminalResult(it) }
+            unfinishedStage?.let { stageId ->
+                runCatching { reviews.finish(stageId) }.getOrNull()?.takeIf { it.entries.isNotEmpty() }?.let { partial ->
+                    journal.publish(id = "review:${partial.id}", project = projectId, chat = "", task = sessionId,
+                        kind = "review.pending", body = "Interrupted task: ${partial.entries.size} staged files require local review; nothing was applied.")
+                    emitEvent(RuntimeEvent.FilesChanged(sessionId, partial.entries.map { ChangeItem(it.path, 0, 0) }))
+                    emitEvent(RuntimeEvent.AssistantDelta(sessionId, "\nAWAITING_APPROVAL — recovered staged files from interrupted task; review before applying."))
+                }
+            }
             val diagnostic = recentAntigravityDiagnostic(sessionStartedAtMillis)
             val message = if (userStopRequested) {
                 "Stopped by user"

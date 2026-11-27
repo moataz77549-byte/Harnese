@@ -93,6 +93,8 @@ fun WorkspaceSecureReviewPanel(projectId: String?, busy: Boolean) {
     var applying by remember { mutableStateOf(false) }
     val currentProject by rememberUpdatedState(projectId)
     val currentBusy by rememberUpdatedState(busy)
+    val runtimeState by runtime.state.collectAsState()
+    val selectedRoot by rememberUpdatedState(runtimeState.activeProject?.rootPath.orEmpty())
     suspend fun refresh() {
         records = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { service.records().filter { it.project == currentProject }.sortedByDescending { it.expires } }
     }
@@ -107,7 +109,9 @@ fun WorkspaceSecureReviewPanel(projectId: String?, busy: Boolean) {
             scope.launch {
                 try {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        check(!currentBusy && service.read(id).project == currentProject) { "Project changed or busy" }
+                        val project = currentProject ?: error("No active project")
+                        val root = com.jarves.mh.runtime.AuthoritativeWorkspace.resolve(context.filesDir, project, selectedRoot)
+                        check(!currentBusy && service.matchesWorkspace(id, project, root)) { "Project root changed or busy" }
                         service.applyLocally(id, approvedPaths)
                     }
                     message = "VERIFIED — تم تطبيق التعديلات والتحقق من الملفات"

@@ -30,12 +30,7 @@ class WorkspaceCheckpoints(
     private val projectRoots = ConcurrentHashMap<String, String>()
 
     fun ensureWorkspace(projectId: String): File {
-        val base = File(filesDir, "workspaces/$projectId").apply { mkdirs() }.canonicalFile
-        val rootPath = projectRoots[projectId].orEmpty()
-        if (rootPath.isBlank()) return base
-        val selected = File(base, rootPath).canonicalFile
-        require(selected.toPath().startsWith(base.toPath())) { "Unsafe project root" }
-        return selected.apply { mkdirs() }
+        return AuthoritativeWorkspace.resolve(filesDir, projectId, projectRoots[projectId].orEmpty())
     }
 
     fun configureProjectRoot(projectId: String, rootPath: String) {

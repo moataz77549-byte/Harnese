@@ -150,7 +150,14 @@ class CodexRuntimeBridge(context: Context) : RuntimeBridge {
             }
             emit(RuntimeEvent.SessionCompleted(id))
         } catch (error: Throwable) {
-            staged?.let { runCatching { reviews.abandon(it.id) } }
+            process?.let { if (it.isAlive) { it.destroyForcibly(); runCatching { it.waitFor() } } }
+            staged?.let { stage ->
+                runCatching { reviews.finish(stage.id) }.getOrNull()?.takeIf { it.entries.isNotEmpty() }?.let { partial ->
+                    journal.publish(id = "review:${partial.id}", project = projectId, chat = "", task = id,
+                        kind = "review.pending", body = "Interrupted Codex task: ${partial.entries.size} staged files require local review.")
+                    emit(RuntimeEvent.AssistantDelta(id, "\nAWAITING_APPROVAL — interrupted task files retained for local review."))
+                }
+            }
             emit(RuntimeEvent.SessionFailed(id, if (stopped) "Stopped by user" else error.message?.take(240).orEmpty().ifBlank { "Codex session failed" }))
         } finally {
             process?.let { if (it.isAlive) it.destroyForcibly() }

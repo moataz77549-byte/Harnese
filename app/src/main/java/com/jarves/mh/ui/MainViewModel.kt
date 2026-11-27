@@ -820,8 +820,12 @@ class HarneseRuntimeController(private val application: Application) {
     fun openProjectTerminal() {
         val project = _state.value.activeProject ?: return
         if (_state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
+        val root = runCatching { projectWorkspaceRoot(project) }.getOrElse {
+            _state.update { state -> state.copy(toastMessage = str(R.string.vm_project_unavailable)) }
+            return
+        }
         val cwd = ProjectWorkspaceInspector.existingGuestDirectory(
-            projectWorkspaceRoot(project), projectGuestRoot(project), _state.value.projectTerminalCwd,
+            root, projectGuestRoot(project), _state.value.projectTerminalCwd,
         )
         _state.update { it.copy(projectTerminalCwd = cwd) }
     }
@@ -830,7 +834,7 @@ class HarneseRuntimeController(private val application: Application) {
         val current = _state.value
         val project = current.activeProject ?: return false
         if (current.projectTerminalRunning || current.androidBuildRunning) return false
-        val dir = safeWorkspaceDirectory(project, relative) ?: return false
+        val dir = runCatching { safeWorkspaceDirectory(project, relative) }.getOrNull() ?: return false
         val path = dir.relativeTo(projectWorkspaceRoot(project)).invariantSeparatorsPath
         val cwd = projectGuestRoot(project) + if (path.isEmpty()) "" else "/$path"
         _state.update { it.copy(projectTerminalCwd = cwd, projectTerminalDraft = null, pendingTerminalCommand = null) }
@@ -1261,13 +1265,7 @@ class HarneseRuntimeController(private val application: Application) {
     private fun projectGuestRoot(project: Project): String = "/workspace/${project.slug}"
 
     private fun projectWorkspaceRoot(project: Project): File {
-        val base = File(getApplication<Application>().filesDir, "workspaces/${project.id}")
-            .apply { mkdirs() }
-            .canonicalFile
-        if (project.rootPath.isBlank()) return base
-        val selected = File(base, project.rootPath).canonicalFile
-        require(selected.toPath().startsWith(base.toPath())) { str(R.string.vm_unsafe_project_root) }
-        return selected.apply { mkdirs() }
+        return com.jarves.mh.runtime.AuthoritativeWorkspace.resolve(getApplication<Application>().filesDir, project.id, project.rootPath)
     }
 
     fun buildAndRunAndroidApp() {
@@ -3292,6 +3290,10 @@ class HarneseRuntimeController(private val application: Application) {
             }
             return
         }
+        if (runCatching { projectWorkspaceRoot(project) }.isFailure) {
+            _state.update { it.copy(toastMessage = str(R.string.vm_project_unavailable)) }
+            return
+        }
         // Older releases stored imported repositories as quick chats. Promote real
         // workspaces without changing the selected root or deleting any files.
         if (project.kind == ProjectKind.QUICK_PROJECT &&
@@ -3643,6 +3645,7 @@ class HarneseRuntimeController(private val application: Application) {
         val availableLimit = (destination.usableSpace * 8L / 10L).coerceAtMost(MAX_IMPORTED_PROJECT_BYTES)
         var extractedBytes = 0L
         var entries = 0
+        val seenPaths = mutableSetOf<String>()
         try {
             val source = resolver.openInputStream(uri) ?: error(str(R.string.vm_zip_open_failed))
             source.buffered().use { input ->
@@ -3651,7 +3654,11 @@ class HarneseRuntimeController(private val application: Application) {
                         val entry = zip.nextEntry ?: break
                         entries++
                         require(entries <= MAX_IMPORTED_ZIP_ENTRIES) { str(R.string.vm_zip_too_many_files) }
-                        val entryName = entry.name.replace('\\', '/').trimStart('/')
+                        val entryName = entry.name.replace('\\', '/').trimEnd('/')
+                        require(entryName.isNotBlank() && !entryName.startsWith('/') &&
+                            !Regex("^[A-Za-z]:").containsMatchIn(entryName) &&
+                            entryName.split('/').none { it.isBlank() || it == "." || it == ".." }) { str(R.string.vm_zip_unsafe_path) }
+                        require(seenPaths.add(entryName)) { "Duplicate ZIP path: $entryName" }
                         require(entryName.isNotBlank() && '\u0000' !in entryName) { str(R.string.vm_zip_invalid_path) }
                         if (entryName.startsWith("__MACOSX/") || entryName.endsWith("/.DS_Store") || entryName == ".DS_Store") {
                             zip.closeEntry()
@@ -3662,6 +3669,7 @@ class HarneseRuntimeController(private val application: Application) {
                         if (entry.isDirectory) {
                             target.mkdirs()
                         } else {
+                            require(!target.exists()) { "ZIP path already exists: $entryName" }
                             target.parentFile?.mkdirs()
                             target.outputStream().buffered().use { output ->
                                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -4291,6 +4299,7 @@ class HarneseRuntimeController(private val application: Application) {
                                         val relative = directory.relativeTo(root).invariantSeparatorsPath
                                         selection.canContainIncluded(relative) &&
                                             !isClaudeRuntimeMetadata(relative) &&
+                                            !com.jarves.mh.runtime.isPrivateProjectExportPath(relative) &&
                                             !Files.isSymbolicLink(directory.toPath()) &&
                                             runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
                                     }
@@ -4300,6 +4309,7 @@ class HarneseRuntimeController(private val application: Application) {
                                     !Files.isSymbolicLink(file.toPath()) &&
                                         runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false) &&
                                         !isClaudeRuntimeMetadata(file.relativeTo(root).invariantSeparatorsPath) &&
+                                        !com.jarves.mh.runtime.isPrivateProjectExportPath(file.relativeTo(root).invariantSeparatorsPath) &&
                                         if (file.isDirectory) {
                                             selection.canContainIncluded(file.relativeTo(root).invariantSeparatorsPath)
                                         } else {
