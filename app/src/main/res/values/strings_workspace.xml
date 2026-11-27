@@ -178,4 +178,23 @@
     <string name="nova_replace_all">Replace all</string>
     <string name="nova_portable_backup">Project and chat backup</string>
     <string name="nova_backup_detail">Export a ZIP with project files, chat history and drafts. Known private credential paths are excluded. Keep this file private. Import it as a new project.</string>
+    <string name="nova_build_release_apk">Build Release APK</string>
+    <string name="nova_build_bundle">Build Android App Bundle (AAB)</string>
+    <string name="nova_no_release_artifact">No valid Release artifact was found. Check the build output.</string>
+    <string name="nova_release_built">Release artifact was produced.</string>
+    <string name="nova_release_artifact">Release artifact</string>
+    <string name="nova_release_signing_detail">Signing uses the Gradle project signing configuration. Check the certificate before distributing.</string>
+    <string name="nova_artifact_saved">Artifact saved.</string>
+    <string name="nova_release_cert">APK certificate: %1$s</string>
+    <string name="nova_release_cert_unknown">Certificate not verified</string>
+    <string name="nova_project_search">Search projects</string>
+    <string name="nova_all_projects">All projects</string>
+    <string name="nova_project_count">Projects: %1$d</string>
+    <string name="nova_project_no_matches">No matching projects</string>
+    <string name="nova_project_content_search">Search text across project</string>
+    <string name="nova_search_action">Search</string>
+    <string name="nova_project_count_matches">Matches: %1$d</string>
+    <string name="nova_search_limited">Search limit reached</string>
+    <string name="nova_git_status">Local Git status</string>
+    <string name="nova_git_clean">Working tree is clean.</string>
 </resources>

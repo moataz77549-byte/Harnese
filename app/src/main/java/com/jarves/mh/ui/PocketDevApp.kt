@@ -437,6 +437,10 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onSaveWorkspaceFileCopy = viewModel::saveWorkspaceFileCopy,
             onOpenFile = viewModel::openFile,
             onOpenEditorTab = viewModel::openEditorTab,
+            onSearchProjectText = viewModel::searchProjectText,
+            onRefreshLocalGit = viewModel::refreshLocalGitStatus,
+            onClearProjectSearch = viewModel::clearProjectSearch,
+            onOpenProjectSearchHit = viewModel::openProjectSearchHit,
             onBrowseEditorFiles = viewModel::browseEditorFiles,
             onSwitchTerminalSlot = viewModel::switchTerminalSlot,
             onCloseFile = viewModel::closeFile,
@@ -474,6 +478,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onRefreshAndroidDashboard = viewModel::refreshAndroidDashboard,
             onShareAndroidApk = viewModel::shareAndroidApk,
             onSaveAndroidApk = viewModel::saveAndroidApk,
+            onSaveLastReleaseArtifact = viewModel::saveLastReleaseArtifact,
             onOpenAndroidAppDetails = viewModel::openInstalledAndroidAppDetails,
             onUninstallAndroidApp = viewModel::uninstallAndroidApp,
             onOpenAndroidIssue = viewModel::openAndroidIssue,
@@ -3641,7 +3646,14 @@ private fun ProjectsScreen(
     var repositorySearch by rememberSaveable { mutableStateOf("") }
     var name by rememberSaveable { mutableStateOf("") }
     var androidTemplate by rememberSaveable { mutableStateOf<AndroidTemplate?>(null) }
-    val projects = state.projects
+    var projectSearch by rememberSaveable { mutableStateOf("") }
+    var androidOnly by rememberSaveable { mutableStateOf(false) }
+    val projects = remember(state.projects, projectSearch, androidOnly) {
+        state.projects.filter { project ->
+            (!androidOnly || project.type == ProjectType.ANDROID) &&
+                (projectSearch.isBlank() || listOf(project.name, project.language, project.description).any { it.contains(projectSearch.trim(), true) })
+        }.sortedByDescending { it.updatedAtMillis }
+    }
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         onInstallUpdate()
@@ -3656,7 +3668,7 @@ private fun ProjectsScreen(
         topBar = {
             TopAppBar(
                 modifier = Modifier.padding(top = 8.dp),
-                title = { Row(verticalAlignment = Alignment.CenterVertically) { BrandMark(compact = true); Spacer(Modifier.width(9.dp)); Text("Mobile Harness", fontWeight = FontWeight.Bold) } },
+                title = { Row(verticalAlignment = Alignment.CenterVertically) { BrandMark(compact = true); Spacer(Modifier.width(9.dp)); Text("Harnese Nova", fontWeight = FontWeight.Bold) } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
@@ -3822,7 +3834,7 @@ private fun ProjectsScreen(
                             }
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("Mobile Harness ${update.versionName}", fontWeight = FontWeight.Bold)
+                                Text("Harnese Nova ${update.versionName}", fontWeight = FontWeight.Bold)
                                 Text(stringResource(R.string.ws_update_ready), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Text(stringResource(R.string.ws_update), color = PocketOrange, fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -3831,7 +3843,24 @@ private fun ProjectsScreen(
                 }
             }
             item { Text(stringResource(R.string.projects_your_projects), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
-            if (projects.isEmpty()) {
+            if (state.projects.isNotEmpty()) {
+                item {
+                    OutlinedTextField(value = projectSearch, onValueChange = { projectSearch = it },
+                        modifier = Modifier.fillMaxWidth(), singleLine = true,
+                        label = { Text(stringResource(R.string.nova_project_search)) },
+                        leadingIcon = { Icon(Icons.Default.Search, null) })
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !androidOnly, onClick = { androidOnly = false },
+                            label = { Text(stringResource(R.string.nova_all_projects)) })
+                        FilterChip(selected = androidOnly, onClick = { androidOnly = true }, label = { Text("Android") })
+                        Text(stringResource(R.string.nova_project_count, projects.size), fontSize = 12.sp)
+                    }
+                }
+            }
+            if (projects.isEmpty() && state.projects.isNotEmpty()) {
+                item { Text(stringResource(R.string.nova_project_no_matches), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            } else if (projects.isEmpty()) {
                 item {
                     Card(
                         modifier = Modifier
@@ -4442,6 +4471,10 @@ private fun WorkspaceScreen(
     onSaveWorkspaceFileCopy: (String, Uri) -> Unit,
     onOpenFile: (WorkspaceEntry) -> Unit,
     onOpenEditorTab: (String) -> Unit,
+    onSearchProjectText: (String) -> Unit,
+    onRefreshLocalGit: () -> Unit,
+    onClearProjectSearch: () -> Unit,
+    onOpenProjectSearchHit: (String, Int) -> Unit,
     onBrowseEditorFiles: () -> Unit,
     onSwitchTerminalSlot: (Int) -> Unit,
     onCloseFile: () -> Unit,
@@ -4479,6 +4512,7 @@ private fun WorkspaceScreen(
     onRefreshAndroidDashboard: () -> Unit,
     onShareAndroidApk: () -> Unit,
     onSaveAndroidApk: (Uri) -> Unit,
+    onSaveLastReleaseArtifact: (Uri) -> Unit,
     onOpenAndroidAppDetails: () -> Unit,
     onUninstallAndroidApp: () -> Unit,
     onOpenAndroidIssue: (AndroidBuildIssue) -> Unit,
@@ -4547,6 +4581,10 @@ private fun WorkspaceScreen(
             pendingAndroidAction = null
         },
     )
+    val releaseArtifactLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
+        onResult = { uri -> if (uri != null) onSaveLastReleaseArtifact(uri) },
+    )
     val saveApkLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/vnd.android.package-archive"),
         onResult = { uri -> if (uri != null) onSaveAndroidApk(uri) },
@@ -4581,6 +4619,22 @@ private fun WorkspaceScreen(
     var showChats by rememberSaveable { mutableStateOf(false) }
     var showAgentSwitch by rememberSaveable { mutableStateOf(false) }
     var showGitCommands by rememberSaveable { mutableStateOf(false) }
+    var showLocalGitStatus by rememberSaveable { mutableStateOf(false) }
+    if (showLocalGitStatus) {
+        AlertDialog(onDismissRequest = { showLocalGitStatus = false },
+            title = { Text(stringResource(R.string.nova_git_status)) },
+            text = {
+                if (state.localGitChecking) CircularProgressIndicator()
+                else SelectionContainer { Text(state.localGitStatus.orEmpty(),
+                    modifier = Modifier.heightIn(max = 350.dp).verticalScroll(rememberScrollState()),
+                    fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
+            },
+            confirmButton = { TextButton(onClick = { showLocalGitStatus = false }) { Text(stringResource(R.string.close)) } },
+            dismissButton = { TextButton(enabled = !state.localGitChecking, onClick = onRefreshLocalGit) {
+                Text(stringResource(R.string.refresh))
+            } },
+        )
+    }
     if (showAgentSwitch) {
         AgentSwitchSheet(
             selected = state.pendingAgentSwitch ?: state.agentKind,
@@ -4622,6 +4676,7 @@ private fun WorkspaceScreen(
             onInstallTools = onInstallAndroidTools,
             onShareApk = onShareAndroidApk,
             onSaveApk = { state.androidApkInfo?.let { saveApkLauncher.launch(it.fileName) } },
+            onSaveRelease = { state.androidBuildApkPath?.let { releaseArtifactLauncher.launch(it.substringAfterLast('/')) } },
             onOpenAppDetails = onOpenAndroidAppDetails,
             onUninstallApp = onUninstallAndroidApp,
             onOpenIssue = { issue -> showAndroidBuild = false; onOpenAndroidIssue(issue) },
@@ -4768,7 +4823,16 @@ private fun WorkspaceScreen(
                             enabled = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
                         ) { Icon(Icons.Default.Code, stringResource(R.string.ws_git_commands)) }
                         DropdownMenu(expanded = showGitCommands, onDismissRequest = { showGitCommands = false }) {
-                            listOf("git status --short --branch", "git diff --stat", "git add -p", "git commit", "git push").forEach { command ->
+                            state.projectFacts?.githubRepository?.let { repository ->
+                                DropdownMenuItem(text = { Column {
+                                    Text(repository, fontWeight = FontWeight.SemiBold)
+                                    Text(state.projectFacts?.branch.orEmpty(), fontSize = 11.sp)
+                                } }, onClick = { showGitCommands = false; onVerifyProjectRepository() })
+                                HorizontalDivider()
+                            }
+                            DropdownMenuItem(text = { Text(stringResource(R.string.nova_git_status)) },
+                                onClick = { showGitCommands = false; showLocalGitStatus = true; onRefreshLocalGit() })
+                            listOf("git status --short --branch", "git branch -a", "git log --oneline -10", "git diff --stat", "git diff --cached", "git fetch origin", "git pull --ff-only", "git add -p", "git commit", "git push").forEach { command ->
                                 DropdownMenuItem(
                                     text = { Text(command, fontFamily = FontFamily.Monospace) },
                                     onClick = {
@@ -4789,7 +4853,7 @@ private fun WorkspaceScreen(
         },
         bottomBar = {
             if (!keyboardVisible) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                WorkspaceTab.entries.filter { it != WorkspaceTab.CHANGES }.forEach { tab ->
+                WorkspaceTab.entries.forEach { tab ->
                     NavigationBarItem(
                         selected = selectedTab == tab,
                         onClick = {
@@ -4858,6 +4922,11 @@ private fun WorkspaceScreen(
                     onRemoveFollowUp = onRemoveFollowUp,
                 )
                 WorkspaceTab.FILES -> FilesTab(
+                    searchResults = state.projectSearchResult,
+                    searchingProject = state.projectSearchRunning,
+                    onSearchProjectText = onSearchProjectText,
+                    onClearProjectSearch = onClearProjectSearch,
+                    onOpenProjectSearchHit = onOpenProjectSearchHit,
                     editorTabs = state.editorTabs,
                     dirtyTabs = state.editorDirtyTabs,
                     onOpenEditorTab = onOpenEditorTab,
@@ -5042,6 +5111,7 @@ private fun AndroidDashboardScreen(
     onInstallTools: () -> Unit,
     onShareApk: () -> Unit,
     onSaveApk: () -> Unit,
+    onSaveRelease: () -> Unit,
     onOpenAppDetails: () -> Unit,
     onUninstallApp: () -> Unit,
     onOpenIssue: (AndroidBuildIssue) -> Unit,
@@ -5085,6 +5155,12 @@ private fun AndroidDashboardScreen(
                                 enabled = !state.androidBuildRunning,
                                 onClick = { showBuildMenu = false; onAction(AndroidAction.FORCE_BUILD) },
                             )
+                            DropdownMenuItem(text = { Text(stringResource(R.string.nova_build_release_apk)) },
+                                enabled = !state.androidBuildRunning,
+                                onClick = { showBuildMenu = false; onAction(AndroidAction.RELEASE_APK) })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.nova_build_bundle)) },
+                                enabled = !state.androidBuildRunning,
+                                onClick = { showBuildMenu = false; onAction(AndroidAction.RELEASE_BUNDLE) })
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.clean_project)) },
                                 leadingIcon = { Icon(Icons.Default.Delete, null) },
@@ -5244,6 +5320,17 @@ private fun AndroidDashboardScreen(
                                 }
                             }
                         }
+                        item {
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(stringResource(R.string.nova_release_artifact), fontWeight = FontWeight.SemiBold)
+                                    OutlinedButton(enabled = !state.androidBuildRunning, onClick = { onAction(AndroidAction.RELEASE_APK) },
+                                        modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.nova_build_release_apk)) }
+                                    OutlinedButton(enabled = !state.androidBuildRunning, onClick = { onAction(AndroidAction.RELEASE_BUNDLE) },
+                                        modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.nova_build_bundle)) }
+                                }
+                            }
+                        }
                         if (state.androidBuildIssues.isNotEmpty()) {
                             item { Text(stringResource(R.string.build_issues), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                             items(state.androidBuildIssues) { rawIssue ->
@@ -5257,6 +5344,33 @@ private fun AndroidDashboardScreen(
                                         Text(issue.detail, fontSize = 12.sp, color = MaterialTheme.colorScheme.onErrorContainer)
                                         issue.suggestion?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)) }
                                         if (issue.filePath != null) Text("${issue.filePath}${issue.line?.let { ":$it" }.orEmpty()}", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                                    }
+                                }
+                            }
+                        }
+                        if (state.androidBuildPhase == AndroidBuildPhase.SUCCEEDED && !state.androidBuildRunning &&
+                            state.androidBuildAction in setOf(AndroidAction.RELEASE_APK, AndroidAction.RELEASE_BUNDLE)) {
+                            state.androidBuildApkPath?.let { path ->
+                                item {
+                                    Card(Modifier.fillMaxWidth()) {
+                                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text(stringResource(R.string.nova_release_artifact), fontWeight = FontWeight.Bold)
+                                            Text(path.substringAfterLast('/'), fontFamily = FontFamily.Monospace)
+                                            Text(formatFileSize(state.androidBuildApkSizeBytes ?: 0L))
+                                            Text(stringResource(R.string.nova_release_signing_detail), fontSize = 12.sp)
+                                            val artifact = state.releaseArtifactInfo
+                                            if (artifact != null && artifact.path == path) {
+                                                TextButton(onClick = { clipboard.setText(AnnotatedString(artifact.sha256)) }) {
+                                                    Text("SHA-256 · ${artifact.sha256.take(12)}…")
+                                                }
+                                                Text(artifact.certificateSha256?.let {
+                                                    stringResource(R.string.nova_release_cert, it.take(16) + "…")
+                                                } ?: stringResource(R.string.nova_release_cert_unknown), fontSize = 11.sp)
+                                            }
+                                            OutlinedButton(onClick = onSaveRelease, modifier = Modifier.fillMaxWidth()) {
+                                                Text(stringResource(R.string.save_copy))
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -5431,6 +5545,8 @@ private fun ProfessionalAndroidOverview(
     val statusTitle = when {
         state.androidBuildRunning -> androidStageLabel(state.androidBuildStage)
         state.androidBuildStage == AndroidBuildStage.FAILED -> stringResource(R.string.android_build_failed_title)
+        state.androidBuildPhase == AndroidBuildPhase.SUCCEEDED && state.androidBuildAction in setOf(AndroidAction.RELEASE_APK, AndroidAction.RELEASE_BUNDLE) ->
+            stringResource(R.string.nova_release_built)
         apk == null -> stringResource(R.string.android_ready_to_build)
         apk.stale -> stringResource(R.string.android_ready_to_rebuild)
         apk.installedMatches -> stringResource(R.string.android_ready_to_run)
@@ -6039,6 +6155,11 @@ private fun FileViewerScreen(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FilesTab(
+    searchResults: com.jarves.mh.runtime.ProjectSearchResult?,
+    searchingProject: Boolean,
+    onSearchProjectText: (String) -> Unit,
+    onClearProjectSearch: () -> Unit,
+    onOpenProjectSearchHit: (String, Int) -> Unit,
     editorTabs: List<String>,
     dirtyTabs: Set<String>,
     onOpenEditorTab: (String) -> Unit,
@@ -6171,6 +6292,33 @@ private fun FilesTab(
                 OutlinedButton(onClick = onPortableBackup, enabled = exportEnabled && !exportRunning,
                     modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.nova_portable_backup)) }
                 Text(stringResource(R.string.nova_backup_detail), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (!selectionMode) {
+            item(key = "project-content-search") {
+                var query by rememberSaveable(selectedRoot) { mutableStateOf("") }
+                OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true,
+                    label = { Text(stringResource(R.string.nova_project_content_search)) }, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(enabled = !searchingProject && query.isNotBlank(), onClick = { onSearchProjectText(query) }) {
+                        Text(stringResource(R.string.nova_search_action))
+                    }
+                    if (searchingProject) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    if (searchResults != null) TextButton(onClick = onClearProjectSearch) { Text(stringResource(R.string.close)) }
+                }
+            }
+            searchResults?.let { result ->
+                item { Text(stringResource(R.string.nova_project_count_matches, result.hits.size) +
+                    if (result.limited) " · " + stringResource(R.string.nova_search_limited) else "") }
+                items(result.hits, key = { "hit:${it.path}:${it.line}" }) { hit ->
+                    Surface(Modifier.fillMaxWidth().clickable { onOpenProjectSearchHit(hit.path, hit.line) },
+                        color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp)) {
+                        Column(Modifier.padding(10.dp)) {
+                            Text("${hit.path}:${hit.line}", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(hit.preview, fontSize = 11.sp, maxLines = 2, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                }
             }
         }
         if (!selectionMode && editorTabs.isNotEmpty()) {

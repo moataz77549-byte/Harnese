@@ -178,4 +178,23 @@
     <string name="nova_replace_all">Заменить все</string>
     <string name="nova_portable_backup">Резервная копия проекта и чатов</string>
     <string name="nova_backup_detail">ZIP с файлами, чатами и черновиками. Известные приватные пути исключены. Храните файл в безопасном месте и импортируйте как новый проект.</string>
+    <string name="nova_build_release_apk">Собрать Release APK</string>
+    <string name="nova_build_bundle">Собрать Android App Bundle (AAB)</string>
+    <string name="nova_no_release_artifact">Не найден корректный Release-файл. Проверьте журнал сборки.</string>
+    <string name="nova_release_built">Release-файл создан.</string>
+    <string name="nova_release_artifact">Release-файл</string>
+    <string name="nova_release_signing_detail">Подпись зависит от настроек Gradle проекта. Проверьте сертификат перед распространением.</string>
+    <string name="nova_artifact_saved">Файл сохранён.</string>
+    <string name="nova_release_cert">Сертификат APK: %1$s</string>
+    <string name="nova_release_cert_unknown">Сертификат не проверен</string>
+    <string name="nova_project_search">Поиск проектов</string>
+    <string name="nova_all_projects">Все проекты</string>
+    <string name="nova_project_count">Проекты: %1$d</string>
+    <string name="nova_project_no_matches">Проекты не найдены</string>
+    <string name="nova_project_content_search">Поиск текста в проекте</string>
+    <string name="nova_search_action">Найти</string>
+    <string name="nova_project_count_matches">Результаты: %1$d</string>
+    <string name="nova_search_limited">Достигнут лимит поиска</string>
+    <string name="nova_git_status">Локальное состояние Git</string>
+    <string name="nova_git_clean">Рабочее дерево чистое.</string>
 </resources>

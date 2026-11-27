@@ -178,4 +178,23 @@
     <string name="nova_replace_all">استبدال الكل</string>
     <string name="nova_portable_backup">نسخة احتياطية للمشروع ومحادثاته</string>
     <string name="nova_backup_detail">يحفظ ZIP ملفات المشروع والمحادثات والمسودات. تُستثنى مسارات بيانات الاعتماد المعروفة. احتفظ به في مكان خاص، واستورده كمشروع جديد.</string>
+    <string name="nova_build_release_apk">بناء APK للنشر</string>
+    <string name="nova_build_bundle">بناء حزمة Android App Bundle ‏(AAB)</string>
+    <string name="nova_no_release_artifact">لم يُعثر على ملف Release صالح. راجع مخرجات البناء.</string>
+    <string name="nova_release_built">تم إنتاج ملف Release.</string>
+    <string name="nova_release_artifact">ملف الإصدار للنشر</string>
+    <string name="nova_release_signing_detail">يعتمد التوقيع على إعدادات Gradle الخاصة بالمشروع. تحقّق من الشهادة قبل توزيع الملف.</string>
+    <string name="nova_artifact_saved">تم حفظ الملف.</string>
+    <string name="nova_release_cert">شهادة APK: ‏%1$s</string>
+    <string name="nova_release_cert_unknown">لم يتم التحقق من الشهادة</string>
+    <string name="nova_project_search">البحث عن المشاريع</string>
+    <string name="nova_all_projects">جميع المشاريع</string>
+    <string name="nova_project_count">المشاريع: %1$d</string>
+    <string name="nova_project_no_matches">لا توجد مشاريع مطابقة</string>
+    <string name="nova_project_content_search">ابحث داخل محتوى المشروع</string>
+    <string name="nova_search_action">بحث</string>
+    <string name="nova_project_count_matches">النتائج: %1$d</string>
+    <string name="nova_search_limited">بلغ البحث الحد المحدد</string>
+    <string name="nova_git_status">حالة Git المحلية</string>
+    <string name="nova_git_clean">ملفات المشروع متوافقة مع حالة Git.</string>
 </resources>

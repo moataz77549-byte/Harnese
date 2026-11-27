@@ -96,6 +96,11 @@ import com.jarves.mh.runtime.diagnoseAndroidBuildFailure
 import com.jarves.mh.runtime.findAndroidProjectRoot
 import com.jarves.mh.runtime.ProjectWorkspaceFacts
 import com.jarves.mh.runtime.ProjectWorkspaceInspector
+import com.jarves.mh.runtime.ReleaseArtifactInfo
+import com.jarves.mh.runtime.findReleaseApk
+import com.jarves.mh.runtime.findReleaseBundle
+import com.jarves.mh.runtime.isArtifactStale
+import com.jarves.mh.runtime.isAndroidArtifact
 import com.jarves.mh.runtime.findDebugApk
 import com.jarves.mh.runtime.findReusableDebugApk
 import com.jarves.mh.runtime.inferAndroidBuildStage
@@ -430,6 +435,11 @@ data class AppUiState(
     val androidBuildApkSizeBytes: Long? = null,
     val androidBuildRecentDurationsMillis: List<Long> = emptyList(),
     val androidApkInfo: AndroidApkInfo? = null,
+    val releaseArtifactInfo: ReleaseArtifactInfo? = null,
+    val projectSearchResult: com.jarves.mh.runtime.ProjectSearchResult? = null,
+    val projectSearchRunning: Boolean = false,
+    val localGitStatus: String? = null,
+    val localGitChecking: Boolean = false,
     val androidHealthChecks: List<AndroidHealthCheck> = emptyList(),
     val androidHealthRunning: Boolean = false,
     val androidLogcat: AndroidLogcatState = AndroidLogcatState(),
@@ -1307,11 +1317,14 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     fun performAndroidAction(action: AndroidAction) {
+        if (editorHasPendingChanges()) return
         when (action) {
             AndroidAction.BUILD -> {
                 if (!completeFromReusableApk(action, launch = false)) startAndroidGradleTask("assembleDebug", action)
             }
             AndroidAction.FORCE_BUILD -> startAndroidGradleTask("assembleDebug", action)
+            AndroidAction.RELEASE_APK -> startAndroidGradleTask("assembleRelease", action)
+            AndroidAction.RELEASE_BUNDLE -> startAndroidGradleTask("bundleRelease", action)
             AndroidAction.INSTALL -> installLatestAndroidApk(launch = false, action = action)
             AndroidAction.RUN -> runLatestAndroidApk()
             AndroidAction.BUILD_AND_RUN -> {
@@ -1491,6 +1504,7 @@ class HarneseRuntimeController(private val application: Application) {
                 androidBuildLog = "",
                 androidBuildStartedAtMillis = startedAt,
                 androidBuildFinishedAtMillis = null,
+                releaseArtifactInfo = null,
                 androidBuildApkPath = null,
                 androidBuildApkSizeBytes = null,
                 toastMessage = null,
@@ -1574,12 +1588,22 @@ class HarneseRuntimeController(private val application: Application) {
                 }
                 if (task == "clean") null else {
                     _state.update { it.copy(androidBuildStage = AndroidBuildStage.FINDING_APK, androidBuildMessage = str(R.string.an_finding_apk)) }
-                    findDebugApk(workspace)?.takeIf { !AndroidAppInstaller.packageName(application, it).isNullOrBlank() }
-                        ?: error(str(R.string.an_no_debug_apk_found))
+                    when (action) {
+                        AndroidAction.RELEASE_APK -> findReleaseApk(workspace)?.takeIf { isAndroidArtifact(it, false) && !isArtifactStale(workspace, it) }
+                            ?: error(str(R.string.nova_no_release_artifact))
+                        AndroidAction.RELEASE_BUNDLE -> findReleaseBundle(workspace)?.takeUnless { isArtifactStale(workspace, it) }
+                            ?: error(str(R.string.nova_no_release_artifact))
+                        else -> findDebugApk(workspace)?.takeIf { !AndroidAppInstaller.packageName(application, it).isNullOrBlank() }
+                            ?: error(str(R.string.an_no_debug_apk_found))
+                    }
                 }
             }.onSuccess { apk ->
                 val shouldInstallAndRun = apk != null && action == AndroidAction.BUILD_AND_RUN
-                val message = if (apk == null) str(R.string.an_project_cleaned) else str(R.string.an_debug_apk_built)
+                val message = when {
+                    apk == null -> str(R.string.an_project_cleaned)
+                    action == AndroidAction.RELEASE_APK || action == AndroidAction.RELEASE_BUNDLE -> str(R.string.nova_release_built)
+                    else -> str(R.string.an_debug_apk_built)
+                }
                 val buildCompletedAt = System.currentTimeMillis()
                 withContext(Dispatchers.Main) {
                     _state.update { current ->
@@ -1602,8 +1626,9 @@ class HarneseRuntimeController(private val application: Application) {
                     }
                     saveAndroidBuildRecord(project.id)
                     refreshAndroidApkInfo()
+                    refreshLastReleaseArtifact()
                 }
-                buildEvent("succeeded", "$message\nAPK: ${apk?.name ?: "—"}\n${apk?.length() ?: 0} bytes / ${buildCompletedAt - startedAt} ms")
+                buildEvent("succeeded", "$message\nArtifact: ${apk?.name ?: "—"}\n${apk?.length() ?: 0} bytes / ${buildCompletedAt - startedAt} ms")
                 finishAndroidBuildForegroundService(project, message, failed = false)
                 if (shouldInstallAndRun) beginAndroidInstall(apk!!, launch = true, action = action)
             }.onFailure { error ->
@@ -1786,7 +1811,43 @@ class HarneseRuntimeController(private val application: Application) {
 
     fun refreshAndroidDashboard() {
         refreshAndroidApkInfo()
+        refreshLastReleaseArtifact()
         refreshAndroidHealth()
+    }
+
+    fun refreshLastReleaseArtifact() {
+        val snapshot = _state.value
+        val project = snapshot.activeProject ?: return
+        val bundle = snapshot.androidBuildAction == AndroidAction.RELEASE_BUNDLE
+        if ((!bundle && snapshot.androidBuildAction != AndroidAction.RELEASE_APK) ||
+            snapshot.androidBuildPhase != AndroidBuildPhase.SUCCEEDED || snapshot.androidBuildRunning) {
+            _state.update { it.copy(releaseArtifactInfo = null) }
+            return
+        }
+        val path = snapshot.androidBuildApkPath ?: return
+        runtimeScope.launch(Dispatchers.IO) {
+            val info = runCatching {
+                val root = findAndroidProjectRoot(projectWorkspaceRoot(project)) ?: return@runCatching null
+                val file = if (bundle) findReleaseBundle(root) else findReleaseApk(root)
+                if (file == null || file.canonicalFile != File(path).canonicalFile || !isAndroidArtifact(file, bundle)) return@runCatching null
+                val certificate = if (bundle) null else runCatching {
+                    @Suppress("DEPRECATION")
+                    val packageInfo = application.packageManager.getPackageArchiveInfo(file.path,
+                        if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES)
+                    @Suppress("DEPRECATION")
+                    val signatures = if (Build.VERSION.SDK_INT >= 28) packageInfo?.signingInfo?.apkContentsSigners else packageInfo?.signatures
+                    signatures?.singleOrNull()?.let { signature ->
+                        MessageDigest.getInstance("SHA-256").digest(signature.toByteArray()).joinToString("") { "%02x".format(it) }
+                    }
+                }.getOrNull()
+                ReleaseArtifactInfo(file.name, file.path, file.length(), fingerprint(file), certificate)
+            }.getOrNull()
+            _state.update { current ->
+                if (current.activeProject?.id == project.id && current.activeProject.rootPath == project.rootPath &&
+                    current.androidBuildAction == snapshot.androidBuildAction && current.androidBuildApkPath == path &&
+                    !current.androidBuildRunning) current.copy(releaseArtifactInfo = info) else current
+            }
+        }
     }
 
     fun refreshAndroidApkInfo() {
@@ -1851,6 +1912,28 @@ class HarneseRuntimeController(private val application: Application) {
         }
     }
 
+    fun saveLastReleaseArtifact(uri: Uri) {
+        val current = _state.value
+        val project = current.activeProject ?: return
+        if (current.androidBuildRunning || current.androidBuildPhase != AndroidBuildPhase.SUCCEEDED) return
+        val bundle = current.androidBuildAction == AndroidAction.RELEASE_BUNDLE
+        if (!bundle && current.androidBuildAction != AndroidAction.RELEASE_APK) return
+        val path = current.androidBuildApkPath ?: return
+        runtimeScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val root = findAndroidProjectRoot(projectWorkspaceRoot(project)) ?: error(str(R.string.vm_no_android_project))
+                val artifact = if (bundle) findReleaseBundle(root) else findReleaseApk(root)
+                check(artifact != null && artifact.canonicalFile == File(path).canonicalFile &&
+                    isAndroidArtifact(artifact, bundle) && !isArtifactStale(root, artifact)) { str(R.string.nova_no_release_artifact) }
+                getApplication<Application>().contentResolver.openOutputStream(uri)?.use { output ->
+                    artifact.inputStream().buffered().use { it.copyTo(output) }
+                } ?: error(str(R.string.an_location_unavailable))
+            }
+            _state.update { it.copy(toastMessage = if (result.isSuccess) str(R.string.nova_artifact_saved)
+                else result.exceptionOrNull()?.message ?: str(R.string.an_could_not_save_apk)) }
+        }
+    }
+
     fun openInstalledAndroidAppDetails() {
         val packageName = _state.value.androidApkInfo?.packageName ?: return
         getApplication<Application>().startActivity(
@@ -1908,7 +1991,7 @@ class HarneseRuntimeController(private val application: Application) {
                     if (launcher) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
                 )
                 if (toolsInstalled && root != null) {
-                    val (toolchainExit, output) = runAndroidGuestCommand(
+                    val (toolchainExit, output) = runWorkspaceDiagnosticCommand(
                         project,
                         "java -version 2>&1 | grep -E '\"17\\.|version 17' >/dev/null && " +
                             "gradle --version >/dev/null && " +
@@ -2005,7 +2088,7 @@ class HarneseRuntimeController(private val application: Application) {
         }
     }
 
-    private fun runAndroidGuestCommand(project: Project, command: String): Pair<Int, String> {
+    private fun runWorkspaceDiagnosticCommand(project: Project, command: String): Pair<Int, String> {
         return runCatching {
             val runtime = installer.installedRuntime()
             val workspace = projectWorkspaceRoot(project)
@@ -3389,6 +3472,10 @@ class HarneseRuntimeController(private val application: Application) {
                 changes = emptyList(),
                 changesAgentKind = null,
                 workspaceFiles = emptyList(),
+                projectSearchResult = null,
+                projectSearchRunning = false,
+                localGitStatus = null,
+                localGitChecking = false,
                 projectFacts = null,
                 projectRepositoryChecking = false,
                 projectRepositoryStatus = null,
@@ -3410,6 +3497,7 @@ class HarneseRuntimeController(private val application: Application) {
                 pendingAttachments = emptyList(),
                 androidBuildRunning = false,
                 androidApkInfo = null,
+                releaseArtifactInfo = null,
                 androidHealthRunning = false,
                 androidHealthChecks = emptyList(),
                 openedFile = null,
@@ -3468,11 +3556,16 @@ class HarneseRuntimeController(private val application: Application) {
                 activeProject = null,
                 openedFile = null,
                 androidApkInfo = null,
+                releaseArtifactInfo = null,
                 workspaceVisible = false,
                 projectChats = emptyList(),
                 activeChatId = null,
                 changes = emptyList(),
                 workspaceFiles = emptyList(),
+                projectSearchResult = null,
+                projectSearchRunning = false,
+                localGitStatus = null,
+                localGitChecking = false,
                 projectFacts = null,
                 projectRepositoryChecking = false,
                 projectRepositoryStatus = null,
@@ -3556,6 +3649,7 @@ class HarneseRuntimeController(private val application: Application) {
                 projects = listOf(project) + it.projects,
                 openedFile = null,
                 androidApkInfo = null,
+                releaseArtifactInfo = null,
                 activeProject = project,
                 workspaceVisible = true,
                 messages = listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")),
@@ -3565,6 +3659,10 @@ class HarneseRuntimeController(private val application: Application) {
                 taskFinishedAtMillis = null,
                 changes = emptyList(),
                 workspaceFiles = emptyList(),
+                projectSearchResult = null,
+                projectSearchRunning = false,
+                localGitStatus = null,
+                localGitChecking = false,
                 androidProjectDetected = false,
                 filesLoading = true,
                 terminalSlot = 0,
@@ -4347,7 +4445,12 @@ class HarneseRuntimeController(private val application: Application) {
                 editorTabs = emptyList(),
                 editorDirtyTabs = emptySet(),
                 workspaceFiles = emptyList(),
+                projectSearchResult = null,
+                projectSearchRunning = false,
+                localGitStatus = null,
+                localGitChecking = false,
                 androidApkInfo = null,
+                releaseArtifactInfo = null,
                 androidProjectDetected = false,
                 androidHealthChecks = emptyList(),
                 androidHealthRunning = false,
@@ -4614,6 +4717,51 @@ class HarneseRuntimeController(private val application: Application) {
         }
     }
 
+    fun refreshLocalGitStatus() {
+        val snapshot = _state.value
+        val project = snapshot.activeProject ?: return
+        if (snapshot.localGitChecking || snapshot.isRunning || snapshot.projectTerminalRunning || snapshot.androidBuildRunning) return
+        _state.update { it.copy(localGitChecking = true, localGitStatus = null) }
+        runtimeScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runWorkspaceDiagnosticCommand(project, "git status --short --branch")
+            }
+            _state.update { current ->
+                if (current.activeProject?.id == project.id && current.activeProject.rootPath == project.rootPath)
+                    current.copy(localGitChecking = false, localGitStatus =
+                        if (result.first == 0) result.second.ifBlank { str(R.string.nova_git_clean) }
+                        else str(R.string.vm_process_exited_code, result.first) + "\n" + result.second)
+                else current
+            }
+        }
+    }
+
+    fun searchProjectText(query: String) {
+        val snapshot = _state.value
+        val project = snapshot.activeProject ?: return
+        if (snapshot.projectSearchRunning || query.isBlank()) return
+        _state.update { it.copy(projectSearchRunning = true, projectSearchResult = null) }
+        runtimeScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { com.jarves.mh.runtime.searchProjectContent(projectWorkspaceRoot(project), query) }
+            }
+            _state.update { current ->
+                if (current.activeProject?.id == project.id && current.activeProject.rootPath == project.rootPath)
+                    current.copy(projectSearchRunning = false, projectSearchResult = result.getOrNull(),
+                        toastMessage = if (result.isFailure) str(R.string.vm_project_unavailable) else current.toastMessage)
+                else current
+            }
+        }
+    }
+
+    fun clearProjectSearch() {
+        if (!_state.value.projectSearchRunning) _state.update { it.copy(projectSearchResult = null) }
+    }
+
+    fun openProjectSearchHit(path: String, line: Int) {
+        openEditorTab(path, line)
+    }
+
     fun openFile(entry: WorkspaceEntry) {
         if (!entry.isDirectory) openEditorTab(entry.path)
     }
@@ -4625,7 +4773,7 @@ class HarneseRuntimeController(private val application: Application) {
         _state.update { it.copy(openedFile = null, editorDirtyTabs = retainedEditorDrafts.keys.toSet()) }
     }
 
-    fun openEditorTab(path: String) {
+    fun openEditorTab(path: String, targetLine: Int? = null) {
         val current = _state.value
         val project = current.activeProject ?: return
         if (current.openedFile?.path == path || current.openedFile?.saving == true) return
@@ -4637,8 +4785,8 @@ class HarneseRuntimeController(private val application: Application) {
         val retained = retainedEditorDrafts.remove(path)
         _state.update { it.copy(editorTabs = (it.editorTabs + path).distinct(),
             editorDirtyTabs = retainedEditorDrafts.keys.toSet() + if (retained?.dirty == true) setOf(path) else emptySet(),
-            openedFile = retained ?: OpenedFileState(path = path)) }
-        if (retained == null) loadOpenedFile(project, path)
+            openedFile = retained?.copy(targetLine = targetLine) ?: OpenedFileState(path = path, targetLine = targetLine)) }
+        if (retained == null) loadOpenedFile(project, path, targetLine)
     }
 
     private fun loadOpenedFile(project: Project, path: String, targetLine: Int? = null, targetColumn: Int? = null) {

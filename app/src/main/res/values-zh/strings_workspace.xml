@@ -178,4 +178,23 @@
     <string name="nova_replace_all">全部替换</string>
     <string name="nova_portable_backup">项目与对话备份</string>
     <string name="nova_backup_detail">ZIP 包含项目文件、对话和草稿。已知凭据路径不包含在内。请妥善保管，并作为新项目导入。</string>
+    <string name="nova_build_release_apk">构建 Release APK</string>
+    <string name="nova_build_bundle">构建 Android App Bundle（AAB）</string>
+    <string name="nova_no_release_artifact">未找到有效的 Release 文件，请检查构建输出。</string>
+    <string name="nova_release_built">已生成 Release 文件。</string>
+    <string name="nova_release_artifact">Release 文件</string>
+    <string name="nova_release_signing_detail">签名使用项目 Gradle 的签名配置。分发前请检查证书。</string>
+    <string name="nova_artifact_saved">已保存文件。</string>
+    <string name="nova_release_cert">APK 证书：%1$s</string>
+    <string name="nova_release_cert_unknown">证书未验证</string>
+    <string name="nova_project_search">搜索项目</string>
+    <string name="nova_all_projects">所有项目</string>
+    <string name="nova_project_count">项目数：%1$d</string>
+    <string name="nova_project_no_matches">未找到匹配的项目</string>
+    <string name="nova_project_content_search">搜索项目中的文本</string>
+    <string name="nova_search_action">搜索</string>
+    <string name="nova_project_count_matches">匹配数：%1$d</string>
+    <string name="nova_search_limited">已达到搜索上限</string>
+    <string name="nova_git_status">本地 Git 状态</string>
+    <string name="nova_git_clean">工作树干净。</string>
 </resources>

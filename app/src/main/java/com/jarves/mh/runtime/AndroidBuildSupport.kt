@@ -4,7 +4,7 @@ import org.json.JSONObject
 import java.io.File
 
 enum class AndroidBuildPhase { IDLE, PREPARING, BUILDING, CANCELLING, SUCCEEDED, FAILED, CANCELLED }
-enum class AndroidAction { NONE, BUILD, FORCE_BUILD, INSTALL, RUN, BUILD_AND_RUN, CLEAN }
+enum class AndroidAction { NONE, BUILD, FORCE_BUILD, INSTALL, RUN, BUILD_AND_RUN, CLEAN, RELEASE_APK, RELEASE_BUNDLE }
 enum class AndroidBuildStage {
     IDLE, PREPARING, RESOLVING, COMPILING, RESOURCES, PACKAGING, FINDING_APK,
     INSTALLING, LAUNCHING, COMPLETE, FAILED, CANCELLING, CANCELLED,
@@ -36,6 +36,9 @@ data class AndroidApkInfo(
     val installedMatches: Boolean = false,
     val sha256: String = "",
 )
+
+data class ReleaseArtifactInfo(val fileName: String, val path: String, val sizeBytes: Long, val sha256: String,
+    val certificateSha256: String? = null)
 
 enum class AndroidHealthStatus { RUNNING, PASSED, WARNING, FAILED }
 enum class AndroidHealthFix { NONE, INSTALL_TOOLS, OPEN_INSTALL_SETTINGS, OPEN_NETWORK_SETTINGS, OPEN_STORAGE_SETTINGS, CLEAN, COPY_LOGCAT_COMMAND, REFRESH }
@@ -105,12 +108,16 @@ internal fun findAndroidProjectRoot(workspace: File): File? {
     }
 }
 
-internal fun findDebugApk(projectRoot: File): File? {
+internal fun findDebugApk(projectRoot: File): File? = findStandaloneApk(projectRoot, "debug")
+
+internal fun findReleaseApk(projectRoot: File): File? = findStandaloneApk(projectRoot, "release")
+
+private fun findStandaloneApk(projectRoot: File, variant: String): File? {
     val root = projectRoot.canonicalFile
     val ignored = setOf(".git", ".gradle", "node_modules", ".idea", "intermediates", "generated", "tmp")
     val outputs = root.walkTopDown().maxDepth(12)
         .onEnter { dir -> dir == root || (dir.name !in ignored && !java.nio.file.Files.isSymbolicLink(dir.toPath())) }
-        .filter { dir -> dir.isDirectory && dir.name.equals("debug", true) &&
+        .filter { dir -> dir.isDirectory && dir.name.equals(variant, true) &&
             "/build/outputs/apk/" in dir.invariantSeparatorsPath && dir.parentFile?.name != "androidTest" &&
             "/outputs/apk/androidTest/" !in dir.invariantSeparatorsPath }
     return outputs.flatMap { dir ->
@@ -129,21 +136,44 @@ internal fun findDebugApk(projectRoot: File): File? {
             }.getOrDefault(emptyList())
         } else {
             // Without metadata only an unambiguous conventional debug APK can be identified.
-            dir.listFiles().orEmpty().filter { it.name.endsWith("-debug.apk", true) }.singleOrNull()?.let(::listOf).orEmpty()
+            dir.listFiles().orEmpty().filter { it.name.endsWith("-$variant.apk", true) || (variant == "release" && it.name.endsWith("-release-unsigned.apk", true)) }.singleOrNull()?.let(::listOf).orEmpty()
         }
         files.asSequence().filter { it.isFile && !java.nio.file.Files.isSymbolicLink(it.toPath()) &&
             it.extension.equals("apk", true) && it.length() > 0 }
     }.maxWithOrNull(compareBy<File> { it.lastModified() }.thenBy { it.path })
 }
 
+internal fun isAndroidArtifact(file: File, bundle: Boolean): Boolean = runCatching {
+    java.util.zip.ZipFile(file).use { zip ->
+        if (bundle) zip.getEntry("BundleConfig.pb") != null && zip.getEntry("base/manifest/AndroidManifest.xml") != null
+        else zip.getEntry("AndroidManifest.xml") != null
+    }
+}.getOrDefault(false)
+
+internal fun findReleaseBundle(projectRoot: File): File? {
+    val root = projectRoot.canonicalFile
+    return root.walkTopDown().maxDepth(12)
+        .onEnter { dir -> dir == root || (dir.name !in setOf(".git", ".gradle", "node_modules", "intermediates", "generated", "tmp") &&
+            !java.nio.file.Files.isSymbolicLink(dir.toPath())) }
+        .filter { file -> file.isFile && !java.nio.file.Files.isSymbolicLink(file.toPath()) &&
+            file.extension.equals("aab", true) &&
+            file.relativeTo(root).invariantSeparatorsPath.contains("build/outputs/bundle/") &&
+            file.parentFile?.name?.endsWith("release", true) == true && isAndroidArtifact(file, true) }
+        .maxWithOrNull(compareBy<File> { it.lastModified() }.thenBy { it.path })
+}
+
 /** Returns the last debug APK only when every build input is older than it. */
 internal fun findReusableDebugApk(projectRoot: File): File? {
     val apk = findDebugApk(projectRoot) ?: return null
+    return apk.takeUnless { isArtifactStale(projectRoot, it) }
+}
+
+internal fun isArtifactStale(projectRoot: File, apk: File): Boolean {
     val ignoredDirectories = setOf("build", ".gradle", ".idea", ".git")
     val buildInputExtensions = setOf(
         "kt", "java", "xml", "gradle", "kts", "properties", "toml", "pro", "json", "jar", "aar",
     )
-    val changedAfterApk = projectRoot.walkTopDown()
+    return projectRoot.walkTopDown()
         .onEnter { directory -> directory == projectRoot || (directory.name !in ignoredDirectories && !java.nio.file.Files.isSymbolicLink(directory.toPath())) }
         .filter { file ->
             if (!file.isFile) return@filter false
@@ -153,7 +183,6 @@ internal fun findReusableDebugApk(projectRoot: File): File? {
                 file.name in setOf("gradlew", "gradlew.bat")
         }
         .any { it.lastModified() > apk.lastModified() }
-    return apk.takeUnless { changedAfterApk }
 }
 
 internal fun isDebugApkStale(projectRoot: File, apk: File): Boolean = findReusableDebugApk(projectRoot) != apk
@@ -161,9 +190,9 @@ internal fun isDebugApkStale(projectRoot: File, apk: File): Boolean = findReusab
 internal fun inferAndroidBuildStage(output: String, current: AndroidBuildStage): AndroidBuildStage {
     val text = output.lowercase()
     return when {
-        "packagedebug" in text || "assembledebug" in text && "> task" in text -> AndroidBuildStage.PACKAGING
+        "packagedebug" in text || "packagerelease" in text || ("assembledebug" in text || "assemblerelease" in text || "bundlerelease" in text) && "> task" in text -> AndroidBuildStage.PACKAGING
         "merge" in text && "resource" in text || "processdebugresources" in text || "aapt2" in text -> AndroidBuildStage.RESOURCES
-        "compiledebugkotlin" in text || "compiledebugjava" in text || "kotlinc" in text || "javac" in text -> AndroidBuildStage.COMPILING
+        "compiledebugkotlin" in text || "compiledebugjava" in text || "compilereleasekotlin" in text || "compilereleasejava" in text || "kotlinc" in text || "javac" in text -> AndroidBuildStage.COMPILING
         "download" in text || "resolve" in text || "dependency" in text -> AndroidBuildStage.RESOLVING
         else -> current
     }

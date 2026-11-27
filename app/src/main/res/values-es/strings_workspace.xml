@@ -178,4 +178,23 @@
     <string name="nova_replace_all">Reemplazar todo</string>
     <string name="nova_portable_backup">Copia del proyecto y los chats</string>
     <string name="nova_backup_detail">ZIP con archivos, chats y borradores. Se excluyen las rutas privadas conocidas. Guarda el archivo en privado e impórtalo como proyecto nuevo.</string>
+    <string name="nova_build_release_apk">Compilar APK Release</string>
+    <string name="nova_build_bundle">Compilar Android App Bundle (AAB)</string>
+    <string name="nova_no_release_artifact">No se encontró un artefacto Release válido. Revisa la compilación.</string>
+    <string name="nova_release_built">Artefacto Release generado.</string>
+    <string name="nova_release_artifact">Artefacto Release</string>
+    <string name="nova_release_signing_detail">La firma usa la configuración Gradle del proyecto. Comprueba el certificado antes de distribuir.</string>
+    <string name="nova_artifact_saved">Artefacto guardado.</string>
+    <string name="nova_release_cert">Certificado APK: %1$s</string>
+    <string name="nova_release_cert_unknown">Certificado sin verificar</string>
+    <string name="nova_project_search">Buscar proyectos</string>
+    <string name="nova_all_projects">Todos los proyectos</string>
+    <string name="nova_project_count">Proyectos: %1$d</string>
+    <string name="nova_project_no_matches">No hay proyectos coincidentes</string>
+    <string name="nova_project_content_search">Buscar texto en el proyecto</string>
+    <string name="nova_search_action">Buscar</string>
+    <string name="nova_project_count_matches">Resultados: %1$d</string>
+    <string name="nova_search_limited">Límite de búsqueda alcanzado</string>
+    <string name="nova_git_status">Estado local de Git</string>
+    <string name="nova_git_clean">El árbol de trabajo está limpio.</string>
 </resources>

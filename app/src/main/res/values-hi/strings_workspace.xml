@@ -178,4 +178,23 @@
     <string name="nova_replace_all">सभी बदलें</string>
     <string name="nova_portable_backup">प्रोजेक्ट और चैट का बैकअप</string>
     <string name="nova_backup_detail">ZIP में फ़ाइलें, चैट और ड्राफ़्ट हैं। ज्ञात निजी क्रेडेंशियल पथ शामिल नहीं हैं। फ़ाइल सुरक्षित रखें और नए प्रोजेक्ट के रूप में आयात करें।</string>
+    <string name="nova_build_release_apk">Release APK बनाएँ</string>
+    <string name="nova_build_bundle">Android App Bundle (AAB) बनाएँ</string>
+    <string name="nova_no_release_artifact">मान्य Release फ़ाइल नहीं मिली। बिल्ड आउटपुट देखें।</string>
+    <string name="nova_release_built">Release फ़ाइल बनी।</string>
+    <string name="nova_release_artifact">Release फ़ाइल</string>
+    <string name="nova_release_signing_detail">साइनिंग प्रोजेक्ट Gradle कॉन्फ़िगरेशन पर आधारित है। वितरण से पहले प्रमाणपत्र जाँचें।</string>
+    <string name="nova_artifact_saved">फ़ाइल सहेजी गई।</string>
+    <string name="nova_release_cert">APK प्रमाणपत्र: %1$s</string>
+    <string name="nova_release_cert_unknown">प्रमाणपत्र सत्यापित नहीं</string>
+    <string name="nova_project_search">प्रोजेक्ट खोजें</string>
+    <string name="nova_all_projects">सभी प्रोजेक्ट</string>
+    <string name="nova_project_count">प्रोजेक्ट: %1$d</string>
+    <string name="nova_project_no_matches">कोई प्रोजेक्ट नहीं मिला</string>
+    <string name="nova_project_content_search">प्रोजेक्ट की सामग्री खोजें</string>
+    <string name="nova_search_action">खोजें</string>
+    <string name="nova_project_count_matches">परिणाम: %1$d</string>
+    <string name="nova_search_limited">खोज सीमा पूरी हुई</string>
+    <string name="nova_git_status">स्थानीय Git स्थिति</string>
+    <string name="nova_git_clean">वर्किंग ट्री साफ़ है।</string>
 </resources>
