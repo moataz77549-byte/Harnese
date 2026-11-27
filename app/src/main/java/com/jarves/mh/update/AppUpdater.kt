@@ -42,14 +42,15 @@ class AppUpdater(
         if (manifestUrlOverride.isNotBlank()) return readUpdate(manifestUrlOverride)
         val available = mutableListOf<AppUpdateInfo>()
         runCatching { readUpdate(BuildConfig.APP_UPDATE_MANIFEST_URL) }.getOrNull()?.let(available::add)
-        // A device already running a Nova release candidate follows that channel.
-        if (context.packageName == "com.moataz.harnese.nova" && BuildConfig.VERSION_NAME.contains("-rc.")) {
-            val catalog = runCatching { fetchMetadata("https://api.github.com/repos/moataz77549-byte/Harnese/releases?per_page=20") }.getOrNull()
-            if (catalog != null) {
-                val releases = JSONArray(catalog)
-                novaUpdateManifestUrls(releases).take(5).forEach { url ->
-                    runCatching { readUpdate(url) }.getOrNull()?.let(available::add)
-                }
+        // Every installed Nova/Plus build follows the same owner-signed release channel.
+        // Malformed catalog responses must not discard a valid configured manifest.
+        if (context.packageName == "com.moataz.harnese.nova") {
+            val manifests = runCatching {
+                fetchMetadata("https://api.github.com/repos/moataz77549-byte/Harnese/releases?per_page=20")
+                    ?.let { novaUpdateManifestUrls(JSONArray(it)) }.orEmpty()
+            }.getOrDefault(emptyList())
+            manifests.distinct().take(5).forEach { url ->
+                runCatching { readUpdate(url) }.getOrNull()?.let(available::add)
             }
         }
         return available.maxByOrNull(AppUpdateInfo::versionCode)

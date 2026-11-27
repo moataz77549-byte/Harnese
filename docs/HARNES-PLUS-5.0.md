@@ -5,6 +5,7 @@
 - Project dashboard shows the selected agent/provider connection status.
 - Workspace screens separated into project, Android build, file/editor, and conversation source modules. UI state models extracted from MainViewModel without changing stored values.
 - Coalesces terminal display updates when output is backlogged, preserving final output, input and stop behavior.
+- Enables the original Nova update catalog on stable Plus releases as well as release candidates, retaining signature and checksum checks.
 - Retains existing editor, Linux environments, agent setup, workflows, projects, and backup formats. No destructive data migrations, cleanup or environment reinstall added.
 - Package `com.moataz.harnese.nova`, versionCode 32, minSdk 26, ARM64. Existing owner certificate required. Previously published APK from 4.0.0 is the in-place upgrade baseline.
 
