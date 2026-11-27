@@ -73,6 +73,8 @@ class MemoryBoundsTest {
         val directory = Files.createTempDirectory("mh-diff-test").toFile()
         try {
             val checkpoints = WorkspaceCheckpoints(directory)
+            // Explicitly create a new fixture; production resolution must never recreate missing projects.
+            directory.resolve("workspaces/project").mkdirs()
             val workspace = checkpoints.ensureWorkspace("project")
             val large = workspace.resolve("large.txt")
             large.outputStream().use { it.write(ByteArray(1_000_001) { 'a'.code.toByte() }) }
