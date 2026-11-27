@@ -88,6 +88,8 @@ fun WorkspaceSecureReviewPanel(projectId: String?, busy: Boolean) {
     var preview by remember(projectId) { mutableStateOf("") }
     var message by remember(projectId) { mutableStateOf("") }
     var authorizedId by remember { mutableStateOf<String?>(null) }
+    var chosenPaths by remember(projectId) { mutableStateOf(emptySet<String>()) }
+    var authorizedPaths by remember { mutableStateOf(emptySet<String>()) }
     var applying by remember { mutableStateOf(false) }
     val currentProject by rememberUpdatedState(projectId)
     val currentBusy by rememberUpdatedState(busy)
@@ -97,14 +99,16 @@ fun WorkspaceSecureReviewPanel(projectId: String?, busy: Boolean) {
     LaunchedEffect(projectId, busy) { refresh() }
     val auth = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val id = authorizedId
+        val approvedPaths = authorizedPaths
         authorizedId = null
+        authorizedPaths = emptySet()
         if (result.resultCode == Activity.RESULT_OK && id != null) {
             applying = true
             scope.launch {
                 try {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         check(!currentBusy && service.read(id).project == currentProject) { "Project changed or busy" }
-                        service.applyLocally(id)
+                        service.applyLocally(id, approvedPaths)
                     }
                     message = "VERIFIED — تم تطبيق التعديلات والتحقق من الملفات"
                     selected = null; preview = ""
@@ -129,7 +133,7 @@ fun WorkspaceSecureReviewPanel(projectId: String?, busy: Boolean) {
                 Text(review.entries.take(40).joinToString("\n") { it.path })
                 if (review.state == "pending") {
                     OutlinedButton(enabled = !applying && authorizedId == null, onClick = {
-                        selected = review.id; preview = ""
+                        selected = review.id; preview = ""; chosenPaths = review.entries.map { it.path }.toSet()
                         scope.launch {
                             runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { service.preview(review.id) } }
                                 .onSuccess { if (selected == review.id) preview = it }
@@ -138,12 +142,23 @@ fun WorkspaceSecureReviewPanel(projectId: String?, busy: Boolean) {
                     }) { Text("عرض التغييرات") }
                     if (selected == review.id && preview.isNotBlank()) {
                         Text(preview)
-                        OutlinedButton(enabled = !busy && !applying && authorizedId == null, onClick = {
+                        Text("حدد الملفات المطلوب اعتمادها؛ غير المحدد لن يطبق")
+                        OutlinedButton(enabled = !applying && authorizedId == null, onClick = { chosenPaths = review.entries.map { it.path }.toSet() }) { Text("تحديد جميع الملفات") }
+                        OutlinedButton(enabled = !applying && authorizedId == null, onClick = { chosenPaths = emptySet() }) { Text("إلغاء التحديد") }
+                        review.entries.forEach { entry ->
+                            androidx.compose.foundation.layout.Row {
+                                androidx.compose.material3.Checkbox(checked = entry.path in chosenPaths, enabled = !applying && authorizedId == null, onCheckedChange = { checked ->
+                                    chosenPaths = if (checked) chosenPaths + entry.path else chosenPaths - entry.path
+                                })
+                                Text(entry.path)
+                            }
+                        }
+                        OutlinedButton(enabled = !busy && !applying && authorizedId == null && chosenPaths.isNotEmpty(), onClick = {
                             val manager = context.getSystemService(KeyguardManager::class.java)
                             val intent = manager.createConfirmDeviceCredentialIntent("Harnese Nova", review.id)
                             if (intent == null) message = context.getString(R.string.hub_lock_required)
-                            else { authorizedId = review.id; auth.launch(intent) }
-                        }) { Text("قبول التعديلات — اعتماد محلي") }
+                            else { authorizedId = review.id; authorizedPaths = chosenPaths.toSet(); auth.launch(intent) }
+                        }) { Text("قبول التعديلات المحددة — اعتماد محلي") }
                         OutlinedButton(enabled = !busy && !applying && authorizedId == null, onClick = {
                             applying = true
                             scope.launch {

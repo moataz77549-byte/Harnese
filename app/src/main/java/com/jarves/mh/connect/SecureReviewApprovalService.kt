@@ -51,7 +51,7 @@ class SecureReviewApprovalService(private val directory: File) {
     }
     private fun save(id: String, json: JSONObject) {
         val temp = File(folder(id), "review.json.tmp")
-        temp.writeText(json.toString())
+        java.io.FileOutputStream(temp).use { output -> output.write(json.toString().toByteArray(Charsets.UTF_8)); output.fd.sync() }
         Files.move(temp.toPath(), metadata(id).toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     }
     @Synchronized fun stage(project: String, original: File, protectSensitive: Boolean = false): StagedRun {
@@ -131,20 +131,26 @@ class SecureReviewApprovalService(private val directory: File) {
         File(folder(id), "workspace").deleteRecursively()
     }
     /** Only the phone's credential-confirmation result calls this method. Never expose remotely. */
-    @Synchronized fun applyLocally(id: String) {
+    @Synchronized fun applyLocally(id: String, selectedPaths: Set<String>? = null) {
         val json = JSONObject(metadata(id).readText()); val review = read(id)
         require(review.state == "pending" && review.expires > System.currentTimeMillis()) { "Review expired or already consumed" }
+        val approved = selectedPaths ?: review.entries.map { it.path }.toSet()
+        require(approved.isNotEmpty() && approved.all { path -> review.entries.any { it.path == path } }) { "Invalid review selection" }
+        val entries = review.entries.filter { it.path in approved }
         val original = File(json.getString("original")); val staged = File(folder(id), "workspace"); val backup = File(folder(id), "backup")
-        review.entries.forEach { e ->
+        require(original.isDirectory) { "Original workspace unavailable" }
+        entries.forEach { e ->
+            val target = safe(original, e.path)
+            require(!target.exists() || target.isFile) { "Destination is not a regular file: ${e.path}" }
             require(hash(safe(original, e.path)) == e.before) { "Original changed: ${e.path}" }
             require(hash(safe(staged, e.path)) == e.after) { "Proposal changed: ${e.path}" }
             val source = safe(original, e.path)
             if (source.isFile) { val dest = safe(backup, e.path); dest.parentFile.mkdirs(); source.copyTo(dest, overwrite = true); dest.setExecutable(source.canExecute(), true) }
         }
         // Persist before mutation. A crash leaves an explicit recovery record, never an auto approval.
-        save(id, json.put("state", "applying"))
+        save(id, json.put("selectedPaths", JSONArray(approved.sorted())).put("state", "applying"))
         try {
-            review.entries.forEach { e ->
+            entries.forEach { e ->
                 val dest = safe(original, e.path)
                 if (e.after == null) { check(!dest.exists() || dest.delete()) }
                 else {
@@ -162,12 +168,12 @@ class SecureReviewApprovalService(private val directory: File) {
                     } finally { temp.delete() }
                 }
             }
-            review.entries.forEach { e ->
+            entries.forEach { e ->
                 require(hash(safe(original, e.path)) == e.after) { "Applied file verification failed: ${e.path}" }
             }
             save(id, json.put("state", "applied").put("appliedAt", System.currentTimeMillis()))
         } catch (error: Exception) {
-            restore(original, backup, review.entries)
+            restore(original, backup, entries)
             save(id, json.put("state", "rolled_back"))
             throw error
         }
@@ -175,15 +181,35 @@ class SecureReviewApprovalService(private val directory: File) {
     private fun restore(original: File, backup: File, entries: List<Entry>) {
         entries.forEach { e -> val dest = safe(original, e.path)
             if (e.before == null) { check(!dest.exists() || dest.delete()) }
-            else { dest.parentFile.mkdirs(); safe(backup, e.path).copyTo(dest, overwrite = true); dest.setExecutable(safe(backup,e.path).canExecute(),true) }
+            else {
+                val source = safe(backup, e.path)
+                require(hash(source) == e.before) { "Backup verification failed: ${e.path}" }
+                dest.parentFile.mkdirs()
+                val temp = File(dest.parentFile, ".nova-restore-${UUID.randomUUID()}.tmp")
+                try {
+                    java.io.FileOutputStream(temp).use { output -> source.inputStream().use { it.copyTo(output) }; output.fd.sync() }
+                    temp.setExecutable(source.canExecute(), true)
+                    require(hash(temp) == e.before)
+                    Files.move(temp.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+                } finally { temp.delete() }
+            }
         }
     }
     @Synchronized fun rollbackLocally(id: String) {
         val json = JSONObject(metadata(id).readText()); val review = read(id)
         require(review.state == "applied" || review.state == "applying")
         val original = File(json.getString("original"))
-        review.entries.forEach { require(hash(safe(original,it.path)) in listOf(it.before, it.after)) { "File changed after approval" } }
-        restore(original, File(folder(id), "backup"), review.entries)
+        val selection = json.optJSONArray("selectedPaths")
+        val approved = selection?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() }
+        val entries = review.entries.filter { approved == null || it.path in approved }
+        require(original.isDirectory) { "Original workspace unavailable" }
+        entries.forEach { e ->
+            val target = safe(original, e.path)
+            require(!target.exists() || target.isFile)
+            require(hash(target) in listOf(e.before, e.after)) { "File changed after approval" }
+        }
+        restore(original, File(folder(id), "backup"), entries)
+        entries.forEach { require(hash(safe(original, it.path)) == it.before) { "Rollback verification failed: ${it.path}" } }
         save(id,json.put("state", "rolled_back"))
     }
 }

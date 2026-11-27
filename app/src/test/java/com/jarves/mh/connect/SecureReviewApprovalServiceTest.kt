@@ -85,4 +85,25 @@ class SecureReviewApprovalServiceTest {
             assertEquals("applied", reopened.read(stage.id).state)
         } finally { dir.deleteRecursively() }
     }
+    @Test fun selectedApprovalAndRollbackNeverModifyUnselectedFiles() {
+        val dir = Files.createTempDirectory("nova-selection").toFile()
+        try {
+            val original = File(dir, "project").apply { mkdirs() }
+            File(original, "a.txt").writeText("a")
+            File(original, "b.txt").writeText("b")
+            val service = SecureReviewApprovalService(File(dir, "reviews"))
+            val stage = service.stage("p", original)
+            File(stage.workspace, "a.txt").writeText("approved")
+            File(stage.workspace, "b.txt").writeText("not approved")
+            service.finish(stage.id)
+            assertTrue(runCatching { service.applyLocally(stage.id, setOf("unknown.txt")) }.isFailure)
+            service.applyLocally(stage.id, setOf("a.txt"))
+            assertEquals("approved", File(original, "a.txt").readText())
+            assertEquals("b", File(original, "b.txt").readText())
+            File(original, "b.txt").writeText("later edit")
+            SecureReviewApprovalService(File(dir, "reviews")).rollbackLocally(stage.id)
+            assertEquals("a", File(original, "a.txt").readText())
+            assertEquals("later edit", File(original, "b.txt").readText())
+        } finally { dir.deleteRecursively() }
+    }
 }
