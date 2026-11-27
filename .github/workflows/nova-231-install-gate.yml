@@ -112,3 +112,17 @@ jobs:
             delivery/apk-integrity.txt
             delivery/zstd-jni-check.txt
           if-no-files-found: warn
+  publish-owner-signed:
+    needs: build
+    if: ${{ github.ref == 'refs/heads/feat/nova-2.3.1-stability' && !contains(github.event.head_commit.message, '[nova-231-signed]') }}
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/nova-231-publish.yml
+    with:
+      direct_sign: true
+    secrets:
+      HARN_NOVA_JKS_B64: ${{ secrets.HARN_NOVA_JKS_B64 }}
+      HARN_NOVA_KEYSTORE_PASS: ${{ secrets.HARN_NOVA_KEYSTORE_PASS }}
+      HARN_NOVA_KEY_ALIAS: ${{ secrets.HARN_NOVA_KEY_ALIAS }}
+      HARN_NOVA_KEY_PASS: ${{ secrets.HARN_NOVA_KEY_PASS }}
