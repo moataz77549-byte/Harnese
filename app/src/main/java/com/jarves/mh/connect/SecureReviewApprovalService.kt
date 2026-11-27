@@ -124,7 +124,7 @@ class SecureReviewApprovalService(private val directory: File) {
         val json = JSONObject(metadata(id).readText())
         val original = File(json.getString("original"))
         val staged = File(folder(id), "workspace")
-        return read(id).entries.joinToString("\n\n") { entry ->
+        return read(id).entries.asSequence().take(100).joinToString("\n\n") { entry ->
             fun text(file: File) = if (!file.isFile) "[absent]" else if (file.length() > 32000 || file.readBytes().any { it == 0.toByte() }) "[binary or large file]" else file.readText()
             "--- ${entry.path}\n${text(safe(original, entry.path))}\n+++ ${entry.path}\n${text(safe(staged, entry.path))}"
         }.take(60000)
@@ -149,14 +149,28 @@ class SecureReviewApprovalService(private val directory: File) {
             require(hash(safe(original, e.path)) == e.before) { "Original changed: ${e.path}" }
             require(hash(safe(staged, e.path)) == e.after) { "Proposal changed: ${e.path}" }
             val source = safe(original, e.path)
-            if (source.isFile) { val dest = safe(backup, e.path); dest.parentFile.mkdirs(); source.copyTo(dest, overwrite = true); dest.setExecutable(source.canExecute(), true) }
+            if (source.isFile) {
+                val dest = safe(backup, e.path)
+                dest.parentFile.mkdirs()
+                java.io.FileOutputStream(dest).use { output ->
+                    source.inputStream().use { it.copyTo(output) }
+                    output.fd.sync()
+                }
+                dest.setExecutable(source.canExecute(), true)
+                require(hash(dest) == e.before) { "Backup changed: ${e.path}" }
+            }
         }
         // Persist before mutation. A crash leaves an explicit recovery record, never an auto approval.
         save(id, json.put("selectedPaths", JSONArray(approved.sorted())).put("state", "applying"))
+        val mutated = mutableListOf<Entry>()
         try {
             entries.forEach { e ->
                 val dest = safe(original, e.path)
-                if (e.after == null) { check(!dest.exists() || dest.delete()) }
+                require(hash(dest) == e.before && (!dest.exists() || dest.isFile)) { "Original changed during approval: ${e.path}" }
+                if (e.after == null) {
+                    check(!dest.exists() || dest.delete())
+                    mutated += e
+                }
                 else {
                     dest.parentFile.mkdirs()
                     val temp = File(dest.parentFile, ".nova-${UUID.randomUUID()}.tmp")
@@ -168,7 +182,9 @@ class SecureReviewApprovalService(private val directory: File) {
                         }
                         temp.setExecutable(source.canExecute(), true)
                         require(hash(temp) == e.after) { "Staged copy verification failed: ${e.path}" }
+                        require(hash(dest) == e.before && (!dest.exists() || dest.isFile)) { "Original changed before replacement: ${e.path}" }
                         Files.move(temp.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+                        mutated += e
                     } finally { temp.delete() }
                 }
             }
@@ -177,8 +193,16 @@ class SecureReviewApprovalService(private val directory: File) {
             }
             save(id, json.put("state", "applied").put("appliedAt", System.currentTimeMillis()))
         } catch (error: Exception) {
-            restore(original, backup, entries)
-            save(id, json.put("state", "rolled_back"))
+            // Never overwrite a concurrent edit to a file we did not mutate.
+            // A conflicting rollback remains an explicit recovery record.
+            try {
+                mutated.forEach { e -> require(hash(safe(original, e.path)) == e.after) { "Concurrent edit prevents rollback: ${e.path}" } }
+                restore(original, backup, mutated.asReversed())
+                save(id, json.put("state", "rolled_back"))
+            } catch (recovery: Exception) {
+                error.addSuppressed(recovery)
+                save(id, json.put("state", "applying").put("recoveryError", recovery.message.orEmpty()))
+            }
             throw error
         }
     }

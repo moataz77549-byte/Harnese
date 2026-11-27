@@ -10,3 +10,8 @@ Baseline: 2bd747ddea6eef3a9266162d1ccfe87ef6322d9c. This branch deliberately lea
 - ZIP import rejects unsafe and duplicate names; default export excludes known credential paths.
 - CI has an owner-signing gate, certificate comparison with 2.1, source freshness verification, and an Android 11 synthetic upgrade gate. Missing secrets stop publication, and public signature transport remains supported.
 - Live provider, physical device, authentication continuity, automated backup retention and full recovery matrix still require verification.
+
+## Recovery hardening
+- Sync and verify backup bytes before applying. Recheck original before each mutation, and do not rollback files never mutated by the transaction. Preserve explicit recovery state on conflicting rollback.
+- Expose local credential-confirmed restoration for applied or interrupted reviews in the workspace panel.
+- Fix legacy memory test fixture to create its directory explicitly. Added conflicting rollback regression test. CI and live-device validation pending.

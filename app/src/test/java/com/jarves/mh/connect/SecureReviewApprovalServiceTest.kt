@@ -106,4 +106,20 @@ class SecureReviewApprovalServiceTest {
             assertEquals("later edit", File(original, "b.txt").readText())
         } finally { dir.deleteRecursively() }
     }
+    @Test fun rollbackRefusesConflictingManualEdits() {
+        val dir = Files.createTempDirectory("nova-rollback-conflict").toFile()
+        try {
+            val original = File(dir, "project").apply { mkdirs() }
+            val file = File(original, "a.txt").apply { writeText("before") }
+            val service = SecureReviewApprovalService(File(dir, "reviews"))
+            val stage = service.stage("p", original)
+            File(stage.workspace, "a.txt").writeText("approved")
+            service.finish(stage.id)
+            service.applyLocally(stage.id)
+            file.writeText("manual changes")
+            assertTrue(runCatching { service.rollbackLocally(stage.id) }.isFailure)
+            assertEquals("manual changes", file.readText())
+            assertEquals("applied", service.read(stage.id).state)
+        } finally { dir.deleteRecursively() }
+    }
 }

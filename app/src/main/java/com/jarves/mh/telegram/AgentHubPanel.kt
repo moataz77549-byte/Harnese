@@ -90,6 +90,7 @@ fun WorkspaceSecureReviewPanel(projectId: String?, busy: Boolean) {
     var authorizedId by remember { mutableStateOf<String?>(null) }
     var chosenPaths by remember(projectId) { mutableStateOf(emptySet<String>()) }
     var authorizedPaths by remember { mutableStateOf(emptySet<String>()) }
+    var authorizedRollback by remember { mutableStateOf(false) }
     var applying by remember { mutableStateOf(false) }
     val currentProject by rememberUpdatedState(projectId)
     val currentBusy by rememberUpdatedState(busy)
@@ -103,6 +104,8 @@ fun WorkspaceSecureReviewPanel(projectId: String?, busy: Boolean) {
     val auth = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val id = authorizedId
         val approvedPaths = authorizedPaths
+        val rollbackRequested = authorizedRollback
+        authorizedRollback = false
         authorizedId = null
         authorizedPaths = emptySet()
         if (result.resultCode == Activity.RESULT_OK && id != null) {
@@ -113,9 +116,9 @@ fun WorkspaceSecureReviewPanel(projectId: String?, busy: Boolean) {
                         val project = currentProject ?: error("No active project")
                         val root = com.jarves.mh.runtime.AuthoritativeWorkspace.resolve(context.filesDir, project, selectedRoot)
                         check(!currentBusy && service.matchesWorkspace(id, project, root)) { "Project root changed or busy" }
-                        service.applyLocally(id, approvedPaths)
+                        if (rollbackRequested) service.rollbackLocally(id) else service.applyLocally(id, approvedPaths)
                     }
-                    message = "VERIFIED — تم تطبيق التعديلات والتحقق من الملفات"
+                    message = if (rollbackRequested) "VERIFIED — تم استعادة الملفات السابقة" else "VERIFIED — تم تطبيق التعديلات والتحقق من الملفات"
                     selected = null; preview = ""
                     runtime.refreshProjectFiles()
                 } catch (error: Exception) { message = "FAILED — " + error.message.orEmpty() }
@@ -158,6 +161,14 @@ fun WorkspaceSecureReviewPanel(projectId: String?, busy: Boolean) {
         items(records.size) { index ->
             val review = records[index]
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                if (review.state in setOf("applying", "applied")) {
+                    OutlinedButton(enabled = !busy && !applying && authorizedId == null, onClick = {
+                        val manager = context.getSystemService(KeyguardManager::class.java)
+                        val intent = manager.createConfirmDeviceCredentialIntent("Harnese Nova", review.id)
+                        if (intent == null) message = context.getString(R.string.hub_lock_required)
+                        else { authorizedId = review.id; authorizedRollback = true; auth.launch(intent) }
+                    }) { Text("استعادة النسخة السابقة") }
+                }
                 Text((if (review.state == "pending") "AWAITING_APPROVAL" else review.state.uppercase()) + " — ${review.entries.size} files")
                 Text(review.entries.take(40).joinToString("\n") { it.path })
                 if (review.state == "pending") {
