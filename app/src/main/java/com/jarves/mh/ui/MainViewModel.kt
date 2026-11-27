@@ -1257,7 +1257,7 @@ class HarneseRuntimeController(private val application: Application) {
                         .put("exitCode", line.exitCode),
                 )
             }
-            file.writeText(JSONObject().put("cwd", cwd).put("lines", array).toString())
+            writeRuntimeRecord(file, JSONObject().put("cwd", cwd).put("lines", array).toString())
         }
     }
 
@@ -1671,7 +1671,7 @@ class HarneseRuntimeController(private val application: Application) {
         runCatching {
             androidBuildRecordFile(projectId).apply {
                 parentFile?.mkdirs()
-                writeText(
+                writeRuntimeRecord(this,
                     JSONObject()
                         .put("phase", state.androidBuildPhase.name)
                         .put("message", state.androidBuildMessage)
@@ -1852,84 +1852,91 @@ class HarneseRuntimeController(private val application: Application) {
         runtimeScope.launch(Dispatchers.IO) {
             val app = getApplication<Application>()
             val checks = mutableListOf<AndroidHealthCheck>()
-            val toolsInstalled = installer.isStackInstalled(DevStack.ANDROID)
-            checks += AndroidHealthCheck(
-                "tools", str(R.string.an_health_tools_title),
-                if (toolsInstalled) str(R.string.an_health_tools_ok) else str(R.string.an_health_tools_missing),
-                if (toolsInstalled) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
-                if (toolsInstalled) AndroidHealthFix.NONE else AndroidHealthFix.INSTALL_TOOLS,
-            )
-            val root = findAndroidProjectRoot(projectWorkspaceRoot(project))
-            checks += AndroidHealthCheck(
-                "project", str(R.string.an_health_project_title),
-                root?.let { str(R.string.an_health_project_ok, it.name) } ?: str(R.string.an_health_project_missing),
-                if (root != null) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
-            )
-            val launcher = root?.let { File(it, "gradlew").isFile || File(it, "build.gradle").isFile || File(it, "build.gradle.kts").isFile } == true
-            checks += AndroidHealthCheck(
-                "gradle", str(R.string.an_health_gradle_title),
-                if (launcher) str(R.string.an_health_gradle_ok) else str(R.string.an_health_gradle_missing),
-                if (launcher) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
-            )
-            if (toolsInstalled && root != null) {
-                val (toolchainExit, output) = runAndroidGuestCommand(
-                    project,
-                    "java -version 2>&1 | grep -E '\"17\\.|version 17' >/dev/null && " +
-                        "gradle --version >/dev/null && " +
-                        "/root/android-sdk/build-tools/35.0.0/aapt2 version >/dev/null && " +
-                        "printf POCKETDEV_TOOLCHAIN_OK",
-                )
-                val ok = toolchainExit == 0 && "POCKETDEV_TOOLCHAIN_OK" in output
+            try {
+                val toolsInstalled = installer.isStackInstalled(DevStack.ANDROID)
                 checks += AndroidHealthCheck(
-                    "toolchain", str(R.string.an_health_toolchain_title),
-                    if (ok) str(R.string.an_health_toolchain_ok) else str(R.string.an_health_toolchain_failed),
-                    if (ok) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
-                    if (ok) AndroidHealthFix.NONE else AndroidHealthFix.INSTALL_TOOLS,
+                    "tools", str(R.string.an_health_tools_title),
+                    if (toolsInstalled) str(R.string.an_health_tools_ok) else str(R.string.an_health_tools_missing),
+                    if (toolsInstalled) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
+                    if (toolsInstalled) AndroidHealthFix.NONE else AndroidHealthFix.INSTALL_TOOLS,
                 )
-                val compileSdk = root.walkTopDown().maxDepth(3).filter { it.isFile && it.name in setOf("build.gradle", "build.gradle.kts") }
-                    .mapNotNull { Regex("compileSdk(?:Version)?\\s*(?:=|\\s)\\s*(\\d+)").find(it.readText())?.groupValues?.get(1)?.toIntOrNull() }
-                    .maxOrNull()
-                val platformAvailable = compileSdk == null || File(installer.installedRuntime().rootfs, "root/android-sdk/platforms/android-$compileSdk/android.jar").isFile
+                val root = findAndroidProjectRoot(projectWorkspaceRoot(project))
                 checks += AndroidHealthCheck(
-                    "sdk", str(R.string.an_health_sdk_title),
-                    when { compileSdk == null -> str(R.string.an_health_sdk_unknown); platformAvailable -> str(R.string.an_health_sdk_ok, compileSdk); else -> str(R.string.an_health_sdk_missing, compileSdk) },
-                    when { compileSdk == null -> AndroidHealthStatus.WARNING; platformAvailable -> AndroidHealthStatus.PASSED; else -> AndroidHealthStatus.FAILED },
-                    if (!platformAvailable) AndroidHealthFix.INSTALL_TOOLS else AndroidHealthFix.NONE,
+                    "project", str(R.string.an_health_project_title),
+                    root?.let { str(R.string.an_health_project_ok, it.name) } ?: str(R.string.an_health_project_missing),
+                    if (root != null) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
                 )
+                val launcher = root?.let { File(it, "gradlew").isFile || File(it, "build.gradle").isFile || File(it, "build.gradle.kts").isFile } == true
+                checks += AndroidHealthCheck(
+                    "gradle", str(R.string.an_health_gradle_title),
+                    if (launcher) str(R.string.an_health_gradle_ok) else str(R.string.an_health_gradle_missing),
+                    if (launcher) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
+                )
+                if (toolsInstalled && root != null) {
+                    val (toolchainExit, output) = runAndroidGuestCommand(
+                        project,
+                        "java -version 2>&1 | grep -E '\"17\\.|version 17' >/dev/null && " +
+                            "gradle --version >/dev/null && " +
+                            "/root/android-sdk/build-tools/35.0.0/aapt2 version >/dev/null && " +
+                            "printf POCKETDEV_TOOLCHAIN_OK",
+                    )
+                    val ok = toolchainExit == 0 && "POCKETDEV_TOOLCHAIN_OK" in output
+                    checks += AndroidHealthCheck(
+                        "toolchain", str(R.string.an_health_toolchain_title),
+                        if (ok) str(R.string.an_health_toolchain_ok) else str(R.string.an_health_toolchain_failed),
+                        if (ok) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
+                        if (ok) AndroidHealthFix.NONE else AndroidHealthFix.INSTALL_TOOLS,
+                    )
+                    val compileSdk = root.walkTopDown().maxDepth(3).filter { it.isFile && it.name in setOf("build.gradle", "build.gradle.kts") }
+                        .mapNotNull { Regex("compileSdk(?:Version)?\\s*(?:=|\\s)\\s*(\\d+)").find(it.readText())?.groupValues?.get(1)?.toIntOrNull() }
+                        .maxOrNull()
+                    val platformAvailable = compileSdk == null || File(installer.installedRuntime().rootfs, "root/android-sdk/platforms/android-$compileSdk/android.jar").isFile
+                    checks += AndroidHealthCheck(
+                        "sdk", str(R.string.an_health_sdk_title),
+                        when { compileSdk == null -> str(R.string.an_health_sdk_unknown); platformAvailable -> str(R.string.an_health_sdk_ok, compileSdk); else -> str(R.string.an_health_sdk_missing, compileSdk) },
+                        when { compileSdk == null -> AndroidHealthStatus.WARNING; platformAvailable -> AndroidHealthStatus.PASSED; else -> AndroidHealthStatus.FAILED },
+                        if (!platformAvailable) AndroidHealthFix.INSTALL_TOOLS else AndroidHealthFix.NONE,
+                    )
+                }
+                val connectivity = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                val network = connectivity.activeNetwork?.let { connectivity.getNetworkCapabilities(it) }
+                val online = network?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+                checks += AndroidHealthCheck(
+                    "network", str(R.string.an_health_network_title),
+                    if (online) str(R.string.an_health_network_ok) else str(R.string.an_health_network_offline),
+                    if (online) AndroidHealthStatus.PASSED else AndroidHealthStatus.WARNING,
+                    if (online) AndroidHealthFix.NONE else AndroidHealthFix.OPEN_NETWORK_SETTINGS,
+                )
+                val freeBytes = StatFs(app.filesDir.absolutePath).availableBytes
+                val enoughStorage = freeBytes >= 1_500L * 1024L * 1024L
+                checks += AndroidHealthCheck(
+                    "storage", str(R.string.an_health_storage_title),
+                    str(R.string.an_health_storage_detail, freeBytes / 1024 / 1024),
+                    if (enoughStorage) AndroidHealthStatus.PASSED else AndroidHealthStatus.WARNING,
+                    if (enoughStorage) AndroidHealthFix.NONE else AndroidHealthFix.OPEN_STORAGE_SETTINGS,
+                )
+                val installAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.O || app.packageManager.canRequestPackageInstalls()
+                checks += AndroidHealthCheck(
+                    "install", str(R.string.an_health_install_title),
+                    if (installAllowed) str(R.string.an_health_install_ok) else str(R.string.an_health_install_missing),
+                    if (installAllowed) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
+                    if (installAllowed) AndroidHealthFix.NONE else AndroidHealthFix.OPEN_INSTALL_SETTINGS,
+                )
+                val apk = root?.let(::findDebugApk)
+                checks += AndroidHealthCheck(
+                    "apk", str(R.string.an_health_apk_title),
+                    when { apk == null -> str(R.string.an_health_apk_missing); isDebugApkStale(root, apk) -> str(R.string.an_health_apk_stale); else -> str(R.string.an_health_apk_ok) },
+                    when { apk == null -> AndroidHealthStatus.WARNING; isDebugApkStale(root, apk) -> AndroidHealthStatus.WARNING; else -> AndroidHealthStatus.PASSED },
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                checks += AndroidHealthCheck("health_error", str(R.string.nova_health_failed),
+                    str(R.string.vm_project_unavailable), AndroidHealthStatus.FAILED)
             }
-            val connectivity = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val network = connectivity.activeNetwork?.let { connectivity.getNetworkCapabilities(it) }
-            val online = network?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-            checks += AndroidHealthCheck(
-                "network", str(R.string.an_health_network_title),
-                if (online) str(R.string.an_health_network_ok) else str(R.string.an_health_network_offline),
-                if (online) AndroidHealthStatus.PASSED else AndroidHealthStatus.WARNING,
-                if (online) AndroidHealthFix.NONE else AndroidHealthFix.OPEN_NETWORK_SETTINGS,
-            )
-            val freeBytes = StatFs(app.filesDir.absolutePath).availableBytes
-            val enoughStorage = freeBytes >= 1_500L * 1024L * 1024L
-            checks += AndroidHealthCheck(
-                "storage", str(R.string.an_health_storage_title),
-                str(R.string.an_health_storage_detail, freeBytes / 1024 / 1024),
-                if (enoughStorage) AndroidHealthStatus.PASSED else AndroidHealthStatus.WARNING,
-                if (enoughStorage) AndroidHealthFix.NONE else AndroidHealthFix.OPEN_STORAGE_SETTINGS,
-            )
-            val installAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.O || app.packageManager.canRequestPackageInstalls()
-            checks += AndroidHealthCheck(
-                "install", str(R.string.an_health_install_title),
-                if (installAllowed) str(R.string.an_health_install_ok) else str(R.string.an_health_install_missing),
-                if (installAllowed) AndroidHealthStatus.PASSED else AndroidHealthStatus.FAILED,
-                if (installAllowed) AndroidHealthFix.NONE else AndroidHealthFix.OPEN_INSTALL_SETTINGS,
-            )
-            val apk = root?.let(::findDebugApk)
-            checks += AndroidHealthCheck(
-                "apk", str(R.string.an_health_apk_title),
-                when { apk == null -> str(R.string.an_health_apk_missing); isDebugApkStale(root, apk) -> str(R.string.an_health_apk_stale); else -> str(R.string.an_health_apk_ok) },
-                when { apk == null -> AndroidHealthStatus.WARNING; isDebugApkStale(root, apk) -> AndroidHealthStatus.WARNING; else -> AndroidHealthStatus.PASSED },
-            )
             _state.update { current ->
                 if (current.activeProject?.id == project.id && current.activeProject.rootPath == project.rootPath)
-                    current.copy(androidHealthRunning = false, androidHealthChecks = checks) else current
+                    current.copy(androidHealthRunning = false, androidHealthChecks = checks.toList()) else current
             }
         }
     }
@@ -1973,8 +1980,15 @@ class HarneseRuntimeController(private val application: Application) {
                     runtime.proot, runtime.rootfs, workspace, emptyMap(),
                     listOf("/usr/bin/bash", "-lc", command), projectGuestRoot(project), outputFile = outputFile,
                 )
-                val exit = process.waitFor()
-                exit to sanitizeTerminalOutput(outputFile.readTailText(64 * 1024)).trim()
+                try {
+                    if (!process.waitFor(45, TimeUnit.SECONDS)) {
+                        process.destroyForcibly()
+                        -1 to str(R.string.nova_health_timeout)
+                    } else process.exitValue() to sanitizeTerminalOutput(outputFile.readTailText(64 * 1024)).trim()
+                } finally {
+                    if (process.isAlive) process.destroyForcibly()
+                    runCatching { process.outputStream.close() }
+                }
             } finally { outputFile.delete() }
         }.getOrElse { -1 to (it.message ?: "Command failed") }
     }
@@ -4478,7 +4492,12 @@ class HarneseRuntimeController(private val application: Application) {
     fun loadProjectDirectory(relativePath: String) {
         val project = _state.value.activeProject ?: return
         runtimeScope.launch {
-            val children = withContext(Dispatchers.IO) { readWorkspaceDirectory(project, relativePath) }
+            val result = withContext(Dispatchers.IO) { runCatching { readWorkspaceDirectory(project, relativePath) } }
+            val children = result.getOrElse {
+                if (_state.value.activeProject?.id == project.id && _state.value.activeProject?.rootPath == project.rootPath)
+                    _state.update { state -> state.copy(toastMessage = str(R.string.vm_project_unavailable)) }
+                return@launch
+            }
             if (_state.value.activeProject?.id != project.id || _state.value.activeProject?.rootPath != project.rootPath) return@launch
             val prefix = relativePath.trim('/').let { if (it.isBlank()) "" else "$it/" }
             _state.update { current ->
@@ -4505,7 +4524,7 @@ class HarneseRuntimeController(private val application: Application) {
     private fun loadOpenedFile(project: Project, path: String, targetLine: Int? = null, targetColumn: Int? = null) {
         runtimeScope.launch {
             val loaded = withContext(Dispatchers.IO) {
-                val file = safeWorkspaceFile(project, path)
+                val file = runCatching { safeWorkspaceFile(project, path) }.getOrNull()
                     ?: return@withContext OpenedFileState(path = path, loading = false, readOnlyReason = FileReadOnlyReason.UNSAFE)
                 runCatching {
                     val tooLarge = file.length() > MAX_EDITABLE_FILE_BYTES

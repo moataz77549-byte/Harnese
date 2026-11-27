@@ -164,4 +164,10 @@
     <string name="nova_repo_archived">已归档</string>
     <string name="nova_repo_writable">有推送权限</string>
     <string name="nova_repo_readonly">只读权限</string>
+    <string name="nova_project_details">项目详情</string>
+    <string name="nova_agent_working">%1$s 正在工作</string>
+    <string name="nova_search_loaded_files">搜索已加载的文件</string>
+    <string name="nova_no_matches">没有匹配的已加载文件</string>
+    <string name="nova_health_failed">环境检查失败</string>
+    <string name="nova_health_timeout">环境检查超时，请重试。</string>
 </resources>

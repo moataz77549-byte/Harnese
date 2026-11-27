@@ -164,4 +164,10 @@
     <string name="nova_repo_archived">Archivado</string>
     <string name="nova_repo_writable">Permiso de escritura</string>
     <string name="nova_repo_readonly">Solo lectura</string>
+    <string name="nova_project_details">Detalles del proyecto</string>
+    <string name="nova_agent_working">%1$s está trabajando</string>
+    <string name="nova_search_loaded_files">Buscar archivos cargados</string>
+    <string name="nova_no_matches">No hay archivos coincidentes</string>
+    <string name="nova_health_failed">Error al comprobar el entorno</string>
+    <string name="nova_health_timeout">Tiempo de espera agotado. Inténtalo de nuevo.</string>
 </resources>

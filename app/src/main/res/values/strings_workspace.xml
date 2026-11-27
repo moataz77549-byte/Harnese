@@ -164,4 +164,10 @@
     <string name="nova_repo_archived">Archived</string>
     <string name="nova_repo_writable">Push permission granted</string>
     <string name="nova_repo_readonly">Read access only</string>
+    <string name="nova_project_details">Project details</string>
+    <string name="nova_agent_working">%1$s is working</string>
+    <string name="nova_search_loaded_files">Search loaded files</string>
+    <string name="nova_no_matches">No matching loaded files</string>
+    <string name="nova_health_failed">Environment check failed</string>
+    <string name="nova_health_timeout">Environment check timed out. Try again.</string>
 </resources>

@@ -67,6 +67,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -4542,6 +4544,7 @@ private fun WorkspaceScreen(
         contract = ActivityResultContracts.CreateDocument("application/vnd.android.package-archive"),
         onResult = { uri -> if (uri != null) onSaveAndroidApk(uri) },
     )
+    var selectedTab by rememberSaveable(state.activeProject?.id) { mutableStateOf(WorkspaceTab.CHAT) }
     val chatListState = rememberLazyListState()
     var userScrolledUp by rememberSaveable { mutableStateOf(false) }
 
@@ -4549,40 +4552,25 @@ private fun WorkspaceScreen(
         (if (state.liveProcess.isNotEmpty() || state.liveThinking) 1 else 0) +
         (if (state.pendingApproval != null) 1 else 0)
 
-    LaunchedEffect(state.activeChatId) {
+    LaunchedEffect(state.activeChatId, selectedTab) {
         userScrolledUp = false
-        if (chatItemCount > 0) chatListState.scrollToItem(chatItemCount - 1)
+        if (selectedTab == WorkspaceTab.CHAT && chatItemCount > 0) chatListState.scrollToItem(chatItemCount - 1)
     }
 
-    // When the user actively scrolls/touches the screen, detect if they scrolled up to read thinking/messages.
-    LaunchedEffect(chatListState.isScrollInProgress) {
-        if (chatListState.isScrollInProgress) {
-            if (chatListState.canScrollForward) {
-                userScrolledUp = true
-            }
-        } else {
-            // If user scrolled back down to the very bottom, re-enable follow mode
-            if (!chatListState.canScrollForward) {
-                userScrolledUp = false
-            }
-        }
+    val userDragging by chatListState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(userDragging, chatListState.isScrollInProgress) {
+        if (userDragging) userScrolledUp = true
+        else if (!chatListState.isScrollInProgress && !chatListState.canScrollForward) userScrolledUp = false
     }
 
-    // Follow new tokens/updates only when user is at the bottom and has not scrolled up to read.
-    LaunchedEffect(
-        state.messages.size,
-        state.messages.lastOrNull()?.text?.length,
-        state.liveProcess.size,
-        state.liveProcess.lastOrNull()?.detail,
-        state.pendingApproval,
-    ) {
-        if (!state.isRunning || chatItemCount <= 0 || userScrolledUp || chatListState.isScrollInProgress) return@LaunchedEffect
-        if (!chatListState.canScrollForward) {
-            chatListState.scrollToItem(chatItemCount - 1)
-        }
+    LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.text?.length,
+        state.liveProcess.size, state.liveProcess.lastOrNull()?.detail?.length, state.pendingApproval, userScrolledUp, selectedTab) {
+        if (selectedTab != WorkspaceTab.CHAT || chatItemCount <= 0 || userScrolledUp || userDragging) return@LaunchedEffect
+        delay(80)
+        chatListState.scrollToItem(chatItemCount - 1)
+        chatListState.scrollBy(chatListState.layoutInfo.visibleItemsInfo.lastOrNull()?.size?.toFloat() ?: 0f)
     }
 
-    var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
     var showChats by rememberSaveable { mutableStateOf(false) }
     var showAgentSwitch by rememberSaveable { mutableStateOf(false) }
     var showGitCommands by rememberSaveable { mutableStateOf(false) }
@@ -4825,7 +4813,7 @@ private fun WorkspaceScreen(
                     taskFinishedAtMillis = state.taskFinishedAtMillis,
                     thinkingActive = state.liveThinking,
                     agentKind = state.agentKind,
-                    draftKey = state.activeChatId,
+                    draftKey = state.activeChatId?.let { chat -> state.activeProject?.let { project -> "${project.id}:$chat" } },
                     taskFailure = state.taskFailure,
                     onRetry = onRetry,
                     projectFacts = state.projectFacts,
@@ -6003,13 +5991,18 @@ private fun FilesTab(
         val directories = files.asSequence().filter { it.isDirectory }.map { it.path }.toSet()
         expandedDirectories = expandedDirectories.filter { it in directories }
     }
-    val expandedSet = expandedDirectories.toSet()
-    val visibleFiles = files.filter { entry ->
-        val segments = entry.path.split('/')
-        segments.size == 1 || (1 until segments.size).all { depth ->
-            segments.take(depth).joinToString("/") in expandedSet
+    var fileQuery by rememberSaveable(selectedRoot) { mutableStateOf("") }
+    val expandedSet = remember(expandedDirectories) { expandedDirectories.toSet() }
+    val filteredFiles = remember(files, expandedSet, fileQuery, selectionMode) {
+        files.filter { entry ->
+            if (!selectionMode && fileQuery.isNotBlank()) return@filter entry.path.contains(fileQuery.trim(), ignoreCase = true)
+            val segments = entry.path.split('/')
+            segments.size == 1 || (1 until segments.size).all { depth ->
+                segments.take(depth).joinToString("/") in expandedSet
+            }
         }
     }
+    val visibleFiles = filteredFiles
     fun selectionState(entry: WorkspaceEntry): ToggleableState {
         if (!entry.isDirectory) return if (exportSelection.includes(entry.path)) ToggleableState.On else ToggleableState.Off
         val descendants = files.filter { it.path == entry.path || it.path.startsWith("${entry.path}/") }
@@ -6085,6 +6078,17 @@ private fun FilesTab(
                 }
             }
             Spacer(Modifier.height(12.dp))
+        }
+        if (!selectionMode) {
+            item(key = "loaded-file-search") {
+                OutlinedTextField(value = fileQuery, onValueChange = { fileQuery = it },
+                    label = { Text(stringResource(R.string.nova_search_loaded_files)) },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    trailingIcon = { if (fileQuery.isNotEmpty()) TextButton(onClick = { fileQuery = "" }) { Text("×") } })
+            }
+            if (fileQuery.isNotBlank() && visibleFiles.isEmpty() && !loading) {
+                item { Text(stringResource(R.string.nova_no_matches), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
         }
         if (suggestedProjectRoot != null) {
             item(key = "suggested-project-root") {
@@ -6393,7 +6397,20 @@ private fun ChatTab(
         view.keepScreenOn = isRunning
         onDispose { view.keepScreenOn = false }
     }
-    var prompt by rememberSaveable(draftKey) { mutableStateOf("") }
+    val context = LocalContext.current
+    val draftPreferences = remember(context.applicationContext) {
+        context.applicationContext.getSharedPreferences("nova_chat_drafts", Context.MODE_PRIVATE)
+    }
+    var prompt by remember(draftKey) { mutableStateOf(draftKey?.let { draftPreferences.getString(it, "") }.orEmpty()) }
+    fun changePrompt(value: String) {
+        prompt = value
+        draftKey?.let { key ->
+            val editor = draftPreferences.edit()
+            if (value.isEmpty()) editor.remove(key) else editor.putString(key, value)
+            editor.apply()
+        }
+    }
+    var showProjectDetails by rememberSaveable(draftKey) { mutableStateOf(false) }
     val chatScope = rememberCoroutineScope()
     // True while the newest item (message, live panel, or approval card) is on screen.
     val readerAtBottom by remember {
@@ -6408,7 +6425,7 @@ private fun ChatTab(
                 shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
             ) {
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Folder, null, modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(6.dp))
@@ -6420,23 +6437,23 @@ private fun ChatTab(
                             )
                             Text(projectRootLabel, fontSize = 10.sp, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        projectFacts?.githubRepository?.let {
+                        IconButton(onClick = { showProjectDetails = !showProjectDetails }) {
+                            Icon(if (showProjectDetails) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                stringResource(R.string.nova_project_details))
+                        }
+                    }
+                    if (showProjectDetails) {
+                        projectFacts?.gradleRoot?.let { root ->
+                            Text(stringResource(R.string.ws_gradle_root, root.ifBlank { "." }), fontSize = 11.sp)
+                        }
+                        projectFacts?.githubRepository?.let { repo ->
+                            Text(repo + (projectFacts.branch?.let { " · $it" } ?: ""), fontSize = 12.sp)
                             TextButton(onClick = onVerifyRepository, enabled = !repositoryChecking) {
                                 Text(stringResource(if (repositoryChecking) R.string.ws_repo_checking else R.string.ws_repo_verify))
                             }
                         }
+                        repositoryStatus?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
-                    projectFacts?.gradleRoot?.takeIf(String::isNotBlank)?.let { root ->
-                        Text(stringResource(R.string.ws_gradle_root, root), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    projectFacts?.githubRepository?.let { repo ->
-                        Text(
-                            repo + (projectFacts?.branch?.let { " · $it" } ?: ""),
-                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    repositoryStatus?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 }
             }
         }
@@ -6541,6 +6558,14 @@ private fun ChatTab(
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 8.dp)
             ) {
+                if (isRunning) {
+                    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.nova_agent_working, agentKind.localizedTitle()), fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 if (taskFailure != null && !isRunning) {
                     Surface(
                         color = MaterialTheme.colorScheme.errorContainer,
@@ -6639,7 +6664,7 @@ private fun ChatTab(
 
                         BasicTextField(
                             value = prompt,
-                            onValueChange = { prompt = it },
+                            onValueChange = ::changePrompt,
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(horizontal = 4.dp, vertical = 10.dp)
@@ -6699,7 +6724,7 @@ private fun ChatTab(
                                         enabled = canSend,
                                         onClick = {
                                             if (canSend) {
-                                                if (onSend(prompt)) prompt = ""
+                                                if (onSend(prompt)) changePrompt("")
                                             }
                                         },
                                     ),

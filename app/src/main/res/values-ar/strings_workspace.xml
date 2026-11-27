@@ -164,4 +164,10 @@
     <string name="nova_repo_archived">مستودع مؤرشف</string>
     <string name="nova_repo_writable">الحساب يملك صلاحية الدفع</string>
     <string name="nova_repo_readonly">صلاحية قراءة فقط</string>
+    <string name="nova_project_details">تفاصيل المشروع</string>
+    <string name="nova_agent_working">%1$s يعمل الآن</string>
+    <string name="nova_search_loaded_files">بحث في الملفات المحمّلة في القائمة</string>
+    <string name="nova_no_matches">لا توجد ملفات محمّلة مطابقة</string>
+    <string name="nova_health_failed">تعذّر فحص البيئة</string>
+    <string name="nova_health_timeout">انتهت مهلة فحص البيئة. أعد المحاولة.</string>
 </resources>

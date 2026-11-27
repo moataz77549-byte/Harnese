@@ -452,6 +452,10 @@ class AppPreferences(private val context: Context) {
     @Synchronized
     fun deleteProjectChats(projectId: String) {
         preferences.edit().remove("selected_chat_$projectId").apply()
+        val drafts = context.getSharedPreferences("nova_chat_drafts", Context.MODE_PRIVATE)
+        val editor = drafts.edit()
+        drafts.all.keys.filter { it.startsWith("$projectId:") }.forEach { editor.remove(it) }
+        editor.apply()
         File(chatsDir, projectId).deleteRecursively()
         File(chatsDir, "$projectId.json").delete()
     }

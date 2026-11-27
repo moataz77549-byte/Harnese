@@ -164,4 +164,10 @@
     <string name="nova_repo_archived">संग्रहित</string>
     <string name="nova_repo_writable">पुश की अनुमति है</string>
     <string name="nova_repo_readonly">केवल पढ़ने की अनुमति</string>
+    <string name="nova_project_details">प्रोजेक्ट विवरण</string>
+    <string name="nova_agent_working">%1$s काम कर रहा है</string>
+    <string name="nova_search_loaded_files">लोड की गई फ़ाइलें खोजें</string>
+    <string name="nova_no_matches">कोई मिलती हुई फ़ाइल नहीं</string>
+    <string name="nova_health_failed">परिवेश जाँच विफल</string>
+    <string name="nova_health_timeout">परिवेश जाँच का समय समाप्त। फिर प्रयास करें।</string>
 </resources>

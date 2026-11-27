@@ -164,4 +164,10 @@
     <string name="nova_repo_archived">В архиве</string>
     <string name="nova_repo_writable">Доступна отправка изменений</string>
     <string name="nova_repo_readonly">Только чтение</string>
+    <string name="nova_project_details">Сведения о проекте</string>
+    <string name="nova_agent_working">%1$s работает</string>
+    <string name="nova_search_loaded_files">Поиск загруженных файлов</string>
+    <string name="nova_no_matches">Нет совпадений</string>
+    <string name="nova_health_failed">Ошибка проверки среды</string>
+    <string name="nova_health_timeout">Время проверки истекло. Повторите попытку.</string>
 </resources>
