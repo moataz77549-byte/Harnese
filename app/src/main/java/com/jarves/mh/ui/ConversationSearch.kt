@@ -9,7 +9,8 @@ internal fun matchingConversationIndices(messages: List<ChatMessage>, query: Str
     return messages.asSequence().withIndex()
         .filter { (_, message) ->
             message.text.contains(term, ignoreCase = true) ||
-                message.attachments.any { it.displayName.contains(term, ignoreCase = true) }
+                message.attachments.any { it.displayName.contains(term, ignoreCase = true) } ||
+                message.workItems.any { it.title.contains(term, ignoreCase = true) || it.detail.contains(term, ignoreCase = true) }
         }
         .map { it.index }.toList()
 }

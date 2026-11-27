@@ -508,6 +508,7 @@ class HarneseRuntimeController(private val application: Application) {
                     var offset = 0L
                     val streamed = TerminalOutputTail(MAX_PROJECT_TERMINAL_OUTPUT * 4)
                     var autoConfirmed = false
+                    var lastUiFrame = 0L
                     while (proc.isAlive || (native?.outputFile?.length() ?: 0L) > offset) {
                         val file = native?.outputFile
                         val available = (file?.length() ?: 0L) - offset
@@ -524,9 +525,13 @@ class HarneseRuntimeController(private val application: Application) {
                             offset += count
                             streamed.append(bytes, count)
                             val raw = streamed.text()
-                            _terminalLiveOutput.value = sanitizeTerminalOutput(raw)
-                                .trimEnd()
-                                .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            if (terminalUiFrameDue(lastUiFrame, now, file.length() - offset)) {
+                                _terminalLiveOutput.value = sanitizeTerminalOutput(raw)
+                                    .trimEnd()
+                                    .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+                                lastUiFrame = now
+                            }
                             if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, raw)) {
                                 proc.outputStream.write("y\n".toByteArray())
                                 proc.outputStream.flush()
@@ -874,6 +879,7 @@ class HarneseRuntimeController(private val application: Application) {
         var offset = 0L
         val output = TerminalOutputTail(MAX_PROJECT_TERMINAL_OUTPUT * 4)
         var autoConfirmed = false
+        var lastUiFrame = 0L
         while (process.isAlive || native.outputFile.length() > offset) {
             val available = native.outputFile.length() - offset
             if (available <= 0) {
@@ -896,14 +902,18 @@ class HarneseRuntimeController(private val application: Application) {
                     autoConfirmed = true
                 }
                 val detectedPreviewUrl = detectPreviewUrl(visible)
-                _state.update { current ->
-                    if (current.activeProject?.id == projectId) {
-                        current.copy(
-                            projectTerminalLiveOutput = visible,
-                            previewReady = current.previewReady || detectedPreviewUrl != null,
-                            previewUrl = detectedPreviewUrl ?: current.previewUrl,
-                        )
-                    } else current
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (detectedPreviewUrl != null || terminalUiFrameDue(lastUiFrame, now, native.outputFile.length() - offset)) {
+                    _state.update { current ->
+                        if (current.activeProject?.id == projectId) {
+                            current.copy(
+                                projectTerminalLiveOutput = visible,
+                                previewReady = current.previewReady || detectedPreviewUrl != null,
+                                previewUrl = detectedPreviewUrl ?: current.previewUrl,
+                            )
+                        } else current
+                    }
+                    lastUiFrame = now
                 }
             }
         }

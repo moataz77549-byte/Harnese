@@ -1,9 +1,10 @@
 # Harnes Plus 5.0.0 — Android 8+ ARM64
 
 - New H+ vector/adaptive icon, navy/teal light and dark colors, and Harnes Plus application label.
-- Conversation history search by message text and attachment name; navigate to original message; explicit copy action.
+- Conversation history search by message text, work activity and attachment name; navigate to original message; explicit copy action.
 - Project dashboard shows the selected agent/provider connection status.
 - Workspace screens separated into project, Android build, file/editor, and conversation source modules. UI state models extracted from MainViewModel without changing stored values.
+- Coalesces terminal display updates when output is backlogged, preserving final output, input and stop behavior.
 - Retains existing editor, Linux environments, agent setup, workflows, projects, and backup formats. No destructive data migrations, cleanup or environment reinstall added.
 - Package `com.moataz.harnese.nova`, versionCode 32, minSdk 26, ARM64. Existing owner certificate required. Previously published APK from 4.0.0 is the in-place upgrade baseline.
 
