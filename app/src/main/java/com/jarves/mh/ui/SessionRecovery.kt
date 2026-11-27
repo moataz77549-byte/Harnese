@@ -40,3 +40,31 @@ internal fun readQueuedFollowUps(raw: String?): List<QueuedFollowUp> = runCatchi
             })
     }
 }.getOrDefault(emptyList())
+
+internal data class EditorDraft(val text: String, val fingerprint: String)
+
+internal fun readEditorDraft(raw: String?): EditorDraft? = runCatching {
+    val value = JSONObject(requireNotNull(raw))
+    EditorDraft(value.getString("text"), value.getString("fingerprint"))
+}.getOrNull()
+
+internal fun encodeEditorDraft(draft: EditorDraft): String =
+    JSONObject().put("text", draft.text).put("fingerprint", draft.fingerprint).toString()
+
+internal data class EditorCompletion(val start: Int, val end: Int, val words: List<String>)
+
+internal fun localEditorCompletion(text: String, cursor: Int): EditorCompletion? {
+    if (cursor !in 1..text.length) return null
+    val wordChar: (Char) -> Boolean = { it.isLetterOrDigit() || it == '_' }
+    var start = cursor
+    while (start > 0 && wordChar(text[start - 1])) start--
+    if (cursor - start < 2) return null
+    var end = cursor
+    while (end < text.length && wordChar(text[end])) end++
+    val prefix = text.substring(start, cursor)
+    val nearby = text.substring((cursor - 12_000).coerceAtLeast(0), (cursor + 12_000).coerceAtMost(text.length))
+    val words = Regex("[\\p{L}_][\\p{L}\\p{N}_]{1,80}").findAll(nearby)
+        .map { it.value }.filter { it.length > prefix.length && it.startsWith(prefix, ignoreCase = false) }
+        .distinct().take(6).toList()
+    return EditorCompletion(start, end, words).takeIf { words.isNotEmpty() }
+}

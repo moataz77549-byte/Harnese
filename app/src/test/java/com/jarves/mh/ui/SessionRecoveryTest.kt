@@ -14,6 +14,18 @@ class SessionRecoveryTest {
         assertEquals(listOf(followUp), readQueuedFollowUps(encodeQueuedFollowUps(listOf(followUp))))
     }
 
+    @Test fun editorDraftKeepsFingerprintAndUnicode() {
+        val draft = EditorDraft("val اسم = 42", "original")
+        assertEquals(draft, readEditorDraft(encodeEditorDraft(draft)))
+    }
+
+    @Test fun completionUsesExistingLocalIdentifiersAndCursorRange() {
+        val text = "val customerName = 1\ncust"
+        val completion = localEditorCompletion(text, text.length)
+        assertEquals(listOf("customerName"), completion?.words)
+        assertEquals("cust", text.substring(completion!!.start, completion.end))
+    }
+
     @Test fun oldTerminalHistoryNameIsStableAndSlotsAreIndependent() {
         assertEquals("project.json", terminalHistoryName("project", 0))
         assertEquals(3, (0..2).map { terminalHistoryName("project", it) }.distinct().size)

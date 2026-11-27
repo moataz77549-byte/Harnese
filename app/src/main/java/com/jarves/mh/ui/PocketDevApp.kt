@@ -5671,6 +5671,7 @@ private fun EditorTabStrip(tabs: List<String>, dirty: Set<String>, selected: Str
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FileViewerScreen(
     file: OpenedFileState,
@@ -5906,6 +5907,23 @@ private fun FileViewerScreen(
                                 }) { Text(stringResource(R.string.nova_replace_all)) }
                             }
                         }
+                        }
+                        val completion = remember(editorValue.text, editorValue.selection) {
+                            if (editorValue.selection.collapsed) localEditorCompletion(editorValue.text, editorValue.selection.start) else null
+                        }
+                        if (completion != null && editingAllowed && !file.saving) {
+                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                completion.words.forEach { word ->
+                                    AssistChip(onClick = {
+                                        val next = editorValue.text.replaceRange(completion.start, completion.end, word)
+                                        undoHistory = (undoHistory + editorValue).takeLast(20)
+                                        redoHistory = emptyList()
+                                        editorValue = TextFieldValue(next, selection = TextRange(completion.start + word.length))
+                                        onDraftChange(next)
+                                    }, label = { Text(word, fontFamily = FontFamily.Monospace) })
+                                }
+                            }
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                         Row(

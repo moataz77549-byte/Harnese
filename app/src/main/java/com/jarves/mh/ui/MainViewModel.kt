@@ -504,6 +504,13 @@ class HarneseRuntimeController(private val application: Application) {
     private val pendingFollowUps = java.util.ArrayDeque(readQueuedFollowUps(followUpStorage.getString("queue", null)))
     private val recoveredFollowUps = pendingFollowUps.mapTo(mutableSetOf()) { it.id }
     private val retainedEditorDrafts = linkedMapOf<String, OpenedFileState>()
+    private val editorDraftStorage = application.getSharedPreferences("nova_editor_drafts", Context.MODE_PRIVATE)
+
+    private fun editorDraftKey(project: Project, path: String): String = "${project.id}:${project.rootPath}:$path"
+
+    private fun clearEditorDraft(project: Project, path: String) {
+        editorDraftStorage.edit().remove(editorDraftKey(project, path)).apply()
+    }
 
     private fun persistFollowUps() {
         followUpStorage.edit().putString("queue", encodeQueuedFollowUps(pendingFollowUps.toList())).apply()
@@ -3654,7 +3661,8 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     fun importZipProject(uri: Uri) {
-        if (_state.value.projectImporting || _state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
+        if (editorHasPendingChanges()) return
+        if (_state.value.projectImporting || _state.value.projectExportRunning || _state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         _state.update { it.copy(projectImporting = true, projectImportMessage = str(R.string.vm_reading_archive)) }
         runtimeScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { extractImportedProject(uri) } }
@@ -4291,6 +4299,9 @@ class HarneseRuntimeController(private val application: Application) {
         pendingFollowUps.removeAll { it.projectId == projectId }
         persistFollowUps()
         _state.update { it.copy(queuedFollowUps = pendingFollowUps.toList()) }
+        val draftEdit = editorDraftStorage.edit()
+        editorDraftStorage.all.keys.filter { it.startsWith("$projectId:") }.forEach { draftEdit.remove(it) }
+        draftEdit.apply()
         pendingChatWrites.forgetProject(projectId)
         folderMetadataCache.keys.removeAll { it.startsWith("$projectId:") }
         runtimeScope.launch(Dispatchers.IO) {
@@ -4666,7 +4677,13 @@ class HarneseRuntimeController(private val application: Application) {
             }
             if (_state.value.activeProject?.id == project.id && _state.value.activeProject?.rootPath == project.rootPath &&
                 _state.value.openedFile?.path == path && _state.value.openedFile?.editing == false) {
-                _state.update { it.copy(openedFile = loaded.copy(targetLine = targetLine, targetColumn = targetColumn)) }
+                val saved = readEditorDraft(editorDraftStorage.getString(editorDraftKey(project, path), null))
+                val recovered = if (saved != null && loaded.content != null && loaded.readOnlyReason == null && saved.text != loaded.content) {
+                    loaded.copy(editing = true, dirty = true, draft = saved.text,
+                        originalFingerprint = saved.fingerprint, conflict = saved.fingerprint != loaded.originalFingerprint)
+                } else loaded
+                _state.update { it.copy(openedFile = recovered.copy(targetLine = targetLine, targetColumn = targetColumn),
+                    editorDirtyTabs = retainedEditorDrafts.keys.toSet() + if (recovered.dirty) setOf(path) else emptySet()) }
             }
         }
     }
@@ -4691,12 +4708,20 @@ class HarneseRuntimeController(private val application: Application) {
     fun updateFileDraft(value: String) {
         val opened = _state.value.openedFile ?: return
         if (!opened.editing || opened.saving) return
+        val project = _state.value.activeProject ?: return
+        val original = opened.originalFingerprint ?: return
+        val key = editorDraftKey(project, opened.path)
+        val edit = editorDraftStorage.edit()
+        if (value == opened.content) edit.remove(key) else edit.putString(key, encodeEditorDraft(EditorDraft(value, original)))
+        edit.apply()
         _state.update { it.copy(openedFile = opened.copy(draft = value, dirty = value != opened.content, conflict = false),
             editorDirtyTabs = retainedEditorDrafts.keys.toSet() + if (value != opened.content) setOf(opened.path) else emptySet()) }
     }
 
     fun cancelFileEdit() {
         val opened = _state.value.openedFile ?: return
+        if (opened.saving) return
+        _state.value.activeProject?.let { clearEditorDraft(it, opened.path) }
         _state.update { it.copy(openedFile = opened.copy(editing = false, draft = opened.content.orEmpty(), dirty = false, conflict = false),
             editorDirtyTabs = retainedEditorDrafts.keys.toSet()) }
     }
@@ -4704,6 +4729,7 @@ class HarneseRuntimeController(private val application: Application) {
     fun reloadOpenedFile() {
         val project = _state.value.activeProject ?: return
         val path = _state.value.openedFile?.path ?: return
+        clearEditorDraft(project, path)
         _state.update { it.copy(openedFile = OpenedFileState(path = path), editorDirtyTabs = retainedEditorDrafts.keys.toSet()) }
         loadOpenedFile(project, path)
     }
@@ -4755,6 +4781,7 @@ class HarneseRuntimeController(private val application: Application) {
                     it.copy(openedFile = it.openedFile?.copy(saving = false, conflict = true))
                 }
                 result.isSuccess -> {
+                    clearEditorDraft(project, opened.path)
                     _state.update { it.copy(toastMessage = str(R.string.file_saved)) }
                     invalidateFolderMetadata(project.id, listOf(opened.path))
                     _state.update { it.copy(openedFile = OpenedFileState(path = opened.path), editorDirtyTabs = retainedEditorDrafts.keys.toSet()) }
