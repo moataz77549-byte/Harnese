@@ -181,6 +181,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -435,6 +436,9 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onShareWorkspaceFile = viewModel::shareWorkspaceFile,
             onSaveWorkspaceFileCopy = viewModel::saveWorkspaceFileCopy,
             onOpenFile = viewModel::openFile,
+            onOpenEditorTab = viewModel::openEditorTab,
+            onBrowseEditorFiles = viewModel::browseEditorFiles,
+            onSwitchTerminalSlot = viewModel::switchTerminalSlot,
             onCloseFile = viewModel::closeFile,
             onBeginFileEdit = viewModel::beginFileEdit,
             onUpdateFileDraft = viewModel::updateFileDraft,
@@ -4437,6 +4441,9 @@ private fun WorkspaceScreen(
     onShareWorkspaceFile: (String) -> Unit,
     onSaveWorkspaceFileCopy: (String, Uri) -> Unit,
     onOpenFile: (WorkspaceEntry) -> Unit,
+    onOpenEditorTab: (String) -> Unit,
+    onBrowseEditorFiles: () -> Unit,
+    onSwitchTerminalSlot: (Int) -> Unit,
     onCloseFile: () -> Unit,
     onBeginFileEdit: () -> Unit,
     onUpdateFileDraft: (String) -> Unit,
@@ -4635,6 +4642,10 @@ private fun WorkspaceScreen(
     if (state.openedFile != null) {
         FileViewerScreen(
             file = state.openedFile,
+            tabs = state.editorTabs,
+            dirtyTabs = state.editorDirtyTabs,
+            onOpenTab = onOpenEditorTab,
+            onBrowseFiles = { onBrowseEditorFiles(); selectedTab = WorkspaceTab.FILES },
             editingAllowed = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
             onClose = {
                 onCloseFile()
@@ -4847,6 +4858,9 @@ private fun WorkspaceScreen(
                     onRemoveFollowUp = onRemoveFollowUp,
                 )
                 WorkspaceTab.FILES -> FilesTab(
+                    editorTabs = state.editorTabs,
+                    dirtyTabs = state.editorDirtyTabs,
+                    onOpenEditorTab = onOpenEditorTab,
                     selectedRoot = state.activeProject?.rootPath.orEmpty(),
                     onSelectRoot = onSelectRoot,
                     onTerminalAtFolder = { if (onTerminalAtFolder(it)) selectedTab = WorkspaceTab.TERMINAL },
@@ -4861,6 +4875,10 @@ private fun WorkspaceScreen(
                     exportSelection = exportSelection,
                     exportRunning = state.projectExportRunning,
                     exportEnabled = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
+                    onPortableBackup = {
+                        exportSelection = ExportSelection(portableBackup = true)
+                        exportProjectLauncher.launch("${state.activeProject?.slug ?: "project"}-backup.zip")
+                    },
                     onEnterSelection = {
                         exportSelection = ExportSelection()
                         exportSelectionMode = true
@@ -4889,7 +4907,18 @@ private fun WorkspaceScreen(
                         saveCopyLauncher.launch(path.substringAfterLast('/'))
                     },
                 )
-                WorkspaceTab.TERMINAL -> TerminalScreen(
+                WorkspaceTab.TERMINAL -> Column(Modifier.fillMaxSize()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        (0..2).forEach { slot ->
+                            FilterChip(selected = state.terminalSlot == slot,
+                                onClick = { onSwitchTerminalSlot(slot) },
+                                enabled = !state.projectTerminalRunning && !state.androidBuildRunning,
+                                label = { Text(stringResource(R.string.nova_terminal_slot, slot + 1)) })
+                        }
+                    }
+                    key(state.terminalSlot) {
+                    TerminalScreen(
                     lines = state.projectTerminalLines,
                     isRunning = state.projectTerminalRunning,
                     onRun = onTerminalRun,
@@ -4909,7 +4938,9 @@ private fun WorkspaceScreen(
                     showThemeAction = false,
                     showQuickCommands = false,
                     compactHeader = true,
-                )
+                    )
+                    }
+                }
                 WorkspaceTab.CHANGES -> if ((state.changesAgentKind ?: state.agentKind) in setOf(com.jarves.mh.model.AgentKind.ANTIGRAVITY, com.jarves.mh.model.AgentKind.CODEX)) {
                     com.jarves.mh.telegram.WorkspaceSecureReviewPanel(state.activeProject?.id, state.isRunning || state.androidBuildRunning || state.projectTerminalRunning)
                 } else ChangesTab(
@@ -5630,8 +5661,23 @@ private fun AndroidHealthCheckCard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun EditorTabStrip(tabs: List<String>, dirty: Set<String>, selected: String?, onOpen: (String) -> Unit) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        tabs.forEach { path ->
+            FilterChip(selected = selected == path, onClick = { onOpen(path) },
+                label = { Text(path.substringAfterLast('/') + if (path in dirty) " •" else "", maxLines = 1) })
+        }
+    }
+}
+
+@Composable
 private fun FileViewerScreen(
     file: OpenedFileState,
+    tabs: List<String>,
+    dirtyTabs: Set<String>,
+    onOpenTab: (String) -> Unit,
+    onBrowseFiles: () -> Unit,
     editingAllowed: Boolean,
     onClose: () -> Unit,
     onBeginEdit: () -> Unit,
@@ -5648,7 +5694,8 @@ private fun FileViewerScreen(
     val scope = rememberCoroutineScope()
     var copied by remember { mutableStateOf(false) }
     var showUnsavedDialog by remember { mutableStateOf(false) }
-    var showFind by remember { mutableStateOf(false) }
+    var showFind by remember(file.path) { mutableStateOf(false) }
+    var replacement by remember(file.path) { mutableStateOf("") }
     var findQuery by remember { mutableStateOf("") }
     var editorValue by remember(file.path, file.editing) { mutableStateOf(TextFieldValue(file.draft)) }
     var undoHistory by remember(file.path, file.editing) { mutableStateOf(emptyList<TextFieldValue>()) }
@@ -5710,6 +5757,7 @@ private fun FileViewerScreen(
 
     Scaffold(
         topBar = {
+            Column {
             TopAppBar(
                 title = {
                     Column {
@@ -5723,6 +5771,9 @@ private fun FileViewerScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onBrowseFiles, enabled = !file.saving) {
+                        Icon(Icons.Default.Folder, stringResource(R.string.nova_browse_files))
+                    }
                     if (file.editing) {
                         TextButton(onClick = ::leaveEditor, enabled = !file.saving) { Text(stringResource(R.string.cancel)) }
                         IconButton(onClick = onSave, enabled = file.dirty && !file.saving && editingAllowed) {
@@ -5753,6 +5804,8 @@ private fun FileViewerScreen(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
+            if (tabs.isNotEmpty()) EditorTabStrip(tabs, dirtyTabs, file.path, onOpenTab)
+            }
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
@@ -5784,7 +5837,7 @@ private fun FileViewerScreen(
                                 onClick = {
                                     val previous = undoHistory.lastOrNull() ?: return@IconButton
                                     undoHistory = undoHistory.dropLast(1)
-                                    redoHistory = (redoHistory + editorValue).takeLast(50)
+                                    redoHistory = (redoHistory + editorValue).takeLast(20)
                                     editorValue = previous
                                     onDraftChange(previous.text)
                                 },
@@ -5794,7 +5847,7 @@ private fun FileViewerScreen(
                                 onClick = {
                                     val next = redoHistory.lastOrNull() ?: return@IconButton
                                     redoHistory = redoHistory.dropLast(1)
-                                    undoHistory = (undoHistory + editorValue).takeLast(50)
+                                    undoHistory = (undoHistory + editorValue).takeLast(20)
                                     editorValue = next
                                     onDraftChange(next.text)
                                 },
@@ -5840,6 +5893,18 @@ private fun FileViewerScreen(
                                     }
                                 }) { Icon(Icons.AutoMirrored.Filled.ArrowForward, stringResource(R.string.next_match)) }
                             }
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(value = replacement, onValueChange = { replacement = it },
+                                    label = { Text(stringResource(R.string.nova_replace_with)) },
+                                    modifier = Modifier.weight(1f), singleLine = true)
+                                TextButton(enabled = matches.isNotEmpty() && !file.saving && editingAllowed, onClick = {
+                                    val next = editorValue.text.replace(findQuery, replacement, ignoreCase = true)
+                                    undoHistory = (undoHistory + editorValue).takeLast(20)
+                                    redoHistory = emptyList()
+                                    editorValue = TextFieldValue(next)
+                                    onDraftChange(next)
+                                }) { Text(stringResource(R.string.nova_replace_all)) }
+                            }
                         }
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
@@ -5860,7 +5925,7 @@ private fun FileViewerScreen(
                                 value = editorValue,
                                 onValueChange = { next ->
                                     if (next.text != editorValue.text) {
-                                        undoHistory = (undoHistory + editorValue).takeLast(50)
+                                        undoHistory = (undoHistory + editorValue).takeLast(20)
                                         redoHistory = emptyList()
                                     }
                                     editorValue = next
@@ -5956,6 +6021,9 @@ private fun FileViewerScreen(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FilesTab(
+    editorTabs: List<String>,
+    dirtyTabs: Set<String>,
+    onOpenEditorTab: (String) -> Unit,
     selectedRoot: String,
     onSelectRoot: (String?) -> Unit,
     onTerminalAtFolder: (String) -> Unit,
@@ -5970,6 +6038,7 @@ private fun FilesTab(
     exportSelection: ExportSelection,
     exportRunning: Boolean,
     exportEnabled: Boolean,
+    onPortableBackup: () -> Unit,
     onEnterSelection: () -> Unit,
     onCancelSelection: () -> Unit,
     onToggleSelection: (WorkspaceEntry) -> Unit,
@@ -6078,6 +6147,18 @@ private fun FilesTab(
                 }
             }
             Spacer(Modifier.height(12.dp))
+        }
+        if (!selectionMode) {
+            item(key = "portable-backup") {
+                OutlinedButton(onClick = onPortableBackup, enabled = exportEnabled && !exportRunning,
+                    modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.nova_portable_backup)) }
+                Text(stringResource(R.string.nova_backup_detail), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (!selectionMode && editorTabs.isNotEmpty()) {
+            item(key = "editor-tabs") {
+                EditorTabStrip(editorTabs, dirtyTabs, null, onOpenEditorTab)
+            }
         }
         if (!selectionMode) {
             item(key = "loaded-file-search") {

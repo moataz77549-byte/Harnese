@@ -170,4 +170,12 @@
     <string name="nova_no_matches">कोई मिलती हुई फ़ाइल नहीं</string>
     <string name="nova_health_failed">परिवेश जाँच विफल</string>
     <string name="nova_health_timeout">परिवेश जाँच का समय समाप्त। फिर प्रयास करें।</string>
+    <string name="nova_task_recovered">पिछला कार्य रुक गया था। ज़रूरत होने पर फिर प्रयास करें।</string>
+    <string name="nova_editor_limit">दूसरा टैब खोलने से पहले एक बंद करें (सीमा 8)।</string>
+    <string name="nova_terminal_slot">टर्मिनल %1$d</string>
+    <string name="nova_browse_files">फ़ाइलें देखें</string>
+    <string name="nova_replace_with">इससे बदलें</string>
+    <string name="nova_replace_all">सभी बदलें</string>
+    <string name="nova_portable_backup">प्रोजेक्ट और चैट का बैकअप</string>
+    <string name="nova_backup_detail">ZIP में फ़ाइलें, चैट और ड्राफ़्ट हैं। ज्ञात निजी क्रेडेंशियल पथ शामिल नहीं हैं। फ़ाइल सुरक्षित रखें और नए प्रोजेक्ट के रूप में आयात करें।</string>
 </resources>

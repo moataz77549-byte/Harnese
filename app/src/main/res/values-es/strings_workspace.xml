@@ -170,4 +170,12 @@
     <string name="nova_no_matches">No hay archivos coincidentes</string>
     <string name="nova_health_failed">Error al comprobar el entorno</string>
     <string name="nova_health_timeout">Tiempo de espera agotado. Inténtalo de nuevo.</string>
+    <string name="nova_task_recovered">La tarea anterior se interrumpió. Reintenta si es necesario.</string>
+    <string name="nova_editor_limit">Cierra una pestaña antes de abrir otra (límite: 8).</string>
+    <string name="nova_terminal_slot">Terminal %1$d</string>
+    <string name="nova_browse_files">Explorar archivos</string>
+    <string name="nova_replace_with">Reemplazar por</string>
+    <string name="nova_replace_all">Reemplazar todo</string>
+    <string name="nova_portable_backup">Copia del proyecto y los chats</string>
+    <string name="nova_backup_detail">ZIP con archivos, chats y borradores. Se excluyen las rutas privadas conocidas. Guarda el archivo en privado e impórtalo como proyecto nuevo.</string>
 </resources>

@@ -395,6 +395,12 @@ class AppPreferences(private val context: Context) {
 
     @Synchronized
     fun saveMessages(projectId: String, chatId: String, messages: List<ChatMessage>) {
+        val arr = encodeMessages(messages)
+        val projectDir = File(chatsDir, projectId).also { it.mkdirs() }
+        replaceChatFile(File(projectDir, "$chatId.json"), arr.toString())
+    }
+
+    internal fun encodeMessages(messages: List<ChatMessage>): JSONArray {
         val arr = JSONArray()
         messages.forEach { m ->
             arr.put(JSONObject().apply {
@@ -427,8 +433,40 @@ class AppPreferences(private val context: Context) {
                 })
             })
         }
-        val projectDir = File(chatsDir, projectId).also { it.mkdirs() }
-        replaceChatFile(File(projectDir, "$chatId.json"), arr.toString())
+        return arr
+    }
+
+    internal fun restorePortableChats(projectId: String, snapshot: JSONObject) {
+        val chats = snapshot.getJSONArray("chats")
+        require(chats.length() in 1..1000)
+        val index = mutableListOf<ProjectChat>()
+        val visited = mutableSetOf<String>()
+        for (i in 0 until chats.length()) {
+            val chat = chats.getJSONObject(i)
+            val id = chat.getString("id")
+            require(id.matches(Regex("[A-Za-z0-9_-]{1,80}")) && visited.add(id) && id != "index")
+            val workspace = File(context.filesDir, "workspaces/$projectId/workspace").canonicalFile
+            val messages = decodeMessages(chat.getJSONArray("messages")).map { message ->
+                message.copy(attachments = message.attachments.filter { attachment ->
+                    val path = attachment.relativePath
+                    val parts = path.split('/')
+                    if (path.isBlank() || path.contains('\\') || parts.any { it.isBlank() || it == "." || it == ".." }) false
+                    else File(workspace, path).let { file ->
+                        file.isFile && file.canonicalFile.toPath().startsWith(workspace.toPath()) &&
+                            !com.jarves.mh.runtime.isPrivateProjectExportPath(path)
+                    }
+                })
+            }
+            val info = ProjectChat(id, chat.getString("title").take(200), chat.getLong("created"), chat.getLong("updated"))
+            index += info
+            saveMessages(projectId, id, messages)
+            val draft = chat.optString("draft")
+            if (draft.isNotEmpty()) context.getSharedPreferences("nova_chat_drafts", Context.MODE_PRIVATE)
+                .edit().putString("$projectId:$id", draft).apply()
+        }
+        saveProjectChats(projectId, index)
+        val selected = snapshot.optString("selectedChat")
+        if (selected in visited) rememberSelectedChat(projectId, selected)
     }
 
     private fun replaceChatFile(destination: File, content: String) {
@@ -463,7 +501,11 @@ class AppPreferences(private val context: Context) {
     private fun loadLegacyMessages(file: File): List<ChatMessage> {
         if (!file.exists()) return emptyList()
         return runCatching {
-            val arr = JSONArray(file.readText())
+            decodeMessages(JSONArray(file.readText()))
+        }.getOrDefault(emptyList())
+    }
+
+    private fun decodeMessages(arr: JSONArray): List<ChatMessage> =
             (0 until arr.length()).map { i ->
                 val obj = arr.getJSONObject(i)
                 ChatMessage(
@@ -505,8 +547,6 @@ class AppPreferences(private val context: Context) {
                     }.orEmpty(),
                 )
             }
-        }.getOrDefault(emptyList())
-    }
 
     private fun String.toChatTitle(): String {
         val clean = replace(Regex("\\s+"), " ").trim()

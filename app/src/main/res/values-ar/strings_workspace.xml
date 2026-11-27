@@ -170,4 +170,12 @@
     <string name="nova_no_matches">لا توجد ملفات محمّلة مطابقة</string>
     <string name="nova_health_failed">تعذّر فحص البيئة</string>
     <string name="nova_health_timeout">انتهت مهلة فحص البيئة. أعد المحاولة.</string>
+    <string name="nova_task_recovered">توقفت المهمة السابقة. يمكنك إعادة المحاولة عند الحاجة.</string>
+    <string name="nova_editor_limit">أغلق تبويب ملف قبل فتح آخر (الحد 8).</string>
+    <string name="nova_terminal_slot">طرفية %1$d</string>
+    <string name="nova_browse_files">تصفح الملفات</string>
+    <string name="nova_replace_with">استبدال بـ</string>
+    <string name="nova_replace_all">استبدال الكل</string>
+    <string name="nova_portable_backup">نسخة احتياطية للمشروع ومحادثاته</string>
+    <string name="nova_backup_detail">يحفظ ZIP ملفات المشروع والمحادثات والمسودات. تُستثنى مسارات بيانات الاعتماد المعروفة. احتفظ به في مكان خاص، واستورده كمشروع جديد.</string>
 </resources>

@@ -170,4 +170,12 @@
     <string name="nova_no_matches">Нет совпадений</string>
     <string name="nova_health_failed">Ошибка проверки среды</string>
     <string name="nova_health_timeout">Время проверки истекло. Повторите попытку.</string>
+    <string name="nova_task_recovered">Предыдущая задача прервана. При необходимости повторите её.</string>
+    <string name="nova_editor_limit">Закройте вкладку перед открытием новой (до 8).</string>
+    <string name="nova_terminal_slot">Терминал %1$d</string>
+    <string name="nova_browse_files">Просмотр файлов</string>
+    <string name="nova_replace_with">Заменить на</string>
+    <string name="nova_replace_all">Заменить все</string>
+    <string name="nova_portable_backup">Резервная копия проекта и чатов</string>
+    <string name="nova_backup_detail">ZIP с файлами, чатами и черновиками. Известные приватные пути исключены. Храните файл в безопасном месте и импортируйте как новый проект.</string>
 </resources>

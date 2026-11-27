@@ -141,6 +141,7 @@ enum class GitHubAuthStatus { DISCONNECTED, STARTING, AWAITING_USER, CONNECTED, 
 
 data class ExportSelection(
     val defaultIncluded: Boolean = true,
+    val portableBackup: Boolean = false,
     val overrides: Map<String, Boolean> = emptyMap(),
 ) {
     fun includes(path: String): Boolean {
@@ -293,7 +294,8 @@ data class QueuedFollowUp(
 
 private data class ImportedZipProject(
     val project: Project,
-    val sourceAttachment: ChatAttachment,
+    val sourceAttachment: ChatAttachment?,
+    val restoredChats: Boolean = false,
 )
 
 data class AppUiState(
@@ -369,6 +371,9 @@ data class AppUiState(
     val queuedFollowUps: List<QueuedFollowUp> = emptyList(),
     val activeSessionId: String? = null,
     val toastMessage: String? = null,
+    val terminalSlot: Int = 0,
+    val editorTabs: List<String> = emptyList(),
+    val editorDirtyTabs: Set<String> = emptySet(),
     val projectTerminalLines: List<TerminalOutputLine> = emptyList(),
     val projectTerminalLiveOutput: String = "",
     val projectTerminalRunning: Boolean = false,
@@ -495,7 +500,14 @@ class HarneseRuntimeController(private val application: Application) {
     private var runtimeAttempt = 0L
     private var runtimeRequestInFlight = false
     private var lastTerminalSucceeded = false
-    private val pendingFollowUps = java.util.ArrayDeque<QueuedFollowUp>()
+    private val followUpStorage = application.getSharedPreferences("nova_pending_followups", Context.MODE_PRIVATE)
+    private val pendingFollowUps = java.util.ArrayDeque(readQueuedFollowUps(followUpStorage.getString("queue", null)))
+    private val recoveredFollowUps = pendingFollowUps.mapTo(mutableSetOf()) { it.id }
+    private val retainedEditorDrafts = linkedMapOf<String, OpenedFileState>()
+
+    private fun persistFollowUps() {
+        followUpStorage.edit().putString("queue", encodeQueuedFollowUps(pendingFollowUps.toList())).apply()
+    }
     @Volatile private var steeringToFollowUp: Boolean = false
     private val failedApiKeyIds = mutableSetOf<String>()
     private val folderMetadataCache = java.util.concurrent.ConcurrentHashMap<String, FolderMetadata>()
@@ -546,6 +558,7 @@ class HarneseRuntimeController(private val application: Application) {
                 .getOrDefault(com.jarves.mh.ui.theme.AppThemeMode.DARK),
             languageCode = preferences.languageCode,
             projects = preferences.loadProjects(),
+            queuedFollowUps = pendingFollowUps.toList(),
             githubAuthStatus = GitHubAuthStatus.DISCONNECTED,
             githubLogin = preferences.githubLogin.takeIf(String::isNotBlank),
             installCodexDuringSetup = preferences.installCodexDuringSetup,
@@ -788,7 +801,7 @@ class HarneseRuntimeController(private val application: Application) {
 
     fun requestProjectTerminalCommand(command: String) {
         val normalized = command.trim()
-        if (normalized.isBlank() || _state.value.projectTerminalRunning || _state.value.androidBuildRunning || projectTerminalProcess?.isAlive == true) return
+        if (normalized.isBlank() || _state.value.projectExportRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning || projectTerminalProcess?.isAlive == true) return
         if (requiresAndroidToolchain(normalized) && !installer.isStackInstalled(DevStack.ANDROID)) {
             _state.update {
                 it.copy(toastMessage = str(R.string.vm_android_tools_missing))
@@ -857,6 +870,7 @@ class HarneseRuntimeController(private val application: Application) {
         if (_state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         val startingCwd = _state.value.projectTerminalCwd
         val existingLines = _state.value.projectTerminalLines
+        val slot = _state.value.terminalSlot
         projectTerminalStopRequested = false
         val requestedPreviewUrl = detectServerUrl(command)
         _state.update {
@@ -888,7 +902,7 @@ class HarneseRuntimeController(private val application: Application) {
                 exitCode = result.exitCode,
             )
             val updatedLines = (existingLines + completedLine).takeLast(MAX_PROJECT_TERMINAL_HISTORY)
-            saveProjectTerminal(project.id, result.cwd, updatedLines)
+            saveProjectTerminal(project.id, result.cwd, updatedLines, slot)
             if (_state.value.activeProject?.id == project.id) {
                 _state.update {
                     it.copy(
@@ -1217,11 +1231,25 @@ class HarneseRuntimeController(private val application: Application) {
 
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
 
-    private fun terminalHistoryFile(projectId: String): File =
-        File(getApplication<Application>().filesDir, "terminal-history/$projectId.json")
+    private fun loadTerminalSlot(projectId: String): Int =
+        application.getSharedPreferences("nova_terminal_slots", Context.MODE_PRIVATE).getInt(projectId, 0).coerceIn(0, 2)
 
-    private fun loadProjectTerminal(project: Project): ProjectTerminalSnapshot {
-        val file = terminalHistoryFile(project.id)
+    fun switchTerminalSlot(slot: Int) {
+        val current = _state.value
+        val project = current.activeProject ?: return
+        if (slot !in 0..2 || slot == current.terminalSlot || current.projectTerminalRunning || current.androidBuildRunning) return
+        val terminal = loadProjectTerminal(project, slot)
+        application.getSharedPreferences("nova_terminal_slots", Context.MODE_PRIVATE).edit().putInt(project.id, slot).apply()
+        _state.update { it.copy(terminalSlot = slot, projectTerminalLines = terminal.lines,
+            projectTerminalCwd = terminal.cwd, projectTerminalLiveOutput = "", projectTerminalCommand = null,
+            projectTerminalDraft = null, pendingTerminalCommand = null) }
+    }
+
+    private fun terminalHistoryFile(projectId: String, slot: Int = 0): File =
+        File(getApplication<Application>().filesDir, "terminal-history/" + terminalHistoryName(projectId, slot))
+
+    private fun loadProjectTerminal(project: Project, slot: Int = 0): ProjectTerminalSnapshot {
+        val file = terminalHistoryFile(project.id, slot)
         val guestRoot = projectGuestRoot(project)
         if (!file.isFile) return ProjectTerminalSnapshot(cwd = guestRoot)
         return runCatching {
@@ -1243,9 +1271,9 @@ class HarneseRuntimeController(private val application: Application) {
         }.getOrDefault(ProjectTerminalSnapshot(cwd = guestRoot))
     }
 
-    private fun saveProjectTerminal(projectId: String, cwd: String, lines: List<TerminalOutputLine>) {
+    private fun saveProjectTerminal(projectId: String, cwd: String, lines: List<TerminalOutputLine>, slot: Int = _state.value.terminalSlot) {
         runCatching {
-            val file = terminalHistoryFile(projectId)
+            val file = terminalHistoryFile(projectId, slot)
             file.parentFile?.mkdirs()
             val array = JSONArray()
             lines.takeLast(MAX_PROJECT_TERMINAL_HISTORY).forEach { line ->
@@ -1428,7 +1456,7 @@ class HarneseRuntimeController(private val application: Application) {
 
     private fun startAndroidGradleTask(task: String, action: AndroidAction) {
         val project = _state.value.activeProject ?: return
-        if (_state.value.androidBuildRunning || _state.value.runtimeProbeRunning) return
+        if (_state.value.androidBuildRunning || _state.value.runtimeProbeRunning || _state.value.projectExportRunning) return
         if (!installer.isStackInstalled(DevStack.ANDROID)) {
             _state.update {
                 it.copy(toastMessage = str(R.string.vm_android_tools_missing))
@@ -3323,7 +3351,9 @@ class HarneseRuntimeController(private val application: Application) {
         }
         configureBridgeRoots(project.id, project.rootPath)
         preferences.lastOpenProjectId = project.id
-        val terminal = loadProjectTerminal(project)
+        retainedEditorDrafts.clear()
+        val slot = loadTerminalSlot(project.id)
+        val terminal = loadProjectTerminal(project, slot)
         val suggestedRoot = if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null
         val chats = preferences.loadProjectChats(project.id).ifEmpty {
             listOf(ProjectChat(title = str(R.string.vm_main_chat))).also { preferences.saveProjectChats(project.id, it) }
@@ -3347,7 +3377,7 @@ class HarneseRuntimeController(private val application: Application) {
                 liveThinking = false,
                 taskStartedAtMillis = null,
                 taskFinishedAtMillis = null,
-                taskFailure = null,
+                taskFailure = str(R.string.nova_task_recovered).takeIf { saved.lastOrNull()?.id?.startsWith("interrupted-") == true },
                 taskHasOutput = false,
                 changes = emptyList(),
                 changesAgentKind = null,
@@ -3357,6 +3387,9 @@ class HarneseRuntimeController(private val application: Application) {
                 projectRepositoryStatus = null,
                 androidProjectDetected = false,
                 filesLoading = true,
+                terminalSlot = slot,
+                editorTabs = emptyList(),
+                editorDirtyTabs = emptySet(),
                 projectTerminalLines = terminal.lines,
                 projectTerminalLiveOutput = "",
                 projectTerminalRunning = false,
@@ -3398,8 +3431,8 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     private fun editorHasPendingChanges(): Boolean {
-        val file = _state.value.openedFile ?: return false
-        if (!file.dirty && !file.saving) return false
+        val current = _state.value
+        if (current.openedFile?.dirty != true && current.openedFile?.saving != true && retainedEditorDrafts.isEmpty()) return false
         _state.update { it.copy(toastMessage = str(R.string.unsaved_changes)) }
         return true
     }
@@ -3441,6 +3474,9 @@ class HarneseRuntimeController(private val application: Application) {
                 isRunning = false,
                 activeSessionId = null,
                 pendingApproval = null,
+                terminalSlot = 0,
+                editorTabs = emptyList(),
+                editorDirtyTabs = emptySet(),
                 projectTerminalLines = emptyList(),
                 projectTerminalLiveOutput = "",
                 projectTerminalRunning = false,
@@ -3524,6 +3560,9 @@ class HarneseRuntimeController(private val application: Application) {
                 workspaceFiles = emptyList(),
                 androidProjectDetected = false,
                 filesLoading = true,
+                terminalSlot = 0,
+                editorTabs = emptyList(),
+                editorDirtyTabs = emptySet(),
                 projectTerminalLines = emptyList(),
                 projectTerminalLiveOutput = "",
                 projectTerminalRunning = false,
@@ -3621,8 +3660,10 @@ class HarneseRuntimeController(private val application: Application) {
             val result = withContext(Dispatchers.IO) { runCatching { extractImportedProject(uri) } }
             result.onSuccess { imported ->
                 val project = imported.project
-                val firstChat = ProjectChat(title = str(R.string.vm_new_chat))
-                preferences.saveProjectChats(project.id, listOf(firstChat))
+                if (!imported.restoredChats) {
+                    val firstChat = ProjectChat(title = str(R.string.vm_new_chat))
+                    preferences.saveProjectChats(project.id, listOf(firstChat))
+                }
                 _state.update { current ->
                     current.copy(
                         projects = listOf(project) + current.projects,
@@ -3633,7 +3674,7 @@ class HarneseRuntimeController(private val application: Application) {
                 }
                 preferences.saveProjects(_state.value.projects)
                 openProject(project)
-                _state.update { it.copy(pendingAttachments = listOf(imported.sourceAttachment)) }
+                _state.update { it.copy(pendingAttachments = listOfNotNull(imported.sourceAttachment)) }
             }.onFailure { error ->
                 _state.update {
                     it.copy(
@@ -3716,6 +3757,22 @@ class HarneseRuntimeController(private val application: Application) {
                 slug = identity.slug,
                 kind = ProjectKind.PROJECT,
             )
+            val backup = File(destination, "nova-project-backup.json")
+            if (backup.isFile && File(destination, "workspace").isDirectory) {
+                require(backup.length() in 1..32L * 1024 * 1024) { str(R.string.vm_import_too_large) }
+                val snapshot = JSONObject(backup.readText())
+                if (snapshot.optString("schema") == "harnese-project-backup-v1") {
+                    preferences.restorePortableChats(projectId, snapshot)
+                    return ImportedZipProject(
+                        project = preliminary.copy(name = snapshot.getString("name").take(100),
+                            description = snapshot.optString("description").take(300),
+                            language = snapshot.optString("language").take(80),
+                            rootPath = "workspace",
+                            type = runCatching { ProjectType.valueOf(snapshot.optString("type")) }.getOrDefault(ProjectType.GENERAL)),
+                        sourceAttachment = null, restoredChats = true,
+                    )
+                }
+            }
             val nestedRoot = detectNestedProjectRoot(preliminary)
             val projectRoot = nestedRoot?.let { File(destination, it) } ?: destination
             val metadata = detectImportedProjectMetadata(projectRoot)
@@ -3753,6 +3810,7 @@ class HarneseRuntimeController(private val application: Application) {
             )
         } catch (error: Throwable) {
             destination.deleteRecursively()
+            preferences.deleteProjectChats(projectId)
             throw error
         }
     }
@@ -4230,12 +4288,15 @@ class HarneseRuntimeController(private val application: Application) {
         if (_state.value.activeProject?.id == projectId || _state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
         _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == projectId }) }
         preferences.saveProjects(_state.value.projects)
+        pendingFollowUps.removeAll { it.projectId == projectId }
+        persistFollowUps()
+        _state.update { it.copy(queuedFollowUps = pendingFollowUps.toList()) }
         pendingChatWrites.forgetProject(projectId)
         folderMetadataCache.keys.removeAll { it.startsWith("$projectId:") }
         runtimeScope.launch(Dispatchers.IO) {
             val filesDir = getApplication<Application>().filesDir
             File(filesDir, "workspaces/${project.id}").deleteRecursively()
-            terminalHistoryFile(project.id).delete()
+            (0..2).forEach { terminalHistoryFile(project.id, it).delete() }
             androidBuildRecordFile(project.id).delete()
             preferences.deleteProjectChats(project.id)
         }
@@ -4254,8 +4315,9 @@ class HarneseRuntimeController(private val application: Application) {
     fun selectProjectRoot(relative: String?) {
         val current = _state.value
         val project = current.activeProject ?: return
+        if (editorHasPendingChanges()) return
         if (current.isRunning || runtimeRequestInFlight || current.projectTerminalRunning ||
-            current.androidBuildRunning || current.runtimeProbeRunning || current.openedFile?.dirty == true) return
+            current.androidBuildRunning || current.runtimeProbeRunning) return
         val original = File(getApplication<Application>().filesDir, "workspaces/${project.id}").canonicalFile
         val folder = if (relative == null) original else safeWorkspaceDirectory(project, relative) ?: return
         val root = folder.relativeTo(original).invariantSeparatorsPath
@@ -4271,6 +4333,8 @@ class HarneseRuntimeController(private val application: Application) {
                 projects = projects,
                 activeProject = updated,
                 openedFile = null,
+                editorTabs = emptyList(),
+                editorDirtyTabs = emptySet(),
                 workspaceFiles = emptyList(),
                 androidApkInfo = null,
                 androidProjectDetected = false,
@@ -4299,6 +4363,11 @@ class HarneseRuntimeController(private val application: Application) {
             _state.update { it.copy(toastMessage = str(R.string.export_busy)) }
             return
         }
+        if (editorHasPendingChanges()) return
+        val backupChats = if (selection.portableBackup) current.projectChats.map { chat ->
+            val messages = if (chat.id == current.activeChatId) current.messages else loadChatTranscript(project.id, chat.id)
+            chat to messages
+        } else emptyList()
         _state.update { it.copy(projectExportRunning = true) }
         runtimeScope.launch {
             val result = withContext(Dispatchers.IO) {
@@ -4309,7 +4378,27 @@ class HarneseRuntimeController(private val application: Application) {
                         ?: error(str(R.string.vm_export_location_failed))
                     output.buffered().use { stream ->
                         ZipOutputStream(stream).use { zip ->
-                            zip.putNextEntry(ZipEntry("${project.slug}/"))
+                            val prefix = if (selection.portableBackup) "workspace" else project.slug
+                            if (selection.portableBackup) {
+                                val drafts = application.getSharedPreferences("nova_chat_drafts", Context.MODE_PRIVATE)
+                                val manifest = JSONObject().put("schema", "harnese-project-backup-v1")
+                                    .put("name", project.name).put("description", project.description).put("language", project.language)
+                                    .put("type", project.type.name).put("selectedChat", current.activeChatId)
+                                    .put("chats", JSONArray().apply {
+                                        backupChats.forEach { (chat, messages) ->
+                                            put(JSONObject().put("id", chat.id).put("title", chat.title)
+                                                .put("created", chat.createdAtMillis).put("updated", chat.updatedAtMillis)
+                                                .put("draft", drafts.getString("${project.id}:${chat.id}", ""))
+                                                .put("messages", preferences.encodeMessages(messages)))
+                                        }
+                                    })
+                                val manifestBytes = manifest.toString().toByteArray(Charsets.UTF_8)
+                                require(manifestBytes.size <= 32 * 1024 * 1024) { str(R.string.vm_import_too_large) }
+                                zip.putNextEntry(ZipEntry("nova-project-backup.json"))
+                                zip.write(manifestBytes)
+                                zip.closeEntry()
+                            }
+                            zip.putNextEntry(ZipEntry("$prefix/"))
                             zip.closeEntry()
                             root.walkTopDown()
                                 .onEnter { directory ->
@@ -4338,7 +4427,7 @@ class HarneseRuntimeController(private val application: Application) {
                                 }
                                 .forEach { file ->
                                     val relative = file.relativeTo(root).invariantSeparatorsPath
-                                    val entryName = "${project.slug}/$relative" + if (file.isDirectory) "/" else ""
+                                    val entryName = "$prefix/$relative" + if (file.isDirectory) "/" else ""
                                     zip.putNextEntry(ZipEntry(entryName).apply { time = file.lastModified() })
                                     if (file.isFile) file.inputStream().buffered().use { it.copyTo(zip) }
                                     zip.closeEntry()
@@ -4352,7 +4441,7 @@ class HarneseRuntimeController(private val application: Application) {
                     projectExportRunning = false,
                     projectExportSucceededAtMillis = result.getOrNull()?.let { System.currentTimeMillis() },
                     toastMessage = result.fold(
-                        onSuccess = { str(R.string.export_success, "${project.slug}.zip") },
+                        onSuccess = { str(R.string.export_success, if (selection.portableBackup) "${project.slug}-backup.zip" else "${project.slug}.zip") },
                         onFailure = { error -> str(R.string.export_failed, error.message ?: str(R.string.unknown_error)) },
                     ),
                 )
@@ -4401,7 +4490,7 @@ class HarneseRuntimeController(private val application: Application) {
                 liveThinking = false,
                 taskStartedAtMillis = null,
                 taskFinishedAtMillis = null,
-                taskFailure = null,
+                taskFailure = str(R.string.nova_task_recovered).takeIf { saved.lastOrNull()?.id?.startsWith("interrupted-") == true },
                 taskHasOutput = false,
                 pendingApproval = null,
                 pendingAttachments = emptyList(),
@@ -4515,10 +4604,30 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     fun openFile(entry: WorkspaceEntry) {
-        if (entry.isDirectory) return
-        val project = _state.value.activeProject ?: return
-        _state.update { it.copy(openedFile = OpenedFileState(path = entry.path)) }
-        loadOpenedFile(project, entry.path)
+        if (!entry.isDirectory) openEditorTab(entry.path)
+    }
+
+    fun browseEditorFiles() {
+        val opened = _state.value.openedFile ?: return
+        if (opened.saving) return
+        if (opened.dirty) retainedEditorDrafts[opened.path] = opened
+        _state.update { it.copy(openedFile = null, editorDirtyTabs = retainedEditorDrafts.keys.toSet()) }
+    }
+
+    fun openEditorTab(path: String) {
+        val current = _state.value
+        val project = current.activeProject ?: return
+        if (current.openedFile?.path == path || current.openedFile?.saving == true) return
+        if (path !in current.editorTabs && current.editorTabs.size >= 8) {
+            _state.update { it.copy(toastMessage = str(R.string.nova_editor_limit)) }
+            return
+        }
+        current.openedFile?.takeIf { it.dirty }?.let { retainedEditorDrafts[it.path] = it }
+        val retained = retainedEditorDrafts.remove(path)
+        _state.update { it.copy(editorTabs = (it.editorTabs + path).distinct(),
+            editorDirtyTabs = retainedEditorDrafts.keys.toSet() + if (retained?.dirty == true) setOf(path) else emptySet(),
+            openedFile = retained ?: OpenedFileState(path = path)) }
+        if (retained == null) loadOpenedFile(project, path)
     }
 
     private fun loadOpenedFile(project: Project, path: String, targetLine: Int? = null, targetColumn: Int? = null) {
@@ -4563,7 +4672,11 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     fun closeFile() {
-        _state.update { it.copy(openedFile = null) }
+        val opened = _state.value.openedFile ?: return
+        if (opened.dirty || opened.saving) return
+        retainedEditorDrafts.remove(opened.path)
+        _state.update { it.copy(openedFile = null, editorTabs = it.editorTabs - opened.path,
+            editorDirtyTabs = retainedEditorDrafts.keys.toSet()) }
     }
 
     fun beginFileEdit() {
@@ -4578,18 +4691,20 @@ class HarneseRuntimeController(private val application: Application) {
     fun updateFileDraft(value: String) {
         val opened = _state.value.openedFile ?: return
         if (!opened.editing || opened.saving) return
-        _state.update { it.copy(openedFile = opened.copy(draft = value, dirty = value != opened.content, conflict = false)) }
+        _state.update { it.copy(openedFile = opened.copy(draft = value, dirty = value != opened.content, conflict = false),
+            editorDirtyTabs = retainedEditorDrafts.keys.toSet() + if (value != opened.content) setOf(opened.path) else emptySet()) }
     }
 
     fun cancelFileEdit() {
         val opened = _state.value.openedFile ?: return
-        _state.update { it.copy(openedFile = opened.copy(editing = false, draft = opened.content.orEmpty(), dirty = false, conflict = false)) }
+        _state.update { it.copy(openedFile = opened.copy(editing = false, draft = opened.content.orEmpty(), dirty = false, conflict = false),
+            editorDirtyTabs = retainedEditorDrafts.keys.toSet()) }
     }
 
     fun reloadOpenedFile() {
         val project = _state.value.activeProject ?: return
         val path = _state.value.openedFile?.path ?: return
-        _state.update { it.copy(openedFile = OpenedFileState(path = path)) }
+        _state.update { it.copy(openedFile = OpenedFileState(path = path), editorDirtyTabs = retainedEditorDrafts.keys.toSet()) }
         loadOpenedFile(project, path)
     }
 
@@ -4642,7 +4757,7 @@ class HarneseRuntimeController(private val application: Application) {
                 result.isSuccess -> {
                     _state.update { it.copy(toastMessage = str(R.string.file_saved)) }
                     invalidateFolderMetadata(project.id, listOf(opened.path))
-                    _state.update { it.copy(openedFile = OpenedFileState(path = opened.path)) }
+                    _state.update { it.copy(openedFile = OpenedFileState(path = opened.path), editorDirtyTabs = retainedEditorDrafts.keys.toSet()) }
                     refreshProjectFiles()
                     loadOpenedFile(project, opened.path)
                 }
@@ -5166,7 +5281,7 @@ class HarneseRuntimeController(private val application: Application) {
         val chatId = snapshot.activeChatId ?: return false
         val attachments = snapshot.pendingAttachments
         if (prompt.isBlank() && attachments.isEmpty()) return false
-        if (snapshot.runtimeProbeRunning || snapshot.agentInstalling != null || snapshot.agentUpdating != null) {
+        if (snapshot.runtimeProbeRunning || snapshot.projectExportRunning || snapshot.agentInstalling != null || snapshot.agentUpdating != null) {
             _state.update { it.copy(toastMessage = str(R.string.vm_agent_busy_try_again)) }
             return false
         }
@@ -5221,6 +5336,7 @@ class HarneseRuntimeController(private val application: Application) {
     private fun queueFollowUp(project: Project, chatId: String, agent: AgentKind, prompt: String, attachments: List<ChatAttachment>) {
         val requestText = prompt.trim().ifBlank { "Please review the attached files." }
         pendingFollowUps.addLast(QueuedFollowUp(projectId = project.id, chatId = chatId, agentKind = agent, prompt = requestText, attachments = attachments))
+        persistFollowUps()
         _state.update {
             it.copy(
                 pendingAttachments = emptyList(),
@@ -5235,6 +5351,8 @@ class HarneseRuntimeController(private val application: Application) {
         val selected = pendingFollowUps.firstOrNull { it.id == id } ?: return
         pendingFollowUps.remove(selected)
         pendingFollowUps.addFirst(selected)
+        recoveredFollowUps.remove(id)
+        persistFollowUps()
         _state.update {
             it.copy(
                 queuedFollowUps = pendingFollowUps.toList(),
@@ -5257,6 +5375,8 @@ class HarneseRuntimeController(private val application: Application) {
     fun removeQueuedFollowUp(id: String) {
         val selected = pendingFollowUps.firstOrNull { it.id == id } ?: return
         pendingFollowUps.remove(selected)
+        recoveredFollowUps.remove(id)
+        persistFollowUps()
         _state.update { it.copy(queuedFollowUps = pendingFollowUps.toList()) }
     }
 
@@ -5376,19 +5496,20 @@ class HarneseRuntimeController(private val application: Application) {
         val snapshot = _state.value
         if (snapshot.isRunning || runtimeRequestInFlight || snapshot.androidBuildRunning || snapshot.projectTerminalRunning ||
             snapshot.runtimeProbeRunning || snapshot.agentInstalling != null || snapshot.agentUpdating != null) return
-        val next = pendingFollowUps.peekFirst() ?: return
         val project = snapshot.activeProject ?: return
-        if (project.id != next.projectId || snapshot.activeChatId != next.chatId) {
-            _state.update { it.copy(toastMessage = str(R.string.vm_queued_chat_mismatch)) }
-            return
-        }
+        val next = pendingFollowUps.firstOrNull {
+            it.projectId == project.id && it.chatId == snapshot.activeChatId &&
+                (explicit || (it.id !in recoveredFollowUps && it.agentKind == snapshot.agentKind))
+        } ?: return
         if (snapshot.agentKind != next.agentKind) {
             if (!explicit) return
             selectAgent(next.agentKind)
             if (_state.value.agentKind != next.agentKind) return
         }
         if (!canStartAgent(_state.value)) return
-        pendingFollowUps.removeFirst()
+        pendingFollowUps.remove(next)
+        recoveredFollowUps.remove(next.id)
+        persistFollowUps()
         _state.update { it.copy(queuedFollowUps = pendingFollowUps.toList()) }
         startPrompt(project, next.prompt, next.attachments)
     }

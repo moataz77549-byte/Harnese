@@ -170,4 +170,12 @@
     <string name="nova_no_matches">没有匹配的已加载文件</string>
     <string name="nova_health_failed">环境检查失败</string>
     <string name="nova_health_timeout">环境检查超时，请重试。</string>
+    <string name="nova_task_recovered">上一个任务已中断。如有需要请手动重试。</string>
+    <string name="nova_editor_limit">请先关闭文件标签页（最多 8 个）。</string>
+    <string name="nova_terminal_slot">终端 %1$d</string>
+    <string name="nova_browse_files">浏览文件</string>
+    <string name="nova_replace_with">替换为</string>
+    <string name="nova_replace_all">全部替换</string>
+    <string name="nova_portable_backup">项目与对话备份</string>
+    <string name="nova_backup_detail">ZIP 包含项目文件、对话和草稿。已知凭据路径不包含在内。请妥善保管，并作为新项目导入。</string>
 </resources>
