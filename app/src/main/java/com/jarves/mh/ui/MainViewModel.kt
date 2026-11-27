@@ -1079,13 +1079,9 @@ class HarneseRuntimeController(private val application: Application) {
         val resolvedCwd = ProjectWorkspaceInspector.terminalWorkingDirectory(workspace, guestWorkspacePath, cwd, command)
         val marker = "__POCKETDEV_CWD_${UUID.randomUUID()}__"
         val preparedCommand = prepareInteractiveShellCommand(command)
-        val script = """
-            cd -- ${shellQuote(resolvedCwd)} || exit 1
-            $preparedCommand
-            pocket_status=${'$'}?
-            printf '\n$marker%s\n' "${'$'}PWD"
-            exit ${'$'}pocket_status
-        """.trimIndent()
+        val script = "cd -- ${shellQuote(resolvedCwd)} || exit 1\n" +
+            preparedCommand + "\npocket_status=\$?\n" +
+            "printf '\\n$marker%s\\n' \"\$PWD\"\nexit \$pocket_status\n"
         val process = installer.process(
             proot = installed.proot,
             rootfs = installed.rootfs,
@@ -1174,6 +1170,8 @@ class HarneseRuntimeController(private val application: Application) {
      * can receive input through [sendProcessInput].
      */
     private fun prepareInteractiveShellCommand(command: String): String {
+        // Rewriting arbitrary scripts can corrupt quoted literals and heredoc bodies.
+        if (!com.jarves.mh.runtime.isSimplePackageCommand(command)) return command
         val normalizedApt = command
             .replace(Regex("(?<![\\w-])sudo\\s+apt(?:-get)?\\s+"), "apt-get ")
             .replace(Regex("(?<![\\w-])apt\\s+"), "apt-get ")
@@ -1185,6 +1183,7 @@ class HarneseRuntimeController(private val application: Application) {
     }
 
     private fun shouldAutoConfirmPackageCommand(command: String, output: String): Boolean {
+        if (!com.jarves.mh.runtime.isSimplePackageCommand(command)) return false
         val packageCommand = Regex("(?i)(^|[;&|]\\s*)(sudo\\s+)?(apt|apt-get|dpkg)\\b").containsMatchIn(command)
         if (!packageCommand) return false
         val tail = output.takeLast(500)
@@ -2335,6 +2334,10 @@ class HarneseRuntimeController(private val application: Application) {
                     installedAgentVersions = installer.installedAgentVersions(),
                 )
             }
+            if (_state.value.activeProject == null) {
+                val savedId = preferences.lastOpenProjectId
+                _state.value.projects.firstOrNull { it.id == savedId }?.let { openProject(it) }
+            }
             autoPingApi()
             checkForAppUpdate()
         } else {
@@ -3305,6 +3308,7 @@ class HarneseRuntimeController(private val application: Application) {
             _state.update { it.copy(projects = updated) }
         }
         configureBridgeRoots(project.id, project.rootPath)
+        preferences.lastOpenProjectId = project.id
         val terminal = loadProjectTerminal(project)
         val suggestedRoot = if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null
         val chats = preferences.loadProjectChats(project.id).ifEmpty {
@@ -3404,6 +3408,7 @@ class HarneseRuntimeController(private val application: Application) {
         }
 
         // Closing a project is navigation, not a request to delete its workspace.
+        preferences.lastOpenProjectId = null
         _state.update {
             it.copy(
                 activeProject = null,
@@ -3519,6 +3524,7 @@ class HarneseRuntimeController(private val application: Application) {
         }
         preferences.saveProjects(_state.value.projects)
         File(getApplication<Application>().filesDir, "workspaces/${project.id}").mkdirs()
+        preferences.lastOpenProjectId = project.id
         val firstChat = ProjectChat(title = str(R.string.vm_new_chat))
         preferences.saveProjectChats(project.id, listOf(firstChat))
         _state.update { it.copy(projectChats = listOf(firstChat), activeChatId = firstChat.id) }

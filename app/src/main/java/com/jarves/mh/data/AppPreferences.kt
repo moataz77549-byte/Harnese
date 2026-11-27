@@ -250,6 +250,10 @@ class AppPreferences(private val context: Context) {
 
     private fun providerPrefix(agent: AgentKind): String = "provider_${agent.stableId.replace('-', '_')}_"
 
+    var lastOpenProjectId: String?
+        get() = preferences.getString("last_open_project_id", null)
+        set(value) { preferences.edit().apply { if (value == null) remove("last_open_project_id") else putString("last_open_project_id", value) }.apply() }
+
     fun saveProjects(projects: List<Project>) {
         val arr = JSONArray()
         projects.forEach { p ->

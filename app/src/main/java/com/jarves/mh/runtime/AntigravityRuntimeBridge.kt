@@ -114,9 +114,15 @@ private fun antigravityToolDisplayName(name: String): String = when (name.lowerc
 }
 
 private fun antigravityToolDetail(step: JSONObject, rawName: String): String {
-    step.optString("description").takeIf(String::isNotBlank)?.let { return redactToolDetail(it) }
     val info = step.optJSONObject("tool_info")
     val parameters = info?.optJSONObject("parameters")
+    if (rawName.equals("run_command", true)) {
+        val command = listOf("CommandLine", "command", "cmd").firstNotNullOfOrNull { key ->
+            parameters?.optString(key)?.takeIf { it.isNotBlank() && it != "null" }
+        }
+        if (command != null) return antigravityToolOutput(command)
+    }
+    step.optString("description").takeIf(String::isNotBlank)?.let { return redactToolDetail(it) }
     val preferredKeys = when (rawName.lowercase()) {
         "run_command" -> listOf("CommandLine", "command", "cmd")
         "write_to_file", "replace_file_content", "multi_replace_file_content" ->
@@ -428,7 +434,12 @@ class AntigravityRuntimeBridge(
                     is AntigravityParsedEvent.ToolCompleted -> {
                         if (activeToolName == event.name) activeToolName = null
                         pushForegroundProgress(R.string.rt_bridge_working, "Antigravity")
-                        if (event.failed && antigravityPermissionNotice(event.detail)) permissionBlocked = true
+                        if (event.failed && antigravityPermissionNotice(event.detail)) {
+                            permissionBlocked = true
+                            if (event.name == "Bash" && activeToolDetail.isNotBlank()) {
+                                emitEvent(RuntimeEvent.AssistantDelta(sessionId, "\nCommand not executed. Review the command shown in the Bash activity, approve any staged source changes, then execute it manually in the project terminal. Use the review center to send the actual exit code and output back to this conversation."))
+                            }
+                        }
                         val evidence = if (event.name == "Write" && !event.failed) {
                             if (event.target == null) {
                                 anonymousWrite = true
