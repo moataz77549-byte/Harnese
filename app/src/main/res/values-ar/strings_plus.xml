@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="plus_search_history">البحث في المحادثة</string>
+    <string name="plus_search_matches">%1$d نتائج</string>
+    <string name="plus_next_match">التالي</string>
+    <string name="plus_you">أنت</string>
+    <string name="plus_agent_reply">الوكيل</string>
+    <string name="plus_copy_message">نسخ</string>
+    <string name="plus_workspace_status">حالة مساحة العمل</string>
+</resources>

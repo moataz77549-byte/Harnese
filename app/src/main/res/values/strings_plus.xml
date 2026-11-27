@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="plus_search_history">Search conversation</string>
+    <string name="plus_search_matches">%1$d results</string>
+    <string name="plus_next_match">Next</string>
+    <string name="plus_you">You</string>
+    <string name="plus_agent_reply">Agent</string>
+    <string name="plus_copy_message">Copy</string>
+    <string name="plus_workspace_status">Workspace status</string>
+</resources>

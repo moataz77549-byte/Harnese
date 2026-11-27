@@ -2,7 +2,7 @@
 """Transport only a public signed APK delta, never an owner private key."""
 import argparse, base64, hashlib, json, pathlib, re, subprocess, tempfile, zipfile
 
-NAMES = {"Harnese-Nova-2.0.0-rc.6-Android8Plus-ARM64.apk", "Harnese-Nova-2.1.0-Android8Plus-ARM64.apk", "Harnese-Nova-2.3.0-Android8Plus-ARM64.apk", "Harnese-Nova-2.3.1-Android8Plus-ARM64.apk", "Harnese-Nova-3.0.0-Android8Plus-ARM64.apk", "Harnese-Nova-3.2.0-Android8Plus-ARM64.apk", "Harnese-Nova-4.0.0-Android8Plus-ARM64.apk"}
+NAMES = {"Harnese-Nova-2.0.0-rc.6-Android8Plus-ARM64.apk", "Harnese-Nova-2.1.0-Android8Plus-ARM64.apk", "Harnese-Nova-2.3.0-Android8Plus-ARM64.apk", "Harnese-Nova-2.3.1-Android8Plus-ARM64.apk", "Harnese-Nova-3.0.0-Android8Plus-ARM64.apk", "Harnese-Nova-3.2.0-Android8Plus-ARM64.apk", "Harnese-Nova-4.0.0-Android8Plus-ARM64.apk", "Harnes-Plus-5.0.0-Android8Plus-ARM64.apk"}
 CERT = "d7f31fde154fc9b46fe8ef333fd12ecdfbd9b331d71a5284c24a6ad8ad45de51"
 MAX_APK = 32 * 1024 * 1024
 MAX_DELTA = 2 * 1024 * 1024

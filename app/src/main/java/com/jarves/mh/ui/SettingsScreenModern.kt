@@ -509,7 +509,7 @@ fun SettingsScreen(
                         Icon(Icons.Default.Settings, null, Modifier.size(20.dp), tint = PocketOrange)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Mobile Harness", fontWeight = FontWeight.SemiBold)
+                            Text("Harnes Plus", fontWeight = FontWeight.SemiBold)
                             Text(stringResource(R.string.settings_app_desc), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text("v${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)

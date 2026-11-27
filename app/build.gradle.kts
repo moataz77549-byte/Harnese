@@ -87,9 +87,9 @@ android {
             else -> "com.jarves.harnese"
         }
         manifestPlaceholders["harneseAppLabel"] = when {
-            repairTestInstall -> "Harnese Nova Repair"
-            parallelTrialInstall -> "Harnese Nova"
-            else -> "Harnese"
+            repairTestInstall -> "Harnes Plus Repair"
+            parallelTrialInstall -> "Harnes Plus"
+            else -> "Harnes Plus"
         }
         manifestPlaceholders["harneseAppIcon"] = if (parallelTrialInstall || repairTestInstall) "@mipmap/ic_launcher_nova" else "@mipmap/ic_launcher"
         manifestPlaceholders["harneseAppRoundIcon"] = if (parallelTrialInstall || repairTestInstall) "@mipmap/ic_launcher_nova_round" else "@mipmap/ic_launcher_round"
@@ -99,8 +99,8 @@ android {
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 31
-        versionName = "4.0.0"
+        versionCode = 32
+        versionName = "5.0.0"
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
         providers.gradleProperty("appVersionName").orNull?.let { versionName = it }
 

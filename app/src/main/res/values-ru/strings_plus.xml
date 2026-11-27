@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="plus_search_history">Поиск по беседе</string>
+    <string name="plus_search_matches">Результатов: %1$d</string>
+    <string name="plus_next_match">Далее</string>
+    <string name="plus_you">Вы</string>
+    <string name="plus_agent_reply">Агент</string>
+    <string name="plus_copy_message">Копировать</string>
+    <string name="plus_workspace_status">Состояние рабочей области</string>
+</resources>

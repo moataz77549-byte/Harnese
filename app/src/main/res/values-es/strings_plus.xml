@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="plus_search_history">Buscar conversación</string>
+    <string name="plus_search_matches">%1$d resultados</string>
+    <string name="plus_next_match">Siguiente</string>
+    <string name="plus_you">Tú</string>
+    <string name="plus_agent_reply">Agente</string>
+    <string name="plus_copy_message">Copiar</string>
+    <string name="plus_workspace_status">Estado del espacio de trabajo</string>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="plus_search_history">搜索对话</string>
+    <string name="plus_search_matches">%1$d 个结果</string>
+    <string name="plus_next_match">下一项</string>
+    <string name="plus_you">你</string>
+    <string name="plus_agent_reply">代理</string>
+    <string name="plus_copy_message">复制</string>
+    <string name="plus_workspace_status">工作区状态</string>
+</resources>

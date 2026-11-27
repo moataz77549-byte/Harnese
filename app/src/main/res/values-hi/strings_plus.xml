@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="plus_search_history">बातचीत खोजें</string>
+    <string name="plus_search_matches">%1$d परिणाम</string>
+    <string name="plus_next_match">अगला</string>
+    <string name="plus_you">आप</string>
+    <string name="plus_agent_reply">एजेंट</string>
+    <string name="plus_copy_message">कॉपी</string>
+    <string name="plus_workspace_status">कार्यक्षेत्र की स्थिति</string>
+</resources>
